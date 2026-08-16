@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login – BizTracker</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#4646eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="BizTracker">
+  <link rel="apple-touch-icon" href="/icons/icon.svg">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    body { background: #0f172a; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .login-card { background: #fff; border-radius: 16px; padding: 2.5rem 2rem; width: 100%; max-width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+    .brand-icon { width: 48px; height: 48px; background: #3b82f6; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="text-center mb-4">
+      <div class="brand-icon mx-auto mb-3"><i class="bi bi-bar-chart-fill"></i></div>
+      <h4 class="fw-bold mb-1">BizTracker</h4>
+      <p class="text-muted small">Sign in to continue</p>
+    </div>
+    <div id="loginError" class="alert alert-danger d-none py-2 small"></div>
+    <form id="loginForm" novalidate>
+      <div class="mb-3">
+        <label class="form-label fw-semibold">Username</label>
+        <input type="text" class="form-control" id="username" placeholder="Enter username" autocomplete="username" required>
+      </div>
+      <div class="mb-4">
+        <label class="form-label fw-semibold">Password</label>
+        <div class="input-group">
+          <input type="password" class="form-control" id="password" placeholder="Enter password" autocomplete="current-password" required>
+          <button type="button" class="btn btn-outline-secondary" id="btnTogglePwd" tabindex="-1">
+            <i class="bi bi-eye" id="pwdIcon"></i>
+          </button>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-primary w-100" id="btnLogin">
+        <i class="bi bi-box-arrow-in-right me-1"></i>Sign In
+      </button>
+    </form>
+  </div>
+
+  <script>
+    // If already logged in, skip login
+    fetch('/api/auth/me').then(r => r.json()).then(d => {
+      if (d.success) window.location.href = '/index.html';
+    }).catch(() => {});
+
+    document.getElementById('btnTogglePwd').addEventListener('click', () => {
+      const inp = document.getElementById('password');
+      const ico = document.getElementById('pwdIcon');
+      if (inp.type === 'password') { inp.type = 'text'; ico.className = 'bi bi-eye-slash'; }
+      else { inp.type = 'password'; ico.className = 'bi bi-eye'; }
+    });
+
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('btnLogin');
+      const err = document.getElementById('loginError');
+      err.classList.add('d-none');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Signing in…';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value.trim(),
+            password: document.getElementById('password').value
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          window.location.href = '/index.html';
+        } else {
+          err.textContent = data.message || 'Login failed.';
+          err.classList.remove('d-none');
+        }
+      } catch (_) {
+        err.textContent = 'Server error. Please try again.';
+        err.classList.remove('d-none');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-box-arrow-in-right me-1"></i>Sign In';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard â€“ BizTracker</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon"><i class="bi bi-bar-chart-fill text-white"></i></div>
+    BizTracker
+  </div>
+  <nav>
+    <div class="sidebar-section-label">Main</div>
+    <a href="/index.html"       class="nav-link"><i class="bi bi-speedometer2"></i><span>Dashboard</span></a>
+    <a href="/expenses.html"    class="nav-link"><i class="bi bi-receipt"></i><span>Expenses</span></a>
+    <a href="/categories.html"  class="nav-link"><i class="bi bi-tags"></i><span>Categories</span></a>
+    <a href="/employees.html"   class="nav-link"><i class="bi bi-people"></i><span>Employees</span></a>
+    <a href="/salaries.html"    class="nav-link"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
+    <a href="/users.html" class="nav-link su-only"><i class="bi bi-person-lock"></i><span>Users</span></a>
+  </nav>
+</aside>
+
+<div class="main-content">
+  <nav class="top-navbar">
+    <div class="d-flex align-items-center gap-3">
+      <button class="mobile-toggle" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
+      <h1 class="page-title">Dashboard</h1>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <span class="text-muted small d-none d-md-inline" id="todayDate"></span>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadDashboard()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+      </button>
+    </div>
+  </nav>
+
+  <div class="content-wrapper">
+
+    <!-- Stat cards -->
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-xl-3">
+        <div class="stat-card">
+          <div class="stat-icon bg-primary-subtle text-primary"><i class="bi bi-people-fill"></i></div>
+          <div>
+            <div class="stat-label">Active Employees</div>
+            <div class="stat-value" id="stat-employees"><span class="spinner-border spinner-border-sm text-primary"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="stat-card">
+          <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-receipt-cutoff"></i></div>
+          <div>
+            <div class="stat-label">Monthly Expenses</div>
+            <div class="stat-value" id="stat-expenses"><span class="spinner-border spinner-border-sm text-warning"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="stat-card">
+          <div class="stat-icon bg-success-subtle text-success"><i class="bi bi-cash-stack"></i></div>
+          <div>
+            <div class="stat-label">Monthly Salaries</div>
+            <div class="stat-value" id="stat-salaries"><span class="spinner-border spinner-border-sm text-success"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="stat-card">
+          <div class="stat-icon bg-danger-subtle text-danger"><i class="bi bi-clock-history"></i></div>
+          <div>
+            <div class="stat-label">Pending Expenses</div>
+            <div class="stat-value" id="stat-pending"><span class="spinner-border spinner-border-sm text-danger"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="row g-3 mb-4">
+      <div class="col-md-5">
+        <div class="card-panel h-100">
+          <div class="card-panel-header">
+            <h6 class="card-panel-title">Expenses by Category</h6>
+            <span class="text-muted small">This month</span>
+          </div>
+          <div class="card-panel-body">
+            <div class="chart-wrap" style="height:260px;position:relative;">
+              <canvas id="chartCategory"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-7">
+        <div class="card-panel h-100">
+          <div class="card-panel-header">
+            <h6 class="card-panel-title">Expense Trend</h6>
+            <span class="text-muted small">Last 6 months</span>
+          </div>
+          <div class="card-panel-body">
+            <div style="height:260px;position:relative;">
+              <canvas id="chartTrend"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent expenses -->
+    <div class="card-panel">
+      <div class="card-panel-header">
+        <h6 class="card-panel-title">Recent Expenses</h6>
+        <a href="/expenses.html" class="btn btn-sm btn-outline-primary">View All</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="recentExpBody">
+            <tr><td colspan="5" class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /content-wrapper -->
+</div><!-- /main-content -->
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="js/api.js"></script>
+<script src="js/api.js"></script><script src="js/api.js"></script>
+<script src="js/main.js"></script>
+<script src="js/dashboard.js"></script>
+<script>
+  document.getElementById('todayDate').textContent =
+    new Date().toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+</script>
+</body>
+</html>
+
+
+
+
+

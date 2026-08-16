@@ -1,0 +1,8 @@
+node_modules/
+.env
+*.key
+service-account*.json
+credentials.json
+dist/
+android/
+ios/

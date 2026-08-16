@@ -1,0 +1,106 @@
+/* ============================================================
+   mobile/js/api.js — Google Apps Script API client
+   Replace GAS_URL with your deployed Web App URL
+   ============================================================ */
+
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyRXn9TRyY8yIi6mtmte_Rp54fAngurcUZY8g5zTPUAPSMhsULllaN9bN1pt3rUD72V/exec';
+
+/* Auth token is stored in localStorage */
+function getToken() { return localStorage.getItem('biz_token') || ''; }
+function setToken(t) { t ? localStorage.setItem('biz_token', t) : localStorage.removeItem('biz_token'); }
+function setCurrentUser(u) { u ? localStorage.setItem('biz_user', JSON.stringify(u)) : localStorage.removeItem('biz_user'); }
+function getCachedUser() {
+  try { return JSON.parse(localStorage.getItem('biz_user') || 'null'); } catch(_) { return null; }
+}
+
+/* Core GAS fetch — GET for reads, POST for writes */
+async function gasCall(action, body = null) {
+  const token = getToken();
+  const url   = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  if (token) url.searchParams.set('token', token);
+
+  let res;
+  if (body) {
+    res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  } else {
+    res = await fetch(url.toString());
+  }
+
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Request failed');
+  return data.data ?? data;
+}
+
+/* Auth */
+async function gasLogin(username, password) {
+  const data = await gasCall('login', { username, password });
+  setToken(data.token);
+  const user = { ...data }; delete user.token;
+  setCurrentUser(user);
+  return user;
+}
+
+async function gasLogout() {
+  await gasCall('logout').catch(() => {});
+  setToken(null);
+  setCurrentUser(null);
+}
+
+async function gasMe() {
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const user = await gasCall('me');
+    setCurrentUser(user);
+    return user;
+  } catch(_) {
+    setToken(null);
+    return null;
+  }
+}
+
+/* Expenses */
+const gasExpenses = {
+  getAll:    ()       => gasCall('getExpenses'),
+  bulk:      (body)   => gasCall('bulkExpenses', body),
+  approve:   (date)   => gasCall('approveDate',  { date }),
+  reject:    (date, reason) => gasCall('rejectDate', { date, reason }),
+  delete:    (id)     => gasCall('deleteExpense', { id })
+};
+
+/* Categories */
+const gasCategories = {
+  getAll:  ()     => gasCall('getCategories'),
+  create:  (body) => gasCall('createCategory', body),
+  update:  (body) => gasCall('updateCategory', body),
+  delete:  (id)   => gasCall('deleteCategory', { id })
+};
+
+/* Employees */
+const gasEmployees = {
+  getAll:  ()     => gasCall('getEmployees'),
+  create:  (body) => gasCall('createEmployee', body),
+  update:  (body) => gasCall('updateEmployee', body),
+  delete:  (id)   => gasCall('deleteEmployee', { id })
+};
+
+/* Salaries */
+const gasSalaries = {
+  getAll:  ()     => gasCall('getSalaries'),
+  create:  (body) => gasCall('createSalary', body),
+  update:  (body) => gasCall('updateSalary', body),
+  delete:  (id)   => gasCall('deleteSalary', { id })
+};
+
+/* Users */
+const gasUsers = {
+  getAll:  ()     => gasCall('getUsers'),
+  create:  (body) => gasCall('createUser', body),
+  update:  (body) => gasCall('updateUser', body),
+  delete:  (id)   => gasCall('deleteUser', { id })
+};
