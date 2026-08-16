@@ -53,7 +53,7 @@ function resolvePerms(u) {
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
-  if (user.role !== 'superuser') { window.location.href = '/index.html'; return; }
+  if (user.role !== 'superuser') { window.location.href = 'index.html'; return; }
 
   document.getElementById('btnAddUser').addEventListener('click', openAddModal);
   document.getElementById('btnSaveUser').addEventListener('click', saveUser);
