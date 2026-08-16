@@ -3,6 +3,3 @@ node_modules/
 *.key
 service-account*.json
 credentials.json
-dist/
-android/
-ios/
