@@ -39,12 +39,15 @@ const SAL_COL  = { ID:0, EMP_ID:1, EMP_NAME:2, MONTH:3, YEAR:4, BASE_SALARY:5, A
    ENTRY POINTS
    ============================================================ */
 
+var _cb = '';
+
 function doGet(e)  { return handleRequest(e); }
 function doPost(e) { return handleRequest(e); }
 
 function handleRequest(e) {
   try {
     const params  = e.parameter || {};
+    _cb           = params.callback || '';
     const action  = params.action || '';
     let   body    = {};
     // Accept body from GET ?payload= param (most reliable for CORS) or POST body
@@ -100,9 +103,13 @@ function handleRequest(e) {
   }
 }
 
-function json(data, code) {
-  return ContentService
-    .createTextOutput(JSON.stringify(data))
+function json(data) {
+  const text = JSON.stringify(data);
+  if (_cb) {
+    return ContentService.createTextOutput(_cb + '(' + text + ')')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(text)
     .setMimeType(ContentService.MimeType.JSON);
 }
 
