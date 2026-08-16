@@ -24,7 +24,7 @@ async function gasCall(action, body = null) {
   if (body) {
     res = await fetch(url.toString(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify(body)
     });
   } else {
