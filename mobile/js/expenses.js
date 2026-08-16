@@ -166,7 +166,7 @@ async function save() {
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
 
   try {
-    await api('POST', '/expenses/bulk', { date, entries, remarks });
+    await api('POST', '/expenses/bulk', { date, items: entries, remarks });
     const msg = isSuperUser() ? 'Expense saved and approved.' : 'Expense submitted for approval.';
     showNotification(msg);
     allExpenses = await api('GET', '/expenses');
