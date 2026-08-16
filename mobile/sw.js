@@ -1,4 +1,4 @@
-const CACHE = 'biztracker-mobile-v1';
+const CACHE = 'biztracker-mobile-v3';
 
 const SHELL = [
   'login.html',
