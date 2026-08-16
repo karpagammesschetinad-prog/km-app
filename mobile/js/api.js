@@ -13,41 +13,21 @@ function getCachedUser() {
   try { return JSON.parse(localStorage.getItem('biz_user') || 'null'); } catch(_) { return null; }
 }
 
-/* Core GAS call — uses JSONP (<script> tag) to bypass CORS completely */
-function gasCall(action, body = null) {
-  return new Promise((resolve, reject) => {
-    const token  = getToken();
-    const cbName = '_gasCb_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
-    const url    = new URL(GAS_URL);
-    url.searchParams.set('action',   action);
-    url.searchParams.set('callback', cbName);
-    if (token) url.searchParams.set('token',   token);
-    if (body)  url.searchParams.set('payload', JSON.stringify(body));
+/* Core GAS call — simple GET with all params in URL (GAS allows CORS on GET natively) */
+async function gasCall(action, body = null) {
+  const token = getToken();
+  const url   = new URL(GAS_URL);
+  url.searchParams.set('action', action);
+  if (token) url.searchParams.set('token', token);
+  if (body)  url.searchParams.set('payload', JSON.stringify(body));
 
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Request timed out — check your internet connection'));
-    }, 20000);
-
-    function cleanup() {
-      clearTimeout(timer);
-      delete window[cbName];
-      const el = document.getElementById(cbName);
-      if (el) el.remove();
-    }
-
-    window[cbName] = function(data) {
-      cleanup();
-      if (!data.success) return reject(new Error(data.message || 'Request failed'));
-      resolve(data.data ?? data);
-    };
-
-    const script = document.createElement('script');
-    script.id      = cbName;
-    script.onerror = function() { cleanup(); reject(new Error('Cannot reach server — check GAS deployment URL')); };
-    script.src     = url.toString();
-    document.head.appendChild(script);
-  });
+  const res  = await fetch(url.toString(), { redirect: 'follow' });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch(_) { throw new Error('Server returned invalid response. Check GAS deployment.'); }
+  if (!data.success) throw new Error(data.message || 'Request failed');
+  return data.data ?? data;
 }
 
 /* Auth */
