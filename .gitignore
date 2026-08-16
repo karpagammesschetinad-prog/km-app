@@ -3,3 +3,4 @@ node_modules/
 *.key
 service-account*.json
 credentials.json
+seed.js
