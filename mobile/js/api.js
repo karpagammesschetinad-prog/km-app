@@ -19,18 +19,9 @@ async function gasCall(action, body = null) {
   const url   = new URL(GAS_URL);
   url.searchParams.set('action', action);
   if (token) url.searchParams.set('token', token);
+  if (body)  url.searchParams.set('payload', JSON.stringify(body));
 
-  let res;
-  if (body) {
-    res = await fetch(url.toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(body)
-    });
-  } else {
-    res = await fetch(url.toString());
-  }
-
+  const res  = await fetch(url.toString());
   const data = await res.json();
   if (!data.success) throw new Error(data.message || 'Request failed');
   return data.data ?? data;

@@ -46,9 +46,11 @@ function handleRequest(e) {
   try {
     const params  = e.parameter || {};
     const action  = params.action || '';
-    const method  = params.method || (e.postData ? 'POST' : 'GET');
     let   body    = {};
-    if (e.postData && e.postData.contents) {
+    // Accept body from GET ?payload= param (most reliable for CORS) or POST body
+    if (params.payload) {
+      try { body = JSON.parse(params.payload); } catch(_) {}
+    } else if (e.postData && e.postData.contents) {
       try { body = JSON.parse(e.postData.contents); } catch(_) {}
     }
 
