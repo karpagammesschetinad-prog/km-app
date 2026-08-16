@@ -2,29 +2,6 @@
    main.js — Shared utilities for all pages
    ============================================= */
 
-/* PWA: inject manifest link + register service worker */
-(function () {
-  // Manifest link
-  const link = document.createElement('link');
-  link.rel = 'manifest'; link.href = '/manifest.json';
-  document.head.appendChild(link);
-  // Theme colour
-  const meta = document.createElement('meta');
-  meta.name = 'theme-color'; meta.content = '#4646eb';
-  document.head.appendChild(meta);
-  // Apple PWA
-  const appleMeta = document.createElement('meta');
-  appleMeta.name = 'apple-mobile-web-app-capable'; appleMeta.content = 'yes';
-  document.head.appendChild(appleMeta);
-  const appleIcon = document.createElement('link');
-  appleIcon.rel = 'apple-touch-icon'; appleIcon.href = '/icons/icon.svg';
-  document.head.appendChild(appleIcon);
-  // Service worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
-  }
-})();
-
 const API_BASE = '/api';
 let CURRENCY = 'USD';
 
