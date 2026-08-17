@@ -121,7 +121,7 @@ let currentUser = null;
 
 async function loadCurrentUser() {
   try {
-    const res = await fetch('/api/auth/me');
+    const res = await fetch('/api/auth/me', { cache: 'no-store' });
     const data = await res.json();
     if (data.success) {
       currentUser = data.data;
@@ -170,10 +170,20 @@ async function requireLogin() {
     const perms = user.permissions || {};
     document.querySelectorAll('[data-screen]').forEach(el => {
       const screen = el.dataset.screen;
+      const sub    = el.dataset.sub || null;
       const sp = perms[screen];
       // Support both old boolean and new nested format
-      const enabled = sp && (typeof sp === 'boolean' ? sp : sp.enabled);
-      if (enabled) el.classList.remove('su-only');
+      const screenEnabled = sp && (typeof sp === 'boolean' ? sp : sp.enabled);
+      if (!screenEnabled) {
+        el.classList.add('su-only'); // hide if screen not enabled
+        return;
+      }
+      if (sub) {
+        // sub-level check (e.g. data-sub="add" on Add Expense link)
+        const subEnabled = typeof sp === 'boolean' ? sp : !!sp[sub];
+        if (!subEnabled) { el.classList.add('su-only'); return; }
+      }
+      el.classList.remove('su-only');
     });
   }
   // Inject user badge + logout into all top navbars
