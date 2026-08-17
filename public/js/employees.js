@@ -57,6 +57,7 @@ function renderTable(list) {
     <tr>
       <td>
         <a href="/employee-detail.html?id=${e.id}" class="fw-semibold text-decoration-none">${e.name}</a>
+        ${e.dailySalaryEnabled ? '<span class="badge bg-info-subtle text-info border border-info-subtle ms-1" style="font-size:.65rem"><i class="bi bi-calendar-day me-1"></i>Daily Pay</span>' : ''}
         ${e.address ? `<div class="text-muted small">${e.address}</div>` : ''}
       </td>
       <td>${e.phone || '—'}</td>
@@ -82,6 +83,7 @@ function setupModal() {
     document.getElementById('empModalTitle').textContent = 'Add Employee';
     document.getElementById('empStartDate').value = new Date().toISOString().split('T')[0];
     document.getElementById('empStatus').value = 'Active';
+    document.getElementById('empDailyPay').checked = false;
     bootstrap.Modal.getOrCreateInstance(document.getElementById('empModal')).show();
   });
   document.getElementById('btnSaveEmployee').addEventListener('click', save);
@@ -92,13 +94,14 @@ async function save() {
   if (!form.checkValidity()) { form.reportValidity(); return; }
 
   const body = {
-    name:         document.getElementById('empName').value.trim(),
-    phone:        document.getElementById('empPhone').value.trim(),
-    address:      document.getElementById('empAddress').value.trim(),
-    startDate:    document.getElementById('empStartDate').value,
-    perDaySalary: parseFloat(document.getElementById('empPerDay').value),
-    dailyPetta:   parseFloat(document.getElementById('empPetta').value) || 0,
-    status:       document.getElementById('empStatus').value
+    name:               document.getElementById('empName').value.trim(),
+    phone:              document.getElementById('empPhone').value.trim(),
+    address:            document.getElementById('empAddress').value.trim(),
+    startDate:          document.getElementById('empStartDate').value,
+    perDaySalary:       parseFloat(document.getElementById('empPerDay').value),
+    dailyPetta:         parseFloat(document.getElementById('empPetta').value) || 0,
+    status:             document.getElementById('empStatus').value,
+    dailySalaryEnabled: document.getElementById('empDailyPay').checked
   };
 
   const btn = document.getElementById('btnSaveEmployee');
@@ -133,6 +136,7 @@ async function openEdit(id) {
   document.getElementById('empPerDay').value    = e.perDaySalary;
   document.getElementById('empPetta').value     = e.dailyPetta;
   document.getElementById('empStatus').value    = e.status;
+  document.getElementById('empDailyPay').checked = !!e.dailySalaryEnabled;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('empModal')).show();
 }
 

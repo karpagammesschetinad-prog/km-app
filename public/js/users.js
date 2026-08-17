@@ -85,8 +85,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('filterRole').addEventListener('change', renderList);
   document.getElementById('filterStatus').addEventListener('change', renderList);
 
+  // Role dropdown preview
+  document.getElementById('uRole').addEventListener('change', onRoleDropdownChange);
+
   await loadUsers();
 });
+
+function onRoleDropdownChange() {
+  const role = document.getElementById('uRole').value;
+  const defaults = ROLE_DEFAULTS[role] || ROLE_DEFAULTS.cashier;
+  const preview = document.getElementById('rolePermPreview');
+  if (!preview) return;
+
+  const lines = SCREEN_PERMISSIONS.map(screen => {
+    const sp = defaults[screen.key] || {};
+    if (!sp.enabled) return `<span class="text-muted text-decoration-line-through">${screen.label}</span>`;
+    const activeSubs = screen.subs.filter(s => sp[s.key]).map(s => s.label);
+    return `<strong>${screen.label}</strong>: ${activeSubs.join(', ') || 'access only'}`;
+  });
+  preview.innerHTML = lines.join('<br>');
+}
 
 function togglePwd(inputId, iconId) {
   const inp = document.getElementById(inputId);
@@ -327,6 +345,7 @@ function openAddModal() {
   document.getElementById('passLabel').innerHTML = 'Password <span class="text-danger">*</span>';
   document.getElementById('passHint').textContent = '';
   document.getElementById('statusRow').style.display = 'none';
+  onRoleDropdownChange();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('userModal')).show();
 }
 
@@ -346,6 +365,7 @@ function openEditModal(id) {
   document.getElementById('passHint').textContent = 'Leave blank to keep current password.';
   document.getElementById('statusRow').style.display = '';
   document.getElementById('uStatus').value = u.status;
+  onRoleDropdownChange();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('userModal')).show();
 }
 

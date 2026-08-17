@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { SHEETS, getAllRows, appendRow, updateRow, deleteRow, findRowById } = require('../services/googleSheets');
 const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware');
+const { ROLE_DEFAULTS } = require('../config/roleDefaults');
 
 const SHEET = SHEETS.USERS;
 const C = { ID: 0, USERNAME: 1, DISPLAY_NAME: 2, ROLE: 3, PASSWORD_HASH: 4, STATUS: 5, CREATED_AT: 6, PERMISSIONS: 7 };
@@ -59,7 +60,8 @@ router.post('/', requireSuperUser, async (req, res) => {
       role,
       passwordHash,
       status: 'Active',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      permissions: ROLE_DEFAULTS[role] || ROLE_DEFAULTS.cashier
     };
     await appendRow(SHEET, objToRow(obj));
     res.status(201).json({ success: true, data: rowToObj(objToRow(obj).reduce((o, v, i) => { o[i] = v; return o; }, [])) });
@@ -86,13 +88,20 @@ router.put('/:id', requireSuperUser, async (req, res) => {
     }
 
     const { permissions } = req.body;
+    const newRole = role !== undefined ? role : existing.role;
+    // When role changes, reset permissions to role defaults unless explicit permissions are also sent
+    const resolvedPermissions = permissions !== undefined
+      ? permissions
+      : (role !== undefined && role !== existing.role)
+        ? ROLE_DEFAULTS[newRole] || ROLE_DEFAULTS.cashier
+        : existing.permissions;
     const updated = {
       ...existing,
       displayName: displayName !== undefined ? displayName.trim() : existing.displayName,
-      role:        role !== undefined ? role : existing.role,
+      role:        newRole,
       status:      status !== undefined ? status : existing.status,
       passwordHash: existing.passwordHash,
-      permissions:  permissions !== undefined ? permissions : existing.permissions
+      permissions:  resolvedPermissions
     };
     if (password && password.trim()) {
       updated.passwordHash = await bcrypt.hash(password.trim(), 10);

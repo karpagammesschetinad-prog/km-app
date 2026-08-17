@@ -81,6 +81,9 @@ function render() {
     : (empData.status === 'Active'
         ? '<span class="badge bg-success">🟢 Active</span>'
         : '<span class="badge bg-secondary">Inactive</span>');
+  const dailyPayBadge = empData.dailySalaryEnabled
+    ? '<span class="badge bg-info-subtle text-info border border-info-subtle ms-1"><i class="bi bi-calendar-day me-1"></i>Daily Pay</span>'
+    : '';
 
   document.getElementById('detailContent').innerHTML = `
 
@@ -88,7 +91,7 @@ function render() {
     <div class="card-panel mb-3">
       <div class="card-panel-header">
         <h6 class="card-panel-title"><i class="bi bi-person-circle me-2"></i>Employee Information</h6>
-        ${statusBadgeHtml}
+        <div class="d-flex gap-1">${statusBadgeHtml}${dailyPayBadge}</div>
       </div>
       <div class="card-panel-body">
         <div class="row g-3">
@@ -262,17 +265,24 @@ function setupModals() {
   // Default date for payment modal
   document.getElementById('paymentModal').addEventListener('show.bs.modal', () => {
     document.getElementById('payDate').value = new Date().toISOString().split('T')[0];
+    // Pre-fill today's date automatically for daily-pay employees
+    if (empData.dailySalaryEnabled) {
+      document.getElementById('payDate').value = new Date().toISOString().split('T')[0];
+      const amountEl = document.getElementById('payAmount');
+      if (!amountEl.value) amountEl.value = empData.perDaySalary || '';
+    }
   });
 }
 
 function openEdit() {
-  document.getElementById('editName').value      = empData.name;
-  document.getElementById('editPhone').value     = empData.phone;
-  document.getElementById('editAddress').value   = empData.address;
-  document.getElementById('editStartDate').value = empData.startDate;
-  document.getElementById('editPerDay').value    = empData.perDaySalary;
-  document.getElementById('editPetta').value     = empData.dailyPetta;
-  document.getElementById('editStatus').value    = empData.status;
+  document.getElementById('editName').value        = empData.name;
+  document.getElementById('editPhone').value       = empData.phone;
+  document.getElementById('editAddress').value     = empData.address;
+  document.getElementById('editStartDate').value   = empData.startDate;
+  document.getElementById('editPerDay').value      = empData.perDaySalary;
+  document.getElementById('editPetta').value       = empData.dailyPetta;
+  document.getElementById('editStatus').value      = empData.status;
+  document.getElementById('editDailyPay').checked  = !!empData.dailySalaryEnabled;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('editEmpModal')).show();
 }
 
@@ -283,13 +293,14 @@ async function saveEdit() {
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
   try {
     await api('PUT', `/employees/${empId}`, {
-      name:         document.getElementById('editName').value.trim(),
-      phone:        document.getElementById('editPhone').value.trim(),
-      address:      document.getElementById('editAddress').value.trim(),
-      startDate:    document.getElementById('editStartDate').value,
-      perDaySalary: parseFloat(document.getElementById('editPerDay').value),
-      dailyPetta:   parseFloat(document.getElementById('editPetta').value) || 0,
-      status:       document.getElementById('editStatus').value
+      name:               document.getElementById('editName').value.trim(),
+      phone:              document.getElementById('editPhone').value.trim(),
+      address:            document.getElementById('editAddress').value.trim(),
+      startDate:          document.getElementById('editStartDate').value,
+      perDaySalary:       parseFloat(document.getElementById('editPerDay').value),
+      dailyPetta:         parseFloat(document.getElementById('editPetta').value) || 0,
+      status:             document.getElementById('editStatus').value,
+      dailySalaryEnabled: document.getElementById('editDailyPay').checked
     });
     bootstrap.Modal.getInstance(document.getElementById('editEmpModal')).hide();
     showNotification('Employee updated.');
