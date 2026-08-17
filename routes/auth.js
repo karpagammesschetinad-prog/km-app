@@ -2,26 +2,9 @@
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { SHEETS, getAllRows } = require('../services/googleSheets');
+const { ROLE_DEFAULTS } = require('../config/roleDefaults');
 
 const C = { ID: 0, USERNAME: 1, DISPLAY_NAME: 2, ROLE: 3, PASSWORD_HASH: 4, STATUS: 5, CREATED_AT: 6, PERMISSIONS: 7 };
-
-// Default screen permissions per role
-const ROLE_DEFAULTS = {
-  superuser: {
-    expenses:   { enabled: true,  view: true,  add: true,  approve: true },
-    categories: { enabled: true,  view: true,  manage: true },
-    employees:  { enabled: true,  view: true,  add: true,  leaves: true, payments: true },
-    salaries:   { enabled: true,  view: true },
-    users:      { enabled: true,  view: true,  manage: true }
-  },
-  cashier: {
-    expenses:   { enabled: true,  view: true,  add: true,  approve: false },
-    categories: { enabled: false, view: false, manage: false },
-    employees:  { enabled: true,  view: true,  add: false,  leaves: true, payments: true },
-    salaries:   { enabled: false, view: false },
-    users:      { enabled: false, view: false, manage: false }
-  }
-};
 
 async function findUser(username) {
   try {
@@ -40,11 +23,25 @@ async function findUser(username) {
     const role = row[C.ROLE] || 'cashier';
     let resolvedPermissions = permissions || ROLE_DEFAULTS[role] || ROLE_DEFAULTS.cashier;
 
-    // Enforce cashier restrictions: salaries is never accessible to non-superuser roles
+    // Enforce role-level screen access using current role defaults.
+    // If role default says a screen is OFF → always block it (security).
+    // If role default says a screen is ON but stored says OFF → stale data, use role default.
+    // If both agree screen is ON → keep stored sub-permissions (user customisation preserved).
     if (role !== 'superuser') {
-      resolvedPermissions = Object.assign({}, resolvedPermissions, {
-        salaries: ROLE_DEFAULTS.cashier.salaries
+      const roleDefault = ROLE_DEFAULTS[role] || ROLE_DEFAULTS.cashier;
+      const merged = {};
+      Object.keys(roleDefault).forEach(screen => {
+        const stored = resolvedPermissions[screen] || {};
+        const def    = roleDefault[screen];
+        if (!def.enabled) {
+          merged[screen] = def;            // role says blocked — always enforce
+        } else if (!stored.enabled) {
+          merged[screen] = def;            // stale stored data — reset to role default
+        } else {
+          merged[screen] = stored;         // screen enabled in both — keep user's sub-perms
+        }
       });
+      resolvedPermissions = merged;
     }
 
     return {
