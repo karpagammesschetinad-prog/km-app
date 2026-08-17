@@ -56,6 +56,37 @@
         </div>
       </div>
       <div class="col-6 col-xl-3">
+        <div class="stat-card" style="cursor:pointer" onclick="document.getElementById('empStatusSection').scrollIntoView({behavior:'smooth'})">
+          <div class="stat-icon bg-info-subtle text-info"><i class="bi bi-calendar-x-fill"></i></div>
+          <div>
+            <div class="stat-label">On Leave</div>
+            <div class="stat-value" id="stat-onleave"><span class="spinner-border spinner-border-sm text-info"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="stat-card" style="cursor:pointer" onclick="document.getElementById('empStatusSection').scrollIntoView({behavior:'smooth'})">
+          <div class="stat-icon bg-danger-subtle text-danger"><i class="bi bi-hourglass-split"></i></div>
+          <div>
+            <div class="stat-label">Salary Pending</div>
+            <div class="stat-value" id="stat-pending-sal"><span class="spinner-border spinner-border-sm text-danger"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="stat-card" style="cursor:pointer" onclick="document.getElementById('empStatusSection').scrollIntoView({behavior:'smooth'})">
+          <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-arrow-up-circle-fill"></i></div>
+          <div>
+            <div class="stat-label">Salary Advance</div>
+            <div class="stat-value" id="stat-advance"><span class="spinner-border spinner-border-sm text-warning"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Expense stat cards -->
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-xl-3">
         <div class="stat-card">
           <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-receipt-cutoff"></i></div>
           <div>
@@ -129,6 +160,22 @@
           </thead>
           <tbody id="recentExpBody">
             <tr><td colspan="5" class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Employee Status -->
+    <div class="card-panel mb-3" id="empStatusSection">
+      <div class="card-panel-header">
+        <h6 class="card-panel-title"><i class="bi bi-people me-2"></i>Employee Status</h6>
+        <a href="/employees.html" class="btn btn-sm btn-outline-primary">View All</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table">
+          <thead><tr><th>Employee</th><th>Status</th><th>Salary Summary</th><th></th></tr></thead>
+          <tbody id="empStatusBody">
+            <tr><td colspan="4" class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></td></tr>
           </tbody>
         </table>
       </div>

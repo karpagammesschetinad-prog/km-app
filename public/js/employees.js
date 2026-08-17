@@ -15,7 +15,7 @@ async function loadEmployeesPage() {
   document.getElementById('empBody').innerHTML = loadingRow(7);
   try {
     allEmployees = await api('GET', '/employees');
-    _cache.employees = allEmployees; // refresh shared cache
+    _cache.employees = allEmployees;
     renderTable(allEmployees);
   } catch (err) {
     document.getElementById('empBody').innerHTML = emptyRow(7, 'Failed to load employees.');
@@ -28,9 +28,7 @@ function setupSearch() {
     const q = this.value.toLowerCase();
     const filtered = allEmployees.filter(e =>
       e.name.toLowerCase().includes(q) ||
-      e.email.toLowerCase().includes(q) ||
-      e.department.toLowerCase().includes(q) ||
-      e.position.toLowerCase().includes(q)
+      (e.phone || '').includes(q)
     );
     renderTable(filtered);
   });
@@ -46,22 +44,18 @@ function renderTable(list) {
   tbody.innerHTML = list.map(e => `
     <tr>
       <td>
-        <div class="fw-semibold">${e.name}</div>
-        <div class="text-muted small">${e.email || '—'}</div>
+        <a href="/employee-detail.html?id=${e.id}" class="fw-semibold text-decoration-none">${e.name}</a>
+        ${e.address ? `<div class="text-muted small">${e.address}</div>` : ''}
       </td>
-      <td>${e.department}</td>
-      <td>${e.position}</td>
-      <td class="fw-semibold">${formatCurrency(e.baseSalary)}</td>
-      <td>${formatDate(e.joinDate)}</td>
+      <td>${e.phone || '—'}</td>
+      <td>${formatDate(e.startDate)}</td>
+      <td class="fw-semibold">${formatCurrency(e.perDaySalary)}</td>
+      <td class="text-warning">${formatCurrency(e.dailyPetta)}</td>
       <td>${statusBadge(e.status)}</td>
       <td>
         <div class="d-flex gap-1">
-          <button class="btn btn-sm btn-outline-primary btn-action" onclick="openEdit('${e.id}')" title="Edit"><i class="bi bi-pencil"></i></button>
-          <button class="btn btn-sm btn-outline-${e.status === 'Active' ? 'warning' : 'success'} btn-action"
-            onclick="toggleStatus('${e.id}','${e.status === 'Active' ? 'Inactive' : 'Active'}')"
-            title="${e.status === 'Active' ? 'Deactivate' : 'Activate'}">
-            <i class="bi bi-${e.status === 'Active' ? 'pause-circle' : 'play-circle'}"></i>
-          </button>
+          <a href="/employee-detail.html?id=${e.id}" class="btn btn-sm btn-outline-primary btn-action" title="View"><i class="bi bi-eye"></i></a>
+          <button class="btn btn-sm btn-outline-secondary btn-action" onclick="openEdit('${e.id}')" title="Edit"><i class="bi bi-pencil"></i></button>
           <button class="btn btn-sm btn-outline-danger btn-action" onclick="remove('${e.id}')" title="Delete"><i class="bi bi-trash"></i></button>
         </div>
       </td>
@@ -74,7 +68,7 @@ function setupModal() {
     editingEmpId = null;
     document.getElementById('empForm').reset();
     document.getElementById('empModalTitle').textContent = 'Add Employee';
-    document.getElementById('empJoinDate').value = new Date().toISOString().split('T')[0];
+    document.getElementById('empStartDate').value = new Date().toISOString().split('T')[0];
     document.getElementById('empStatus').value = 'Active';
     bootstrap.Modal.getOrCreateInstance(document.getElementById('empModal')).show();
   });
@@ -86,13 +80,13 @@ async function save() {
   if (!form.checkValidity()) { form.reportValidity(); return; }
 
   const body = {
-    name: document.getElementById('empName').value.trim(),
-    email: document.getElementById('empEmail').value.trim(),
-    department: document.getElementById('empDept').value,
-    position: document.getElementById('empPosition').value.trim(),
-    baseSalary: parseFloat(document.getElementById('empSalary').value),
-    joinDate: document.getElementById('empJoinDate').value,
-    status: document.getElementById('empStatus').value
+    name:         document.getElementById('empName').value.trim(),
+    phone:        document.getElementById('empPhone').value.trim(),
+    address:      document.getElementById('empAddress').value.trim(),
+    startDate:    document.getElementById('empStartDate').value,
+    perDaySalary: parseFloat(document.getElementById('empPerDay').value),
+    dailyPetta:   parseFloat(document.getElementById('empPetta').value) || 0,
+    status:       document.getElementById('empStatus').value
   };
 
   const btn = document.getElementById('btnSaveEmployee');
@@ -120,24 +114,14 @@ async function openEdit(id) {
   if (!e) return;
   editingEmpId = id;
   document.getElementById('empModalTitle').textContent = 'Edit Employee';
-  document.getElementById('empName').value = e.name;
-  document.getElementById('empEmail').value = e.email;
-  document.getElementById('empDept').value = e.department;
-  document.getElementById('empPosition').value = e.position;
-  document.getElementById('empSalary').value = e.baseSalary;
-  document.getElementById('empJoinDate').value = e.joinDate;
-  document.getElementById('empStatus').value = e.status;
+  document.getElementById('empName').value      = e.name;
+  document.getElementById('empPhone').value     = e.phone;
+  document.getElementById('empAddress').value   = e.address;
+  document.getElementById('empStartDate').value = e.startDate;
+  document.getElementById('empPerDay').value    = e.perDaySalary;
+  document.getElementById('empPetta').value     = e.dailyPetta;
+  document.getElementById('empStatus').value    = e.status;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('empModal')).show();
-}
-
-async function toggleStatus(id, newStatus) {
-  const label = newStatus === 'Active' ? 'activate' : 'deactivate';
-  if (!confirm(`Are you sure you want to ${label} this employee?`)) return;
-  try {
-    await api('PUT', `/employees/${id}`, { status: newStatus });
-    showNotification(`Employee ${newStatus === 'Active' ? 'activated' : 'deactivated'}.`);
-    await loadEmployeesPage();
-  } catch (err) { showNotification('Error: ' + err.message, 'danger'); }
 }
 
 async function remove(id) {

@@ -8,12 +8,16 @@ const SHEETS = {
   EMPLOYEES: 'Employees',
   SALARIES: 'Salaries',
   EXPENSE_CATEGORIES: 'ExpenseCategories',
-  USERS: 'Users'
+  USERS: 'Users',
+  LEAVES: 'Leaves',
+  SALARY_PAYMENTS: 'SalaryPayments'
 };
 
 const HEADERS = {
   EXPENSES: ['ID', 'Date', 'Category', 'Description', 'Amount', 'EmployeeID', 'EmployeeName', 'SubmittedBy', 'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'RejectionReason', 'CreatedAt'],
-  EMPLOYEES: ['ID', 'Name', 'Email', 'Department', 'Position', 'BaseSalary', 'JoinDate', 'Status'],
+  EMPLOYEES: ['ID', 'Name', 'Address', 'Phone', 'StartDate', 'PerDaySalary', 'DailyPetta', 'Status'],
+  LEAVES: ['ID', 'EmployeeID', 'EmployeeName', 'StartDateTime', 'EndDateTime', 'Remarks', 'CreatedBy', 'CreatedAt'],
+  SALARY_PAYMENTS: ['ID', 'EmployeeID', 'EmployeeName', 'PaymentDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARIES: ['ID', 'EmployeeID', 'EmployeeName', 'Month', 'Year', 'BaseSalary', 'Allowances', 'Deductions', 'NetSalary', 'PaymentDate', 'Status'],
   EXPENSE_CATEGORIES: ['ID', 'Name', 'SortOrder', 'Status'],
   USERS: ['ID', 'Username', 'DisplayName', 'Role', 'PasswordHash', 'Status', 'CreatedAt', 'Permissions']
@@ -57,6 +61,19 @@ async function initializeSheets() {
       spreadsheetId: SPREADSHEET_ID,
       range: `${name}!A1:Z1`
     });
+
+    const currentHeader = res.data.values?.[0] || [];
+    const expectedHeader = HEADERS[key];
+
+    // Migrate old Employees header to new schema
+    if (key === 'EMPLOYEES' && currentHeader[2] === 'Email') {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${name}!A1`,
+        valueInputOption: 'RAW',
+        resource: { values: [expectedHeader] }
+      });
+    }
 
     if (!res.data.values || res.data.values.length === 0) {
       await sheets.spreadsheets.values.update({

@@ -8,10 +8,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function loadDashboard() {
   try {
-    const [expenses, employees, salaries] = await Promise.all([
+    const [expenses, employees, salaries, allLeaves, allPayments] = await Promise.all([
       api('GET', '/expenses'),
       api('GET', '/employees'),
-      api('GET', '/salaries')
+      api('GET', '/salaries'),
+      api('GET', '/leaves'),
+      api('GET', '/payments')
     ]);
 
     const now = new Date();
@@ -32,18 +34,79 @@ async function loadDashboard() {
     const totalExp = monthExp.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
     const totalSal = monthSal.reduce((s, e) => s + (parseFloat(e.netSalary) || 0), 0);
 
-    document.getElementById('stat-employees').textContent = activeEmp.length;
-    document.getElementById('stat-expenses').textContent = formatCurrency(totalExp);
-    document.getElementById('stat-salaries').textContent = formatCurrency(totalSal);
-    document.getElementById('stat-pending').textContent = pendingExp.length;
+    // Employee salary summaries
+    const empStats = activeEmp.map(emp => {
+      const leaves  = allLeaves.filter(l => l.employeeId === emp.id);
+      const payments = allPayments.filter(p => p.employeeId === emp.id);
+      const start = new Date(emp.startDate);
+      const end = new Date(); end.setHours(23,59,59,999);
+      const totalDays = Math.max(0, (end - start) / 86400000);
+      const leaveDays = leaves.reduce((sum, l) => {
+        const ls = new Date(l.startDateTime), le = new Date(l.endDateTime);
+        const s = Math.max(ls, start), e = Math.min(le, end);
+        return e > s ? sum + (e - s) / 86400000 : sum;
+      }, 0);
+      const earned = Math.max(0, totalDays - leaveDays) * (emp.perDaySalary - emp.dailyPetta);
+      const paid   = payments.reduce((s, p) => s + p.amount, 0);
+      const balance = earned - paid;
+      const onLeave = leaves.some(l => new Date(l.startDateTime) <= now && now <= new Date(l.endDateTime));
+      return { emp, balance, onLeave };
+    });
+
+    const onLeaveCount   = empStats.filter(x => x.onLeave).length;
+    const pendingSalCount = empStats.filter(x => !x.onLeave && x.balance > 0).length;
+    const advanceCount   = empStats.filter(x => x.balance < 0).length;
+
+    document.getElementById('stat-employees').textContent  = activeEmp.length;
+    document.getElementById('stat-onleave').textContent    = onLeaveCount;
+    document.getElementById('stat-pending-sal').textContent = pendingSalCount;
+    document.getElementById('stat-advance').textContent    = advanceCount;
+    document.getElementById('stat-expenses').textContent   = formatCurrency(totalExp);
+    document.getElementById('stat-salaries').textContent   = formatCurrency(totalSal);
+    document.getElementById('stat-pending').textContent    = pendingExp.length;
 
     renderCategoryChart(monthExp);
     renderTrendChart(expenses);
     renderRecentExpenses(expenses.slice(-6).reverse());
+    renderEmployeeStatus(empStats);
 
   } catch (err) {
     showNotification('Failed to load dashboard: ' + err.message, 'danger');
   }
+}
+
+function renderEmployeeStatus(empStats) {
+  const tbody = document.getElementById('empStatusBody');
+  if (!tbody) return;
+  if (!empStats.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No active employees</td></tr>'; return; }
+
+  tbody.innerHTML = empStats.map(({ emp, balance, onLeave }) => {
+    const isAdv = balance < 0;
+    const amt = Math.abs(balance);
+    let statusBadgeHtml, salBadgeHtml;
+
+    if (onLeave) {
+      statusBadgeHtml = '<span class="badge bg-primary">🔵 On Leave</span>';
+    } else {
+      statusBadgeHtml = '<span class="badge bg-success-subtle text-success border border-success-subtle">🟢 Active</span>';
+    }
+
+    if (isAdv) {
+      salBadgeHtml = `<span class="badge bg-warning-subtle text-warning border border-warning-subtle">🟡 Advance: ${formatCurrency(amt)}</span>`;
+    } else if (balance > 0) {
+      salBadgeHtml = `<span class="badge bg-danger-subtle text-danger border border-danger-subtle">🔴 Pending: ${formatCurrency(amt)}</span>`;
+    } else {
+      salBadgeHtml = `<span class="badge bg-success-subtle text-success border border-success-subtle">✅ Settled</span>`;
+    }
+
+    return `<tr>
+      <td><a href="/employee-detail.html?id=${emp.id}" class="fw-semibold text-decoration-none">${emp.name}</a>
+          ${emp.phone ? `<div class="text-muted small">${emp.phone}</div>` : ''}</td>
+      <td>${statusBadgeHtml}</td>
+      <td>${salBadgeHtml}</td>
+      <td><a href="/employee-detail.html?id=${emp.id}" class="btn btn-xs btn-outline-primary btn-action"><i class="bi bi-eye"></i></a></td>
+    </tr>`;
+  }).join('');
 }
 
 function renderCategoryChart(expenses) {

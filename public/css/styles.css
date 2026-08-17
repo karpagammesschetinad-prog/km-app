@@ -330,3 +330,15 @@ tr th {
   border-color: var(--primary);
   color: #fff;
 }
+
+/* ---- Employee detail info blocks ---- */
+.info-label { font-size: .72rem; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: var(--text-muted); margin-bottom: .2rem; }
+.info-value  { font-size: .9rem; color: var(--text-main); }
+
+/* ---- Salary stat boxes ---- */
+.salary-stat-box { background: #f8fafc; border-radius: 10px; border: 1px solid var(--border); padding: .9rem .75rem; }
+.salary-stat-val  { font-size: 1.15rem; font-weight: 700; line-height: 1.2; }
+.salary-stat-lbl  { font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--text-muted); margin-top: .2rem; }
+
+/* ---- Btn-xs ---- */
+.btn-xs { padding: .18rem .4rem; font-size: .75rem; border-radius: 5px; }

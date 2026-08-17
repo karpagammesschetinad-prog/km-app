@@ -45,7 +45,7 @@
     <div class="filter-bar mb-3 d-flex align-items-center gap-3">
       <i class="bi bi-search text-muted"></i>
       <input type="text" class="form-control form-control-sm" id="empSearch"
-        placeholder="Search by name, email, department, or position…" style="max-width:400px;">
+        placeholder="Search by name or phone…" style="max-width:400px;">
       <span class="ms-auto text-muted small">
         <strong id="empCount">0</strong> employees
       </span>
@@ -60,8 +60,8 @@
         <table class="table">
           <thead>
             <tr>
-              <th>Name / Email</th><th>Department</th><th>Position</th>
-              <th>Base Salary</th><th>Join Date</th><th>Status</th><th>Actions</th>
+              <th>Name</th><th>Phone</th><th>Start Date</th>
+              <th>Per Day</th><th>Petta</th><th>Status</th><th>Actions</th>
             </tr>
           </thead>
           <tbody id="empBody"></tbody>
@@ -85,40 +85,27 @@
           <div class="row g-3">
             <div class="col-md-6">
               <label class="form-label">Full Name <span class="text-danger">*</span></label>
-              <input type="text" class="form-control" id="empName" required placeholder="e.g. Jane Smith">
+              <input type="text" class="form-control" id="empName" required placeholder="e.g. Rajan">
             </div>
             <div class="col-md-6">
-              <label class="form-label">Email <span class="text-danger">*</span></label>
-              <input type="email" class="form-control" id="empEmail" required placeholder="jane@company.com">
+              <label class="form-label">Phone</label>
+              <input type="tel" class="form-control" id="empPhone" placeholder="e.g. 9876543210">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Address</label>
+              <textarea class="form-control" id="empAddress" rows="2" placeholder="Residential address"></textarea>
             </div>
             <div class="col-md-6">
-              <label class="form-label">Department <span class="text-danger">*</span></label>
-              <select class="form-select" id="empDept" required>
-                <option value="">— Select Department —</option>
-                <option>Engineering</option>
-                <option>Marketing</option>
-                <option>Sales</option>
-                <option>Finance</option>
-                <option>HR</option>
-                <option>Operations</option>
-                <option>Design</option>
-                <option>Management</option>
-              </select>
+              <label class="form-label">Start Date <span class="text-danger">*</span></label>
+              <input type="date" class="form-control" id="empStartDate" required>
             </div>
             <div class="col-md-6">
-              <label class="form-label">Position / Role <span class="text-danger">*</span></label>
-              <input type="text" class="form-control" id="empPosition" required placeholder="e.g. Software Engineer">
+              <label class="form-label">Per Day Salary (₹) <span class="text-danger">*</span></label>
+              <input type="number" class="form-control" id="empPerDay" required min="0" step="0.01" placeholder="0">
             </div>
             <div class="col-md-6">
-              <label class="form-label">Base Salary <span class="text-danger">*</span></label>
-              <div class="input-group">
-                <span class="input-group-text">$</span>
-                <input type="number" class="form-control" id="empSalary" required min="0" step="0.01" placeholder="0.00">
-              </div>
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Join Date <span class="text-danger">*</span></label>
-              <input type="date" class="form-control" id="empJoinDate" required>
+              <label class="form-label">Daily Petta (₹)</label>
+              <input type="number" class="form-control" id="empPetta" min="0" step="0.01" value="0" placeholder="0">
             </div>
             <div class="col-md-6">
               <label class="form-label">Status</label>
