@@ -18,13 +18,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadEmployeesPage() {
-  document.getElementById('empBody').innerHTML = loadingRow(7);
+  const showSalary = canAccess('salaries') || canAccess('employees', 'add');
+  // Hide Per Day column header for non-salary users
+  if (!showSalary) {
+    document.querySelectorAll('.col-perday').forEach(el => el.style.display = 'none');
+  }
+  document.getElementById('empBody').innerHTML = loadingRow(showSalary ? 7 : 6);
   try {
     allEmployees = await api('GET', '/employees');
     _cache.employees = allEmployees;
     renderTable(allEmployees);
   } catch (err) {
-    document.getElementById('empBody').innerHTML = emptyRow(7, 'Failed to load employees.');
+    document.getElementById('empBody').innerHTML = emptyRow(showSalary ? 7 : 6, 'Failed to load employees.');
     showNotification('Error: ' + err.message, 'danger');
   }
 }
@@ -44,8 +49,9 @@ function renderTable(list) {
   const tbody = document.getElementById('empBody');
   const countEl = document.getElementById('empCount');
   if (countEl) countEl.textContent = list.length;
+  const showSalary = canAccess('salaries') || canAccess('employees', 'add');
 
-  if (!list.length) { tbody.innerHTML = emptyRow(7, 'No employees found.'); return; }
+  if (!list.length) { tbody.innerHTML = emptyRow(showSalary ? 7 : 6, 'No employees found.'); return; }
 
   tbody.innerHTML = list.map(e => `
     <tr>
@@ -55,7 +61,7 @@ function renderTable(list) {
       </td>
       <td>${e.phone || '—'}</td>
       <td>${formatDate(e.startDate)}</td>
-      <td class="fw-semibold">${formatCurrency(e.perDaySalary)}</td>
+      ${showSalary ? `<td class="fw-semibold">${formatCurrency(e.perDaySalary)}</td>` : ''}
       <td class="text-warning">${formatCurrency(e.dailyPetta)}</td>
       <td>${statusBadge(e.status)}</td>
       <td>
