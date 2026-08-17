@@ -55,7 +55,7 @@ const ROLE_DEFAULTS = {
   cashier: {
     expenses:   { enabled: true,  view: true,  add: true,  approve: false },
     categories: { enabled: false, view: false, manage: false },
-    employees:  { enabled: false, view: false, add: false,  leaves: false, payments: false },
+    employees:  { enabled: true,  view: true,  add: false,  leaves: true, payments: true },
     salaries:   { enabled: false, view: false },
     users:      { enabled: false, view: false, manage: false }
   }

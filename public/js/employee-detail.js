@@ -65,14 +65,16 @@ function isOnLeave() {
 
 /* ── Render entire detail view ── */
 function render() {
-  const sal = calcSalary();
   const onLeave = isOnLeave();
+  const showSalary = canAccess('salaries') || canAccess('employees', 'add'); // superuser or admin sees salary info
 
-  const balanceIsNeg = sal.balance < 0;
-  const balanceAbs = Math.abs(sal.balance);
+  const sal = showSalary ? calcSalary() : null;
+
+  const balanceIsNeg = sal && sal.balance < 0;
+  const balanceAbs = sal ? Math.abs(sal.balance) : 0;
   const balanceLabel = balanceIsNeg ? 'Salary Advance' : 'Salary Pending';
-  const balanceColor = balanceIsNeg ? 'warning' : (sal.balance > 0 ? 'danger' : 'success');
-  const balanceIcon  = balanceIsNeg ? 'bi-arrow-up-circle' : (sal.balance > 0 ? 'bi-hourglass-split' : 'bi-check-circle');
+  const balanceColor = balanceIsNeg ? 'warning' : (sal && sal.balance > 0 ? 'danger' : 'success');
+  const balanceIcon  = balanceIsNeg ? 'bi-arrow-up-circle' : (sal && sal.balance > 0 ? 'bi-hourglass-split' : 'bi-check-circle');
 
   const statusBadgeHtml = onLeave
     ? '<span class="badge bg-primary">🔵 On Leave</span>'
@@ -110,6 +112,7 @@ function render() {
             <div class="info-label">Address</div>
             <div class="info-value">${empData.address || '—'}</div>
           </div>
+          ${showSalary ? `
           <div class="col-sm-6 col-lg-3">
             <div class="info-label">Per Day Salary</div>
             <div class="info-value fw-semibold text-success">${formatCurrency(empData.perDaySalary)}</div>
@@ -121,12 +124,13 @@ function render() {
           <div class="col-sm-6 col-lg-3">
             <div class="info-label">Net Per Day</div>
             <div class="info-value fw-semibold">${formatCurrency(empData.perDaySalary - empData.dailyPetta)}</div>
-          </div>
+          </div>` : ''}
         </div>
       </div>
     </div>
 
     <!-- Salary Summary -->
+    ${showSalary ? `
     <div class="card-panel mb-3">
       <div class="card-panel-header">
         <h6 class="card-panel-title"><i class="bi bi-calculator me-2"></i>Salary Summary</h6>
@@ -175,6 +179,7 @@ function render() {
         </div>
       </div>
     </div>
+    ` : ''}
 
     <!-- Salary Payments -->
     <div class="card-panel mb-3">
@@ -184,8 +189,8 @@ function render() {
       </div>
       <div class="table-responsive">
         <table class="table">
-          <thead><tr><th>Date</th><th>Amount</th><th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
-          <tbody id="paymentsBody">${renderPaymentsRows()}</tbody>
+          <thead><tr><th>Date</th>${showSalary ? '<th>Amount</th>' : ''}<th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
+          <tbody id="paymentsBody">${renderPaymentsRows(showSalary)}</tbody>
         </table>
       </div>
     </div>
@@ -228,12 +233,12 @@ function renderLeaveRows() {
   }).join('');
 }
 
-function renderPaymentsRows() {
-  if (!empPayments.length) return `<tr><td colspan="5" class="text-center text-muted py-3">No payments recorded</td></tr>`;
+function renderPaymentsRows(showAmt = true) {
+  if (!empPayments.length) return `<tr><td colspan="${showAmt ? 5 : 4}" class="text-center text-muted py-3">No payments recorded</td></tr>`;
   return empPayments.map(p => `
     <tr>
       <td>${formatDate(p.paymentDate)}</td>
-      <td class="fw-semibold text-success">${formatCurrency(p.amount)}</td>
+      ${showAmt ? `<td class="fw-semibold text-success">${formatCurrency(p.amount)}</td>` : ''}
       <td>${p.remarks || '—'}</td>
       <td class="text-muted small">${p.createdBy || '—'}</td>
       <td><button class="btn btn-sm btn-outline-danger btn-action" onclick="deletePayment('${p.id}')"><i class="bi bi-trash"></i></button></td>
