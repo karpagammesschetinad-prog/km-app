@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Salaries – BizTracker</title>
+  <title>Salaries ï¿½ BizTracker</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
   <link rel="stylesheet" href="/css/styles.css">
@@ -47,28 +47,28 @@
         <div class="stat-card">
           <div class="stat-icon bg-primary-subtle text-primary"><i class="bi bi-people-fill"></i></div>
           <div><div class="stat-label">Active Employees</div>
-          <div class="stat-value" id="ss-total">—</div></div>
+          <div class="stat-value" id="ss-total">ï¿½</div></div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <div class="stat-card">
           <div class="stat-icon bg-danger-subtle text-danger"><i class="bi bi-hourglass-split"></i></div>
           <div><div class="stat-label">Salary Pending</div>
-          <div class="stat-value" id="ss-pending">—</div></div>
+          <div class="stat-value" id="ss-pending">ï¿½</div></div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <div class="stat-card">
           <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-arrow-up-circle"></i></div>
           <div><div class="stat-label">Salary Advance</div>
-          <div class="stat-value" id="ss-advance">—</div></div>
+          <div class="stat-value" id="ss-advance">ï¿½</div></div>
         </div>
       </div>
       <div class="col-6 col-md-3">
         <div class="stat-card">
           <div class="stat-icon bg-success-subtle text-success"><i class="bi bi-cash-coin"></i></div>
           <div><div class="stat-label">Total Paid (All)</div>
-          <div class="stat-value" id="ss-paid">—</div></div>
+          <div class="stat-value" id="ss-paid">ï¿½</div></div>
         </div>
       </div>
     </div>
@@ -78,7 +78,7 @@
       <div class="card-panel-header">
         <h6 class="card-panel-title">Employee Salary Overview</h6>
         <input type="text" class="form-control form-control-sm" id="salSearch"
-          placeholder="Search employee…" style="max-width:200px" oninput="filterTable()">
+          placeholder="Search employeeï¿½" style="max-width:200px" oninput="filterTable()">
       </div>
       <div class="table-responsive">
         <table class="table">
@@ -89,6 +89,28 @@
             </tr>
           </thead>
           <tbody id="salBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Payment History (all entries, all cashiers) -->
+    <div class="card-panel mt-3">
+      <div class="card-panel-header">
+        <h6 class="card-panel-title">
+          <i class="bi bi-clock-history me-2"></i>Payment History
+          <span class="badge bg-secondary ms-2" id="payLogCount" style="font-size:.75rem">0</span>
+        </h6>
+      </div>
+      <div class="table-responsive">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Date</th><th>Employee</th><th>Amount</th><th>Remarks</th><th>Recorded By</th>
+            </tr>
+          </thead>
+          <tbody id="payLogBody">
+            <tr><td colspan="5" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm me-2"></span>Loadingâ€¦</td></tr>
+          </tbody>
         </table>
       </div>
     </div>

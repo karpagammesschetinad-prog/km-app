@@ -1,6 +1,7 @@
 ﻿/* salaries.js — Salary Overview using per-day salary model */
 
 let allEmpStats = [];
+let allPaymentsLog = [];
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
@@ -17,6 +18,8 @@ async function loadSalaryPage() {
       api('GET', '/leaves'),
       api('GET', '/payments')
     ]);
+
+    allPaymentsLog = allPayments;
 
     const now = new Date();
     const active = employees.filter(e => e.status === 'Active');
@@ -46,6 +49,7 @@ async function loadSalaryPage() {
 
     renderStats(allEmpStats);
     renderTable(allEmpStats);
+    renderPaymentLog(allPaymentsLog, employees);
 
   } catch (err) {
     document.getElementById('salBody').innerHTML = emptyRow(8, 'Failed to load salary data.');
@@ -103,4 +107,37 @@ function filterTable() {
   const q = document.getElementById('salSearch').value.toLowerCase();
   const filtered = allEmpStats.filter(x => x.emp.name.toLowerCase().includes(q));
   renderTable(filtered);
+}
+
+function renderPaymentLog(payments, employees) {
+  const tbody = document.getElementById('payLogBody');
+  if (!tbody) return;
+
+  // Sort newest first
+  const sorted = [...payments].sort((a, b) =>
+    new Date(b.paymentDate) - new Date(a.paymentDate)
+  );
+
+  if (!sorted.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-3">No payment records found.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = sorted.map(p => {
+    const emp = employees.find(e => e.id === p.employeeId);
+    return `<tr>
+      <td>${formatDate(p.paymentDate)}</td>
+      <td>
+        <a href="/employee-detail.html?id=${p.employeeId}" class="fw-semibold text-decoration-none">${p.employeeName}</a>
+        ${emp ? `<div class="text-muted small">${emp.phone || ''}</div>` : ''}
+      </td>
+      <td class="fw-semibold text-success">${formatCurrency(p.amount)}</td>
+      <td>${p.remarks || '\u2014'}</td>
+      <td class="text-muted small">${p.createdBy || '\u2014'}</td>
+    </tr>`;
+  }).join('');
+
+  // Update count badge
+  const badge = document.getElementById('payLogCount');
+  if (badge) badge.textContent = sorted.length;
 }
