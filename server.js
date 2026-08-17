@@ -17,6 +17,9 @@ app.use(session({
   cookie: { httpOnly: true, maxAge: 8 * 60 * 60 * 1000 } // 8 hours
 }));
 
+// Serve JS/CSS with no-cache so browsers always get the latest version
+app.use('/js', express.static(path.join(__dirname, 'public/js'), { etag: false, lastModified: false, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-store'); } }));
+app.use('/css', express.static(path.join(__dirname, 'public/css'), { etag: false, lastModified: false, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-store'); } }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Config endpoint (public)
