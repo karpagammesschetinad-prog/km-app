@@ -324,7 +324,7 @@ tr th {
   border-color: #464feb;
   box-shadow: 0 0 0 3px rgba(70,79,235,.14);
 }
-.su-only { display: none; }
+.su-only { display: none !important; }
 .cat-chip.active-chip {
   background-color: var(--primary);
   border-color: var(--primary);
