@@ -135,15 +135,30 @@ function isSuperUser() {
   return currentUser && currentUser.role === 'superuser';
 }
 
+function canAccess(screen) {
+  if (!currentUser) return false;
+  if (currentUser.role === 'superuser') return true;
+  return !!(currentUser.permissions && currentUser.permissions[screen]);
+}
+
 async function requireLogin() {
   const user = await loadCurrentUser();
   if (!user) {
     window.location.href = '/login.html';
     return null;
   }
-  // Show super-user-only nav items
+
+  // Show nav items based on role or per-user permissions
   if (user.role === 'superuser') {
+    // Superuser sees everything
     document.querySelectorAll('.su-only').forEach(el => el.classList.remove('su-only'));
+  } else {
+    // For other roles: show only permitted screens
+    const perms = user.permissions || {};
+    document.querySelectorAll('[data-screen]').forEach(el => {
+      const screen = el.dataset.screen;
+      if (perms[screen]) el.classList.remove('su-only');
+    });
   }
   // Inject user badge + logout into all top navbars
   const navbar = document.querySelector('.top-navbar');

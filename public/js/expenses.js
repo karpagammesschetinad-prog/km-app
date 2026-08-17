@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Auth guard
   const user = await requireLogin();
   if (!user) return;
+  if (!canAccess('expenses')) { window.location.href = '/index.html'; return; }
 
   document.getElementById('expDate').value = today;
 

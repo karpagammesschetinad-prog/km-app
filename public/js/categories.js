@@ -6,6 +6,7 @@ let editingCatId = null;
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
+  if (!canAccess('categories')) { window.location.href = '/index.html'; return; }
   setupModal();
   await loadCategories();
 });

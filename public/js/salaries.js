@@ -5,6 +5,7 @@ let allEmpStats = [];
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
+  if (!canAccess('salaries')) { window.location.href = '/index.html'; return; }
   await loadSalaryPage();
 });
 

@@ -6,6 +6,7 @@ let editingEmpId = null;
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
+  if (!canAccess('employees')) { window.location.href = '/index.html'; return; }
   await loadEmployeesPage();
   setupSearch();
   setupModal();

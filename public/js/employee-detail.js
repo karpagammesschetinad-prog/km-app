@@ -8,6 +8,7 @@ let empPayments = [];
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
+  if (!canAccess('employees')) { window.location.href = '/index.html'; return; }
 
   empId = new URLSearchParams(location.search).get('id');
   if (!empId) { location.href = '/employees.html'; return; }

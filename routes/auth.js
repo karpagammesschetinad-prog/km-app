@@ -3,20 +3,38 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { SHEETS, getAllRows } = require('../services/googleSheets');
 
-const C = { ID: 0, USERNAME: 1, DISPLAY_NAME: 2, ROLE: 3, PASSWORD_HASH: 4, STATUS: 5 };
+const C = { ID: 0, USERNAME: 1, DISPLAY_NAME: 2, ROLE: 3, PASSWORD_HASH: 4, STATUS: 5, CREATED_AT: 6, PERMISSIONS: 7 };
+
+// Default screen permissions per role
+const ROLE_DEFAULTS = {
+  superuser: { expenses: true, categories: true, employees: true, salaries: true, users: true },
+  cashier:   { expenses: true, categories: false, employees: false, salaries: false, users: false }
+};
 
 async function findUser(username) {
   try {
     const rows = await getAllRows(SHEETS.USERS);
     const row = rows.find(r => (r[C.USERNAME] || '').toLowerCase() === username.toLowerCase());
     if (!row) return null;
+
+    let permissions = null;
+    try { if (row[C.PERMISSIONS]) permissions = JSON.parse(row[C.PERMISSIONS]); } catch (_) {}
+
+    // If permissions is the old array format [{label,allowed}], discard it
+    if (Array.isArray(permissions)) permissions = null;
+
+    // Fall back to role defaults
+    const role = row[C.ROLE] || 'cashier';
+    const resolvedPermissions = permissions || ROLE_DEFAULTS[role] || ROLE_DEFAULTS.cashier;
+
     return {
-      id:          row[C.ID]           || '',
-      username:    row[C.USERNAME]     || '',
-      displayName: row[C.DISPLAY_NAME] || '',
-      role:        row[C.ROLE]         || 'cashier',
-      status:      row[C.STATUS]       || 'Active',
-      passwordHash: row[C.PASSWORD_HASH] || ''
+      id:           row[C.ID]           || '',
+      username:     row[C.USERNAME]     || '',
+      displayName:  row[C.DISPLAY_NAME] || '',
+      role,
+      status:       row[C.STATUS]       || 'Active',
+      passwordHash: row[C.PASSWORD_HASH]|| '',
+      permissions:  resolvedPermissions
     };
   } catch (_) {
     return null;
@@ -37,7 +55,10 @@ router.post('/login', async (req, res) => {
   if (!match) {
     return res.status(401).json({ success: false, message: 'Invalid username or password.' });
   }
-  req.session.user = { id: user.id, username: user.username, role: user.role, displayName: user.displayName };
+  req.session.user = {
+    id: user.id, username: user.username, role: user.role,
+    displayName: user.displayName, permissions: user.permissions
+  };
   res.json({ success: true, data: req.session.user });
 });
 

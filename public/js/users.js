@@ -4,50 +4,26 @@ let allUsers = [];
 let selectedUserId = null;
 let resetTargetId = null;
 
-const PERMISSION_LABELS = [
-  'View all expenses',
-  'Add & edit expenses',
-  'Approve / reject expenses',
-  'View expense report',
-  'Manage categories',
-  'View & manage employees',
-  'Process salaries',
-  'Manage users',
-  'Delete records'
+const SCREEN_PERMISSIONS = [
+  { key: 'expenses',   label: 'Expenses',   icon: 'bi-receipt',      desc: 'View and add expense records' },
+  { key: 'categories', label: 'Categories', icon: 'bi-tags',         desc: 'Manage expense categories' },
+  { key: 'employees',  label: 'Employees',  icon: 'bi-people',       desc: 'View employees, leaves & salaries' },
+  { key: 'salaries',   label: 'Salaries',   icon: 'bi-cash-stack',   desc: 'View salary overview' },
+  { key: 'users',      label: 'Users',      icon: 'bi-person-lock',  desc: 'Manage user accounts (superuser only)' }
 ];
 
 const ROLE_DEFAULTS = {
-  superuser: {
-    'View all expenses': true,
-    'Add & edit expenses': true,
-    'Approve / reject expenses': true,
-    'View expense report': true,
-    'Manage categories': true,
-    'View & manage employees': true,
-    'Process salaries': true,
-    'Manage users': true,
-    'Delete records': true
-  },
-  cashier: {
-    'View all expenses': true,
-    'Add & edit expenses': true,
-    'Approve / reject expenses': false,
-    'View expense report': false,
-    'Manage categories': false,
-    'View & manage employees': false,
-    'Process salaries': false,
-    'Manage users': false,
-    'Delete records': false
-  }
+  superuser: { expenses: true, categories: true, employees: true, salaries: true, users: true },
+  cashier:   { expenses: true, categories: false, employees: false, salaries: false, users: false }
 };
 
-// Returns resolved permissions array [{label, allowed}] for a user
+// Returns resolved screen permissions object for a user
 function resolvePerms(u) {
-  const defaults = ROLE_DEFAULTS[u.role] || {};
-  if (u.permissions && Array.isArray(u.permissions) && u.permissions.length) {
+  // If stored permissions is old array format, ignore it
+  if (u.permissions && !Array.isArray(u.permissions) && typeof u.permissions === 'object') {
     return u.permissions;
   }
-  return PERMISSION_LABELS.map(label => ({ label, allowed: !!defaults[label] }));
+  return ROLE_DEFAULTS[u.role] || ROLE_DEFAULTS.cashier;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -192,22 +168,32 @@ function showDetail(id) {
       <!-- Permissions (editable) -->
       <div class="mb-4">
         <div class="d-flex align-items-center justify-content-between mb-2">
-          <div class="fw-semibold small text-muted" style="text-transform:uppercase;letter-spacing:.5px;font-size:.72rem">Permissions</div>
+          <div class="fw-semibold small text-muted" style="text-transform:uppercase;letter-spacing:.5px;font-size:.72rem">Screen Access</div>
           <button class="btn btn-sm btn-outline-primary" style="font-size:.75rem;padding:.2rem .6rem" onclick="savePermissions('${u.id}')">
             <i class="bi bi-floppy me-1"></i>Save Permissions
           </button>
         </div>
+        ${u.role === 'superuser' ? `
+          <div class="alert alert-primary py-2 mb-0 small"><i class="bi bi-shield-check me-2"></i>Super users always have access to all screens.</div>
+        ` : `
         <div class="p-3 rounded" style="background:#f8fafc;border:1px solid #e2e8f0" id="permList">
-          ${perms.map((p, i) => `
-            <div class="perm-item">
+          ${SCREEN_PERMISSIONS.map(p => {
+            const allowed = perms[p.key] || false;
+            const disabled = p.key === 'users' ? 'disabled title="Users screen requires superuser role"' : '';
+            return `<div class="perm-item">
               <div class="form-check form-switch mb-0 d-flex align-items-center gap-2 w-100">
                 <input class="form-check-input perm-toggle" type="checkbox" role="switch"
-                       id="perm_${i}" data-label="${p.label.replace(/"/g,'&quot;')}" ${p.allowed ? 'checked' : ''}
+                       id="perm_${p.key}" data-key="${p.key}" ${allowed ? 'checked' : ''} ${disabled}
                        style="cursor:pointer;width:2.2em;height:1.1em;margin-top:0">
-                <label class="form-check-label flex-grow-1" for="perm_${i}" style="cursor:pointer">${p.label}</label>
+                <label class="form-check-label flex-grow-1" for="perm_${p.key}" style="cursor:pointer">
+                  <i class="bi ${p.icon} me-2 text-muted"></i>
+                  <span class="fw-semibold">${p.label}</span>
+                  <span class="text-muted ms-2" style="font-size:.8rem">${p.desc}</span>
+                </label>
               </div>
-            </div>`).join('')}
-        </div>
+            </div>`;
+          }).join('')}
+        </div>`}
       </div>
 
       <!-- Actions -->
@@ -235,13 +221,10 @@ function showDetail(id) {
 async function savePermissions(userId) {
   const toggles = document.querySelectorAll('.perm-toggle');
   if (!toggles.length) { showNotification('No permissions to save.', 'warning'); return; }
-  const permissions = Array.from(toggles).map(t => ({
-    label: t.dataset.label,
-    allowed: t.checked
-  }));
+  const permissions = {};
+  toggles.forEach(t => { permissions[t.dataset.key] = t.checked; });
   try {
     await api('PUT', '/users/' + userId, { permissions });
-    // Update in-memory user
     const u = allUsers.find(x => x.id === userId);
     if (u) u.permissions = permissions;
     showNotification('Permissions saved.');
