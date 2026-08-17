@@ -135,7 +135,7 @@ function isSuperUser() {
   return currentUser && currentUser.role === 'superuser';
 }
 
-function canAccess(screen) {
+function canAccess(screen, sub = null) {
   if (!currentUser) return false;
   if (currentUser.role === 'superuser') return true;
   const perms = currentUser.permissions;

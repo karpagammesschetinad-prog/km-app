@@ -38,7 +38,14 @@ async function findUser(username) {
 
     // Fall back to role defaults
     const role = row[C.ROLE] || 'cashier';
-    const resolvedPermissions = permissions || ROLE_DEFAULTS[role] || ROLE_DEFAULTS.cashier;
+    let resolvedPermissions = permissions || ROLE_DEFAULTS[role] || ROLE_DEFAULTS.cashier;
+
+    // Enforce cashier restrictions: salaries is never accessible to non-superuser roles
+    if (role !== 'superuser') {
+      resolvedPermissions = Object.assign({}, resolvedPermissions, {
+        salaries: ROLE_DEFAULTS.cashier.salaries
+      });
+    }
 
     return {
       id:           row[C.ID]           || '',

@@ -30,7 +30,7 @@ const SCREEN_PERMISSIONS = [
     ]
   },
   {
-    key: 'salaries', label: 'Salaries', icon: 'bi-cash-stack',
+    key: 'salaries', label: 'Salaries', icon: 'bi-cash-stack', superuserOnly: true,
     subs: [
       { key: 'view', label: 'View salary overview' }
     ]
@@ -236,7 +236,7 @@ function showDetail(id) {
                   onchange="onScreenToggle('${screen.key}', this.checked)">
                 <label class="form-check-label fw-semibold" for="scr_${screen.key}" style="cursor:pointer">
                   <i class="bi ${screen.icon} me-1 text-primary"></i>${screen.label}
-                  ${screen.superuserOnly ? '<span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-1" style="font-size:.65rem">Superuser only</span>' : ''}
+                  ${screen.superuserOnly ? `<span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-1" style="font-size:.65rem">${screen.key === 'users' ? 'Superuser only' : 'Superuser only'}</span>` : ''}
                 </label>
               </div>
               <!-- Sub-items -->
