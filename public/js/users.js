@@ -5,24 +5,67 @@ let selectedUserId = null;
 let resetTargetId = null;
 
 const SCREEN_PERMISSIONS = [
-  { key: 'expenses',   label: 'Expenses',   icon: 'bi-receipt',      desc: 'View and add expense records' },
-  { key: 'categories', label: 'Categories', icon: 'bi-tags',         desc: 'Manage expense categories' },
-  { key: 'employees',  label: 'Employees',  icon: 'bi-people',       desc: 'View employees, leaves & salaries' },
-  { key: 'salaries',   label: 'Salaries',   icon: 'bi-cash-stack',   desc: 'View salary overview' },
-  { key: 'users',      label: 'Users',      icon: 'bi-person-lock',  desc: 'Manage user accounts (superuser only)' }
+  {
+    key: 'expenses', label: 'Expenses', icon: 'bi-receipt',
+    subs: [
+      { key: 'view',    label: 'View expense list' },
+      { key: 'add',     label: 'Add / edit expenses' },
+      { key: 'approve', label: 'Approve / reject expenses' }
+    ]
+  },
+  {
+    key: 'categories', label: 'Categories', icon: 'bi-tags',
+    subs: [
+      { key: 'view',   label: 'View categories' },
+      { key: 'manage', label: 'Add / edit / delete categories' }
+    ]
+  },
+  {
+    key: 'employees', label: 'Employees', icon: 'bi-people',
+    subs: [
+      { key: 'view',     label: 'View employee list' },
+      { key: 'add',      label: 'Add / edit employees' },
+      { key: 'leaves',   label: 'Manage leave records' },
+      { key: 'payments', label: 'Record salary payments' }
+    ]
+  },
+  {
+    key: 'salaries', label: 'Salaries', icon: 'bi-cash-stack',
+    subs: [
+      { key: 'view', label: 'View salary overview' }
+    ]
+  },
+  {
+    key: 'users', label: 'Users', icon: 'bi-person-lock', superuserOnly: true,
+    subs: [
+      { key: 'view',   label: 'View users list' },
+      { key: 'manage', label: 'Add / edit / delete users' }
+    ]
+  }
 ];
 
 const ROLE_DEFAULTS = {
-  superuser: { expenses: true, categories: true, employees: true, salaries: true, users: true },
-  cashier:   { expenses: true, categories: false, employees: false, salaries: false, users: false }
+  superuser: {
+    expenses:   { enabled: true,  view: true,  add: true,  approve: true },
+    categories: { enabled: true,  view: true,  manage: true },
+    employees:  { enabled: true,  view: true,  add: true,  leaves: true, payments: true },
+    salaries:   { enabled: true,  view: true },
+    users:      { enabled: true,  view: true,  manage: true }
+  },
+  cashier: {
+    expenses:   { enabled: true,  view: true,  add: true,  approve: false },
+    categories: { enabled: false, view: false, manage: false },
+    employees:  { enabled: false, view: false, add: false,  leaves: false, payments: false },
+    salaries:   { enabled: false, view: false },
+    users:      { enabled: false, view: false, manage: false }
+  }
 };
 
 // Returns resolved screen permissions object for a user
 function resolvePerms(u) {
-  // If stored permissions is old array format, ignore it
-  if (u.permissions && !Array.isArray(u.permissions) && typeof u.permissions === 'object') {
-    return u.permissions;
-  }
+  const p = u.permissions;
+  // Valid new format: non-array object with nested screen objects
+  if (p && !Array.isArray(p) && typeof p === 'object' && typeof p.expenses === 'object') return p;
   return ROLE_DEFAULTS[u.role] || ROLE_DEFAULTS.cashier;
 }
 
@@ -176,20 +219,41 @@ function showDetail(id) {
         ${u.role === 'superuser' ? `
           <div class="alert alert-primary py-2 mb-0 small"><i class="bi bi-shield-check me-2"></i>Super users always have access to all screens.</div>
         ` : `
-        <div class="p-3 rounded" style="background:#f8fafc;border:1px solid #e2e8f0" id="permList">
-          ${SCREEN_PERMISSIONS.map(p => {
-            const allowed = perms[p.key] || false;
-            const disabled = p.key === 'users' ? 'disabled title="Users screen requires superuser role"' : '';
-            return `<div class="perm-item">
-              <div class="form-check form-switch mb-0 d-flex align-items-center gap-2 w-100">
-                <input class="form-check-input perm-toggle" type="checkbox" role="switch"
-                       id="perm_${p.key}" data-key="${p.key}" ${allowed ? 'checked' : ''} ${disabled}
-                       style="cursor:pointer;width:2.2em;height:1.1em;margin-top:0">
-                <label class="form-check-label flex-grow-1" for="perm_${p.key}" style="cursor:pointer">
-                  <i class="bi ${p.icon} me-2 text-muted"></i>
-                  <span class="fw-semibold">${p.label}</span>
-                  <span class="text-muted ms-2" style="font-size:.8rem">${p.desc}</span>
+        <div id="permList" style="display:flex;flex-direction:column;gap:.5rem">
+          ${SCREEN_PERMISSIONS.map(screen => {
+            const sp = perms[screen.key] || {};
+            const screenEnabled = !!sp.enabled;
+            const isDisabled = screen.superuserOnly ? 'disabled' : '';
+            const disabledTitle = screen.superuserOnly ? 'title="Requires superuser role"' : '';
+            return `
+            <div class="perm-screen-block border rounded p-2" style="background:#f8fafc" data-screen-key="${screen.key}">
+              <!-- Screen header -->
+              <div class="form-check form-switch d-flex align-items-center gap-2 mb-1">
+                <input class="form-check-input perm-screen-toggle" type="checkbox" role="switch"
+                  id="scr_${screen.key}" data-screen="${screen.key}"
+                  ${screenEnabled ? 'checked' : ''} ${isDisabled} ${disabledTitle}
+                  style="width:2.2em;height:1.1em;margin-top:0;cursor:pointer"
+                  onchange="onScreenToggle('${screen.key}', this.checked)">
+                <label class="form-check-label fw-semibold" for="scr_${screen.key}" style="cursor:pointer">
+                  <i class="bi ${screen.icon} me-1 text-primary"></i>${screen.label}
+                  ${screen.superuserOnly ? '<span class="badge bg-danger-subtle text-danger border border-danger-subtle ms-1" style="font-size:.65rem">Superuser only</span>' : ''}
                 </label>
+              </div>
+              <!-- Sub-items -->
+              <div class="ps-4 perm-subs" id="subs_${screen.key}" ${!screenEnabled ? 'style="opacity:.4;pointer-events:none"' : ''}>
+                ${screen.subs.map(sub => {
+                  const subEnabled = !!sp[sub.key];
+                  return `<div class="form-check d-flex align-items-center gap-2 mb-1">
+                    <input class="form-check-input perm-sub-toggle" type="checkbox"
+                      id="sub_${screen.key}_${sub.key}"
+                      data-screen="${screen.key}" data-sub="${sub.key}"
+                      ${subEnabled ? 'checked' : ''} ${isDisabled}
+                      style="cursor:pointer">
+                    <label class="form-check-label small text-muted" for="sub_${screen.key}_${sub.key}" style="cursor:pointer">
+                      ${sub.label}
+                    </label>
+                  </div>`;
+                }).join('')}
               </div>
             </div>`;
           }).join('')}
@@ -217,12 +281,28 @@ function showDetail(id) {
     </div>`;
 }
 
+/* ---- Screen toggle: enable/disable all subs ---- */
+function onScreenToggle(screenKey, enabled) {
+  const subsDiv = document.getElementById('subs_' + screenKey);
+  if (subsDiv) {
+    subsDiv.style.opacity = enabled ? '1' : '0.4';
+    subsDiv.style.pointerEvents = enabled ? '' : 'none';
+  }
+}
+
 /* ---- Save permissions ---- */
 async function savePermissions(userId) {
-  const toggles = document.querySelectorAll('.perm-toggle');
-  if (!toggles.length) { showNotification('No permissions to save.', 'warning'); return; }
   const permissions = {};
-  toggles.forEach(t => { permissions[t.dataset.key] = t.checked; });
+  SCREEN_PERMISSIONS.forEach(screen => {
+    const screenEl = document.getElementById('scr_' + screen.key);
+    if (!screenEl) return;
+    const sp = { enabled: screenEl.checked };
+    screen.subs.forEach(sub => {
+      const subEl = document.getElementById('sub_' + screen.key + '_' + sub.key);
+      sp[sub.key] = subEl ? subEl.checked : false;
+    });
+    permissions[screen.key] = sp;
+  });
   try {
     await api('PUT', '/users/' + userId, { permissions });
     const u = allUsers.find(x => x.id === userId);

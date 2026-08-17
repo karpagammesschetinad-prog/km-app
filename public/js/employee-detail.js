@@ -180,9 +180,7 @@ function render() {
     <div class="card-panel mb-3">
       <div class="card-panel-header">
         <h6 class="card-panel-title"><i class="bi bi-cash-coin me-2"></i>Salary Payments</h6>
-        <button class="btn btn-sm btn-primary" id="btnAddPayment">
-          <i class="bi bi-plus-lg me-1"></i>Record Payment
-        </button>
+        ${canAccess('employees','payments') ? `<button class="btn btn-sm btn-primary" id="btnAddPayment"><i class="bi bi-plus-lg me-1"></i>Record Payment</button>` : ''}
       </div>
       <div class="table-responsive">
         <table class="table">
@@ -196,9 +194,7 @@ function render() {
     <div class="card-panel mb-3">
       <div class="card-panel-header">
         <h6 class="card-panel-title"><i class="bi bi-calendar-x me-2"></i>Leave History</h6>
-        <button class="btn btn-sm btn-outline-primary" id="btnAddLeave">
-          <i class="bi bi-plus-lg me-1"></i>Add Leave
-        </button>
+        ${canAccess('employees','leaves') ? `<button class="btn btn-sm btn-outline-primary" id="btnAddLeave"><i class="bi bi-plus-lg me-1"></i>Add Leave</button>` : ''}
       </div>
       <div class="table-responsive">
         <table class="table">
@@ -209,10 +205,10 @@ function render() {
     </div>
   `;
 
-  document.getElementById('btnAddLeave').addEventListener('click', () =>
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('leaveModal')).show());
-  document.getElementById('btnAddPayment').addEventListener('click', () =>
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('paymentModal')).show());
+  const btnLeave   = document.getElementById('btnAddLeave');
+  const btnPayment  = document.getElementById('btnAddPayment');
+  if (btnLeave)   btnLeave.addEventListener('click',   () => bootstrap.Modal.getOrCreateInstance(document.getElementById('leaveModal')).show());
+  if (btnPayment) btnPayment.addEventListener('click', () => bootstrap.Modal.getOrCreateInstance(document.getElementById('paymentModal')).show());
 }
 
 function renderLeaveRows() {

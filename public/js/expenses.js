@@ -12,6 +12,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!user) return;
   if (!canAccess('expenses')) { window.location.href = '/index.html'; return; }
 
+  // Hide add form if no add sub-permission
+  if (!canAccess('expenses', 'add')) {
+    const addSection = document.getElementById('addExpenseSection');
+    if (addSection) addSection.style.display = 'none';
+  }
+
   document.getElementById('expDate').value = today;
 
   const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
@@ -295,7 +301,7 @@ function renderSummary() {
 
     let actionBtns = `<button class="btn btn-sm btn-outline-secondary btn-action me-1"
       onclick="editFromReport('${date}')" title="Edit"><i class="bi bi-pencil"></i></button>`;
-    if (isSuperUser() && entry.status === 'Pending') {
+    if (isSuperUser() || canAccess('expenses','approve')) {
       actionBtns +=
         `<button class="btn btn-sm btn-success btn-action me-1" onclick="approveDate('${date}')" title="Approve">
           <i class="bi bi-check-lg"></i></button>` +

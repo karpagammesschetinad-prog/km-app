@@ -7,8 +7,20 @@ const C = { ID: 0, USERNAME: 1, DISPLAY_NAME: 2, ROLE: 3, PASSWORD_HASH: 4, STAT
 
 // Default screen permissions per role
 const ROLE_DEFAULTS = {
-  superuser: { expenses: true, categories: true, employees: true, salaries: true, users: true },
-  cashier:   { expenses: true, categories: false, employees: false, salaries: false, users: false }
+  superuser: {
+    expenses:   { enabled: true,  view: true,  add: true,  approve: true },
+    categories: { enabled: true,  view: true,  manage: true },
+    employees:  { enabled: true,  view: true,  add: true,  leaves: true, payments: true },
+    salaries:   { enabled: true,  view: true },
+    users:      { enabled: true,  view: true,  manage: true }
+  },
+  cashier: {
+    expenses:   { enabled: true,  view: true,  add: true,  approve: false },
+    categories: { enabled: false, view: false, manage: false },
+    employees:  { enabled: false, view: false, add: false,  leaves: false, payments: false },
+    salaries:   { enabled: false, view: false },
+    users:      { enabled: false, view: false, manage: false }
+  }
 };
 
 async function findUser(username) {
@@ -20,8 +32,9 @@ async function findUser(username) {
     let permissions = null;
     try { if (row[C.PERMISSIONS]) permissions = JSON.parse(row[C.PERMISSIONS]); } catch (_) {}
 
-    // If permissions is the old array format [{label,allowed}], discard it
+    // If permissions is the old array format [{label,allowed}] or old flat boolean map, discard it
     if (Array.isArray(permissions)) permissions = null;
+    if (permissions && typeof permissions.expenses !== 'object') permissions = null;
 
     // Fall back to role defaults
     const role = row[C.ROLE] || 'cashier';

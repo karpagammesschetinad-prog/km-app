@@ -139,11 +139,19 @@ function canAccess(screen) {
   if (!currentUser) return false;
   if (currentUser.role === 'superuser') return true;
   const perms = currentUser.permissions;
-  // If no permissions stored yet, fall back to role defaults (cashier = expenses only)
   if (!perms || typeof perms !== 'object') {
-    return screen === 'expenses';
+    // No permissions stored: cashier default
+    if (screen === 'expenses') return sub ? (sub === 'view' || sub === 'add') : true;
+    return false;
   }
-  return !!perms[screen];
+  const sp = perms[screen];
+  if (!sp) return false;
+  // Old flat boolean format (migration)
+  if (typeof sp === 'boolean') return sp;
+  // New nested format
+  if (!sp.enabled) return false;
+  if (sub === null) return true;
+  return !!sp[sub];
 }
 
 async function requireLogin() {
@@ -162,7 +170,10 @@ async function requireLogin() {
     const perms = user.permissions || {};
     document.querySelectorAll('[data-screen]').forEach(el => {
       const screen = el.dataset.screen;
-      if (perms[screen]) el.classList.remove('su-only');
+      const sp = perms[screen];
+      // Support both old boolean and new nested format
+      const enabled = sp && (typeof sp === 'boolean' ? sp : sp.enabled);
+      if (enabled) el.classList.remove('su-only');
     });
   }
   // Inject user badge + logout into all top navbars

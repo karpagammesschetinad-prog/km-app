@@ -10,6 +10,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadEmployeesPage();
   setupSearch();
   setupModal();
+  // Hide Add button if no add sub-permission
+  if (!canAccess('employees', 'add')) {
+    const btn = document.getElementById('btnAddEmployee');
+    if (btn) btn.style.display = 'none';
+  }
 });
 
 async function loadEmployeesPage() {
@@ -55,9 +60,9 @@ function renderTable(list) {
       <td>${statusBadge(e.status)}</td>
       <td>
         <div class="d-flex gap-1">
-          <a href="/employee-detail.html?id=${e.id}" class="btn btn-sm btn-outline-primary btn-action" title="View"><i class="bi bi-eye"></i></a>
-          <button class="btn btn-sm btn-outline-secondary btn-action" onclick="openEdit('${e.id}')" title="Edit"><i class="bi bi-pencil"></i></button>
-          <button class="btn btn-sm btn-outline-danger btn-action" onclick="remove('${e.id}')" title="Delete"><i class="bi bi-trash"></i></button>
+                  <a href="/employee-detail.html?id=${e.id}" class="btn btn-sm btn-outline-primary btn-action" title="View"><i class="bi bi-eye"></i></a>
+          ${canAccess('employees','add') ? `<button class="btn btn-sm btn-outline-secondary btn-action" onclick="openEdit('${e.id}')" title="Edit"><i class="bi bi-pencil"></i></button>` : ''}
+          ${(isSuperUser()) ? `<button class="btn btn-sm btn-outline-danger btn-action" onclick="remove('${e.id}')" title="Delete"><i class="bi bi-trash"></i></button>` : ''}
         </div>
       </td>
     </tr>
