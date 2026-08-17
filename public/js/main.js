@@ -138,7 +138,12 @@ function isSuperUser() {
 function canAccess(screen) {
   if (!currentUser) return false;
   if (currentUser.role === 'superuser') return true;
-  return !!(currentUser.permissions && currentUser.permissions[screen]);
+  const perms = currentUser.permissions;
+  // If no permissions stored yet, fall back to role defaults (cashier = expenses only)
+  if (!perms || typeof perms !== 'object') {
+    return screen === 'expenses';
+  }
+  return !!perms[screen];
 }
 
 async function requireLogin() {

@@ -69,9 +69,16 @@ router.post('/logout', (req, res) => {
 });
 
 // GET /api/auth/me
-router.get('/me', (req, res) => {
+router.get('/me', async (req, res) => {
   if (!req.session || !req.session.user) {
     return res.status(401).json({ success: false, message: 'Not authenticated.' });
+  }
+  // If permissions missing from session (old session), re-fetch from sheet
+  if (!req.session.user.permissions) {
+    const fresh = await findUser(req.session.user.username);
+    if (fresh) {
+      req.session.user.permissions = fresh.permissions;
+    }
   }
   res.json({ success: true, data: req.session.user });
 });
