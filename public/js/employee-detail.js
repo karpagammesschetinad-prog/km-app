@@ -189,8 +189,8 @@ function render() {
       </div>
       <div class="table-responsive">
         <table class="table">
-          <thead><tr><th>Date</th>${showSalary ? '<th>Amount</th>' : ''}<th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
-          <tbody id="paymentsBody">${renderPaymentsRows(showSalary)}</tbody>
+          <thead><tr><th>Date</th><th>Amount</th><th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
+          <tbody id="paymentsBody">${renderPaymentsRows(isSuperUser() ? empPayments : empPayments.filter(p => p.createdBy === currentUser.displayName))}</tbody>
         </table>
       </div>
     </div>
@@ -233,12 +233,12 @@ function renderLeaveRows() {
   }).join('');
 }
 
-function renderPaymentsRows(showAmt = true) {
-  if (!empPayments.length) return `<tr><td colspan="${showAmt ? 5 : 4}" class="text-center text-muted py-3">No payments recorded</td></tr>`;
-  return empPayments.map(p => `
+function renderPaymentsRows(payments) {
+  if (!payments || !payments.length) return `<tr><td colspan="5" class="text-center text-muted py-3">No payments recorded</td></tr>`;
+  return payments.map(p => `
     <tr>
       <td>${formatDate(p.paymentDate)}</td>
-      ${showAmt ? `<td class="fw-semibold text-success">${formatCurrency(p.amount)}</td>` : ''}
+      <td class="fw-semibold text-success">${formatCurrency(p.amount)}</td>
       <td>${p.remarks || '—'}</td>
       <td class="text-muted small">${p.createdBy || '—'}</td>
       <td><button class="btn btn-sm btn-outline-danger btn-action" onclick="deletePayment('${p.id}')"><i class="bi bi-trash"></i></button></td>
