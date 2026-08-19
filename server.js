@@ -38,6 +38,7 @@ app.use('/api/categories', require('./routes/categories'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/leaves', require('./routes/leaves'));
 app.use('/api/payments', require('./routes/payments'));
+app.use('/api/petta', require('./routes/petta'));
 
 // Health check
 app.get('/api/health', (req, res) => {

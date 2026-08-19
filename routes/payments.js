@@ -3,6 +3,8 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { SHEETS, getAllRows, appendRow, deleteRow, findRowById } = require('../services/googleSheets');
 
+const EXPENSE_SHEET = SHEETS.EXPENSES;
+
 const SHEET = SHEETS.SALARY_PAYMENTS;
 const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
 
@@ -35,7 +37,7 @@ router.get('/', async (req, res) => {
 // POST /api/payments
 router.post('/', async (req, res) => {
   try {
-    const { employeeId, employeeName, paymentDate, amount, remarks } = req.body;
+    const { employeeId, employeeName, paymentDate, amount, remarks, addAsExpense } = req.body;
     if (!employeeId || !paymentDate || amount === undefined) {
       return res.status(400).json({ success: false, message: 'employeeId, paymentDate and amount are required.' });
     }
@@ -54,6 +56,29 @@ router.post('/', async (req, res) => {
     };
     await appendRow(SHEET, [obj.id, obj.employeeId, obj.employeeName, obj.paymentDate,
                             obj.amount, obj.remarks, obj.createdBy, obj.createdAt]);
+
+    // Also record as an expense if cashier confirmed
+    if (addAsExpense) {
+      const user = req.session?.user || {};
+      const isSuperUser = user.role === 'superuser';
+      const expenseRow = [
+        uuidv4(),                          // ID
+        paymentDate,                       // Date
+        employeeName || employeeId,        // Category (employee name)
+        remarks || `Salary payment to ${employeeName || employeeId}`, // Description
+        obj.amount,                        // Amount
+        employeeId,                        // EmployeeID
+        employeeName || '',                // EmployeeName
+        user.username || obj.createdBy,    // SubmittedBy
+        isSuperUser ? 'Approved' : 'Pending', // ApprovalStatus
+        isSuperUser ? user.username : '',  // ApprovedBy
+        isSuperUser ? new Date().toISOString() : '', // ApprovedAt
+        '',                                // RejectionReason
+        obj.createdAt                      // CreatedAt
+      ];
+      await appendRow(EXPENSE_SHEET, expenseRow);
+    }
+
     res.status(201).json({ success: true, data: obj });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

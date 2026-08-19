@@ -93,6 +93,10 @@ function loadDateIntoForm(date) {
   const remarkRow = allExpenses.find(e => e.date === date && e.description);
   document.getElementById('expRemarks').value = remarkRow ? remarkRow.description : '';
 
+  // Check if date is approved
+  const approvedRow = allExpenses.find(e => e.date === date && (e.approvalStatus === 'Approved' || e.approvalStatus === 'AutoApproved'));
+  const isApproved = !!approvedRow && !isSuperUser();
+
   // Show rejection notice if cashier sees a rejected date
   const rejectedRow = allExpenses.find(e => e.date === date && e.approvalStatus === 'Rejected');
   const noticeEl = document.getElementById('rejectionNotice');
@@ -102,12 +106,33 @@ function loadDateIntoForm(date) {
       (rejectedRow.rejectionReason || 'Please correct and resubmit.') +
       ' <em class="text-muted small">— ' + rejectedRow.approvedBy + '</em>';
     noticeEl.style.display = '';
+  } else if (isApproved) {
+    noticeEl.innerHTML =
+      '<i class="bi bi-check-circle-fill me-2 text-success"></i><strong>Approved</strong> ' +
+      '<span class="text-muted small">— This date\'s expenses have been approved and cannot be edited.</span>';
+    noticeEl.className = 'alert alert-success';
+    noticeEl.style.display = '';
   } else {
+    noticeEl.style.display = '';
+    noticeEl.className = 'alert alert-danger';
     noticeEl.style.display = 'none';
   }
 
-  buildCategoryInputs(existing);
+  buildCategoryInputs(existing, isApproved);
   updateTotal();
+
+  // Disable save button and remarks if approved
+  const btnSave = document.getElementById('btnSaveExpense');
+  const remarksInput = document.getElementById('expRemarks');
+  if (isApproved) {
+    btnSave.disabled = true;
+    btnSave.innerHTML = '<i class="bi bi-lock me-1"></i>Approved';
+    remarksInput.readOnly = true;
+  } else {
+    btnSave.disabled = false;
+    btnSave.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Expense';
+    remarksInput.readOnly = false;
+  }
 }
 
 function getExistingForDate(date) {
@@ -120,18 +145,20 @@ function getExistingForDate(date) {
 
 /* ---- Category inputs ---- */
 
-function buildCategoryInputs(existingMap) {
+function buildCategoryInputs(existingMap, isReadOnly) {
   existingMap = existingMap || {};
   const active = allCategories
     .filter(c => c.status === 'Active')
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const container = document.getElementById('categoryInputs');
 
-  if (!active.length) {
+  if (!active.length && !Object.keys(existingMap).length) {
     container.innerHTML = '<div class="text-center text-muted py-3">No active categories. <a href="/categories.html">Manage</a></div>';
     return;
   }
 
+  const activeCatNames = active.map(c => c.name);
+  const readonlyAttr = isReadOnly ? ' readonly disabled style="font-size:1rem;background:#f8f9fa"' : ' style="font-size:1rem"';
   const items = active.map(c => {
     const val = existingMap[c.name] > 0 ? existingMap[c.name] : '';
     return '<div class="d-flex align-items-center gap-3 py-2 border-bottom">' +
@@ -139,10 +166,24 @@ function buildCategoryInputs(existingMap) {
       '<div class="input-group" style="width:160px;flex-shrink:0">' +
       '<span class="input-group-text fw-semibold" style="font-size:1rem">&#8377;</span>' +
       '<input type="number" class="form-control cat-amount" data-category="' + c.name + '" ' +
-      'min="0" step="0.01" placeholder="0" value="' + val + '" oninput="updateTotal()" style="font-size:1rem">' +
+      'min="0" step="0.01" placeholder="0" value="' + val + '" oninput="updateTotal()"' + readonlyAttr + '>' +
       '</div></div>';
   }).join('');
-  container.innerHTML = '<div>' + items + '</div>';
+
+  // Show read-only entries for categories not in the active list (e.g. employee salary payments)
+  const extraItems = Object.keys(existingMap)
+    .filter(k => !activeCatNames.includes(k) && existingMap[k] > 0)
+    .map(k => {
+      return '<div class="d-flex align-items-center gap-3 py-2 border-bottom bg-light rounded px-2">' +
+        '<span class="fw-medium flex-grow-1" style="font-size:1rem"><i class="bi bi-lock me-1 text-muted"></i>' + k + '</span>' +
+        '<div class="input-group" style="width:160px;flex-shrink:0">' +
+        '<span class="input-group-text fw-semibold" style="font-size:1rem">&#8377;</span>' +
+        '<input type="number" class="form-control cat-amount" data-category="' + k + '" ' +
+        'value="' + existingMap[k] + '" readonly disabled style="font-size:1rem;background:#f8f9fa">' +
+        '</div></div>';
+    }).join('');
+
+  container.innerHTML = '<div>' + items + extraItems + '</div>';
 }
 
 function updateTotal() {
@@ -160,7 +201,7 @@ async function save() {
   if (!date) { showNotification('Please select a date.', 'warning'); return; }
 
   const entries = [];
-  document.querySelectorAll('.cat-amount').forEach(inp => {
+  document.querySelectorAll('.cat-amount:not([readonly])').forEach(inp => {
     const amount = parseFloat(inp.value);
     if (amount > 0) entries.push({ category: inp.dataset.category, amount });
   });

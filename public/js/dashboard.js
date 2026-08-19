@@ -3,6 +3,11 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
+  // Cashier should not access dashboard
+  if (user.role !== 'superuser') {
+    window.location.href = '/expenses.html';
+    return;
+  }
   await loadDashboard();
 });
 

@@ -95,11 +95,11 @@ router.post('/bulk', requireAuth, async (req, res) => {
     const isSuperUser = user.role === 'superuser';
     const approvalStatus = isSuperUser ? 'Approved' : 'Pending';
 
-    // Delete existing rows for this date
+    // Delete existing rows for this date (exclude auto-created payment entries linked to employees)
     const rows = await getAllRows(SHEET);
     const toDelete = [];
     for (let i = 0; i < rows.length; i++) {
-      if (rows[i][C.DATE] === date) toDelete.push(i + 2);
+      if (rows[i][C.DATE] === date && !rows[i][C.EMP_ID]) toDelete.push(i + 2);
     }
     for (let i = toDelete.length - 1; i >= 0; i--) {
       await deleteRow(SHEET, toDelete[i]);
@@ -165,7 +165,7 @@ router.post('/reject/:date', requireSuperUser, async (req, res) => {
     let updated = 0;
     for (let i = 0; i < rows.length; i++) {
       const obj = rowToObj(rows[i]);
-      if (obj.date === date && (obj.approvalStatus === 'Pending' || obj.approvalStatus === 'Approved')) {
+      if (obj.date === date && (obj.approvalStatus === 'Pending' || obj.approvalStatus === 'Approved' || obj.approvalStatus === 'AutoApproved')) {
         obj.approvalStatus  = 'Rejected';
         obj.approvedBy      = user.username;
         obj.approvedAt      = new Date().toISOString();

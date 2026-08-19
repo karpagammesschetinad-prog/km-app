@@ -48,7 +48,9 @@
   <script>
     // If already logged in, skip login
     fetch('/api/auth/me').then(r => r.json()).then(d => {
-      if (d.success) window.location.href = '/index.html';
+      if (d.success) {
+        window.location.href = d.data && d.data.role === 'superuser' ? '/index.html' : '/expenses.html';
+      }
     }).catch(() => {});
 
     document.getElementById('btnTogglePwd').addEventListener('click', () => {
@@ -77,7 +79,7 @@
         });
         const data = await res.json();
         if (data.success) {
-          window.location.href = '/index.html';
+          window.location.href = data.data && data.data.role === 'superuser' ? '/index.html' : '/expenses.html';
         } else {
           err.textContent = data.message || 'Login failed.';
           err.classList.remove('d-none');

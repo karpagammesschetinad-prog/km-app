@@ -10,7 +10,8 @@ const SHEETS = {
   EXPENSE_CATEGORIES: 'ExpenseCategories',
   USERS: 'Users',
   LEAVES: 'Leaves',
-  SALARY_PAYMENTS: 'SalaryPayments'
+  SALARY_PAYMENTS: 'SalaryPayments',
+  PETTA_HISTORY: 'PettaHistory'
 };
 
 const HEADERS = {
@@ -18,6 +19,7 @@ const HEADERS = {
   EMPLOYEES: ['ID', 'Name', 'Address', 'Phone', 'StartDate', 'PerDaySalary', 'DailyPetta', 'Status', 'DailySalaryEnabled'],
   LEAVES: ['ID', 'EmployeeID', 'EmployeeName', 'StartDateTime', 'EndDateTime', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARY_PAYMENTS: ['ID', 'EmployeeID', 'EmployeeName', 'PaymentDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
+  PETTA_HISTORY:   ['ID', 'EmployeeID', 'EmployeeName', 'EffectiveDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARIES: ['ID', 'EmployeeID', 'EmployeeName', 'Month', 'Year', 'BaseSalary', 'Allowances', 'Deductions', 'NetSalary', 'PaymentDate', 'Status'],
   EXPENSE_CATEGORIES: ['ID', 'Name', 'SortOrder', 'Status'],
   USERS: ['ID', 'Username', 'DisplayName', 'Role', 'PasswordHash', 'Status', 'CreatedAt', 'Permissions']
@@ -67,6 +69,17 @@ async function initializeSheets() {
 
     // Migrate old Employees header to new schema
     if (key === 'EMPLOYEES' && currentHeader[2] === 'Email') {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${name}!A1`,
+        valueInputOption: 'RAW',
+        resource: { values: [expectedHeader] }
+      });
+    }
+
+    // If schema has grown (new columns appended), update header row.
+    const headerIsPrefix = currentHeader.every((h, i) => h === expectedHeader[i]);
+    if (currentHeader.length > 0 && headerIsPrefix && currentHeader.length < expectedHeader.length) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SPREADSHEET_ID,
         range: `${name}!A1`,
