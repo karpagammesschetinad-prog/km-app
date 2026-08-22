@@ -5,7 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "start:dev": "node server.js",
+    "start:prod": "node -e \"require('dotenv').config({ path: '.env.production' }); require('./server');\"",
+    "migrate:dev:safe": "node scripts/safe-sheet-migrate.js development",
+    "migrate:prod:safe": "node scripts/safe-sheet-migrate.js production"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

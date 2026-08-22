@@ -62,11 +62,38 @@ Then paste the clipboard value as `GOOGLE_SERVICE_ACCOUNT_KEY=<paste here>`.
 # Development (auto-restart on changes)
 npm run dev
 
+# Development (single run)
+npm run start:dev
+
 # Production
 npm start
+
+# Local production-mode test using .env.production
+npm run start:prod
 ```
 
 Open **http://localhost:3000** in your browser.
+
+### Development and production spreadsheets
+
+Configure separate spreadsheet IDs for each environment:
+
+```env
+NODE_ENV=development
+SPREADSHEET_ID_DEVELOPMENT=your_development_spreadsheet_id
+SPREADSHEET_ID_PRODUCTION=your_production_spreadsheet_id
+```
+
+Development uses only `SPREADSHEET_ID_DEVELOPMENT`; production uses only `SPREADSHEET_ID_PRODUCTION` and will refuse to start Google Sheets access if it is missing. Share both spreadsheets with the service-account email. The legacy `SPREADSHEET_ID` variable is supported only as a development fallback.
+
+For local production-mode testing, fill in the ignored `.env.production` file and run:
+
+```powershell
+$env:DOTENV_CONFIG_PATH='.env.production'
+node -r dotenv/config server.js
+```
+
+Use a separate terminal for this command, and stop the development server first if both use port `3000`.
 
 The app automatically creates the three sheets (`Expenses`, `Employees`, `Salaries`) with headers on first run.
 

@@ -23,7 +23,8 @@
     <a href="/expenses.html"   class="nav-link" data-screen="expenses"><i class="bi bi-receipt"></i><span>Expenses</span></a>
     <a href="/categories.html" class="nav-link su-only" data-screen="categories"><i class="bi bi-tags"></i><span>Categories</span></a>
     <a href="/employees.html"  class="nav-link su-only" data-screen="employees"><i class="bi bi-people"></i><span>Employees</span></a>
-    <a href="/salaries.html"   class="nav-link su-only active" data-screen="salaries"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
+      <a href="/sales.html"       class="nav-link" data-screen="sales"><i class="bi bi-graph-up-arrow"></i><span>Sales Capture</span></a>
+      <a href="/salaries.html"   class="nav-link su-only active" data-screen="salaries"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
     <a href="/users.html"      class="nav-link su-only" data-screen="users"><i class="bi bi-person-lock"></i><span>Users</span></a>
   </nav>
 </aside>
@@ -67,7 +68,7 @@
       <div class="col-6 col-md-3">
         <div class="stat-card">
           <div class="stat-icon bg-success-subtle text-success"><i class="bi bi-cash-coin"></i></div>
-          <div><div class="stat-label">Total Paid (All)</div>
+          <div><div class="stat-label">FY Total Paid</div>
           <div class="stat-value" id="ss-paid">�</div></div>
         </div>
       </div>
@@ -81,7 +82,7 @@
           placeholder="Search employee�" style="max-width:200px" oninput="filterTable()">
       </div>
       <div class="table-responsive">
-        <table class="table">
+        <table class="table mobile-grid-table">
           <thead>
             <tr>
               <th>Employee</th><th>Start Date</th><th>Per Day</th>
@@ -102,7 +103,7 @@
         </h6>
       </div>
       <div class="table-responsive">
-        <table class="table">
+        <table class="table mobile-grid-table">
           <thead>
             <tr>
               <th>Date</th><th>Employee</th><th>Amount</th><th>Remarks</th><th>Recorded By</th>

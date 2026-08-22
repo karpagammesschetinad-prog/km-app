@@ -3,14 +3,16 @@
 const ROLE_DEFAULTS = {
   superuser: {
     expenses:   { enabled: true,  view: true,  add: true,  approve: true },
-    categories: { enabled: true,  view: true,  manage: true },
+    sales:      { enabled: true,  view: true,  add: true },
+    categories: { enabled: true,  view: true,  manage: true, typeAccess: true },
     employees:  { enabled: true,  view: true,  add: true,  leaves: true, payments: true },
     salaries:   { enabled: true,  view: true },
     users:      { enabled: true,  view: true,  manage: true }
   },
   cashier: {
     expenses:   { enabled: true,  view: true,  add: true,  approve: false },
-    categories: { enabled: false, view: false, manage: false },
+    sales:      { enabled: true,  view: true,  add: true },
+    categories: { enabled: false, view: false, manage: false, typeAccess: false },
     employees:  { enabled: true,  view: true,  add: false,  leaves: true, payments: true },
     salaries:   { enabled: false, view: false },
     users:      { enabled: false, view: false, manage: false }

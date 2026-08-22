@@ -2,28 +2,65 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { SHEETS, getAllRows, appendRow, updateRow, deleteRow, findRowById } = require('../services/googleSheets');
+const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware');
 
 const SHEET = SHEETS.EXPENSE_CATEGORIES;
-const C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3 };
+const TYPE_SHEET = SHEETS.EXPENSE_CATEGORY_TYPES;
+const C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, TYPE_ID: 4 };
+const T = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, DISPLAY_TEXT: 6 };
+
+function typeRowToObj(row) {
+  return {
+    id: row[T.ID] || '', name: row[T.NAME] || '', displayText: row[T.DISPLAY_TEXT] || row[T.NAME] || '', sortOrder: parseInt(row[T.ORDER]) || 0,
+    status: row[T.STATUS] || 'Active', accessMode: row[T.ACCESS_MODE] === 'Limited' ? 'Limited' : 'All',
+    allowedUserIds: String(row[T.ALLOWED_USERS] || '').split(',').map(v => v.trim()).filter(Boolean)
+  };
+}
+
+function canUseType(type, user, manage = false) {
+  if (user.role === 'superuser') return true;
+  if (type.status !== 'Active') return false;
+  if (type.accessMode === 'Limited' && !type.allowedUserIds.includes(user.id)) return false;
+  return !manage || !!(user.permissions?.categories?.manage);
+}
+
+async function getTypes() {
+  const rows = await getAllRows(TYPE_SHEET);
+  return rows.map(typeRowToObj).sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+function getLegacyDefaultType(types) {
+  return types.find(t => t.name === 'General') || types.find(t => t.sortOrder === 1) || types[0] || {
+    id: '', name: 'General', sortOrder: 0, status: 'Active', accessMode: 'All', allowedUserIds: []
+  };
+}
 
 function rowToObj(row) {
   return {
     id: row[C.ID] || '',
     name: row[C.NAME] || '',
     sortOrder: parseInt(row[C.ORDER]) || 0,
-    status: row[C.STATUS] || 'Active'
+    status: row[C.STATUS] || 'Active',
+    typeId: row[C.TYPE_ID] || ''
   };
 }
 
 function objToRow(o) {
-  return [o.id, o.name, o.sortOrder, o.status];
+  return [o.id, o.name, o.sortOrder, o.status, o.typeId || ''];
 }
 
 // GET all (sorted by order)
-router.get('/', async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   try {
     const rows = await getAllRows(SHEET);
-    const cats = rows.map(rowToObj).sort((a, b) => a.sortOrder - b.sortOrder);
+    const types = await getTypes();
+      const general = getLegacyDefaultType(types);
+    const visibleTypes = types.filter(t => canUseType(t, req.session.user));
+    const visibleIds = new Set(visibleTypes.map(t => t.id));
+    const cats = rows.map(rowToObj)
+      .filter(c => !c.typeId ? canUseType(general, req.session.user) : visibleIds.has(c.typeId))
+      .map(c => ({ ...c, typeId: c.typeId || general.id, typeName: c.typeId ? (types.find(t => t.id === c.typeId)?.displayText || types.find(t => t.id === c.typeId)?.name || general.displayText || general.name) : (general.displayText || general.name) }))
+      .sort((a, b) => a.sortOrder - b.sortOrder);
     res.json({ success: true, data: cats });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -31,20 +68,25 @@ router.get('/', async (req, res) => {
 });
 
 // GET by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id([0-9a-fA-F-]{36})', requireAuth, async (req, res) => {
   try {
     const found = await findRowById(SHEET, req.params.id);
     if (!found) return res.status(404).json({ success: false, message: 'Category not found.' });
-    res.json({ success: true, data: rowToObj(found.row) });
+    const category = rowToObj(found.row);
+    const types = await getTypes();
+    const legacyType = getLegacyDefaultType(types);
+    const type = category.typeId ? types.find(t => t.id === category.typeId) : legacyType;
+    if (!type || !canUseType(type, req.session.user)) return res.status(403).json({ success: false, message: 'Access denied for this category type.' });
+    res.json({ success: true, data: { ...category, typeId: category.typeId || legacyType.id, typeName: type.displayText || type.name } });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 // POST create
-router.post('/', async (req, res) => {
+router.post('/', requireSuperUser, async (req, res) => {
   try {
-    const { name, sortOrder, status = 'Active' } = req.body;
+    const { name, sortOrder, status = 'Active', typeId = '' } = req.body;
     if (!name) return res.status(400).json({ success: false, message: 'name is required.' });
     const rows = await getAllRows(SHEET);
     const maxOrder = rows.reduce((m, r) => Math.max(m, parseInt(r[C.ORDER]) || 0), 0);
@@ -52,7 +94,7 @@ router.post('/', async (req, res) => {
       id: uuidv4(),
       name: String(name).trim(),
       sortOrder: parseInt(sortOrder) || maxOrder + 1,
-      status
+      status, typeId
     };
     await appendRow(SHEET, objToRow(obj));
     res.status(201).json({ success: true, data: obj });
@@ -62,12 +104,18 @@ router.post('/', async (req, res) => {
 });
 
 // PUT update
-router.put('/:id', async (req, res) => {
+router.put('/:id([0-9a-fA-F-]{36})', requireSuperUser, async (req, res) => {
   try {
     const found = await findRowById(SHEET, req.params.id);
     if (!found) return res.status(404).json({ success: false, message: 'Category not found.' });
     const existing = rowToObj(found.row);
     const updated = { ...existing, ...req.body, id: existing.id };
+    if (updated.typeId) {
+      const types = await getTypes();
+      if (!types.some(type => type.id === updated.typeId)) {
+        return res.status(400).json({ success: false, message: 'Selected category type does not exist.' });
+      }
+    }
     updated.sortOrder = parseInt(updated.sortOrder) || existing.sortOrder;
     await updateRow(SHEET, found.index, objToRow(updated));
     res.json({ success: true, data: updated });
@@ -77,7 +125,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE
-router.delete('/:id', async (req, res) => {
+router.delete('/:id([0-9a-fA-F-]{36})', requireSuperUser, async (req, res) => {
   try {
     const found = await findRowById(SHEET, req.params.id);
     if (!found) return res.status(404).json({ success: false, message: 'Category not found.' });
@@ -86,6 +134,53 @@ router.delete('/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
+});
+
+router.get('/types/all', requireAuth, async (req, res) => {
+  try {
+    const types = await getTypes();
+    res.json({ success: true, data: req.session.user.role === 'superuser' ? types : types.filter(t => canUseType(t, req.session.user)) });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.post('/types', requireSuperUser, async (req, res) => {
+  try {
+    const { name, displayText, sortOrder, status = 'Active', accessMode = 'All', allowedUserIds = [] } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ success: false, message: 'Type name is required.' });
+    const rows = await getAllRows(TYPE_SHEET);
+    const obj = { id: uuidv4(), name: String(name).trim(), displayText: String(displayText || name).trim(), sortOrder: parseInt(sortOrder) || rows.length + 1, status, accessMode: accessMode === 'Limited' ? 'Limited' : 'All', allowedUserIds: Array.isArray(allowedUserIds) ? allowedUserIds : [] };
+    await appendRow(TYPE_SHEET, [obj.id, obj.name, obj.sortOrder, obj.status, obj.accessMode, obj.allowedUserIds.join(','), obj.displayText || obj.name]);
+    res.status(201).json({ success: true, data: obj });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.put('/types/:id', requireSuperUser, async (req, res) => {
+  try {
+    const found = await findRowById(TYPE_SHEET, req.params.id);
+    if (!found) return res.status(404).json({ success: false, message: 'Category type not found.' });
+    const existing = typeRowToObj(found.row);
+    const updated = { ...existing, ...req.body, id: existing.id, accessMode: req.body.accessMode === 'Limited' ? 'Limited' : (req.body.accessMode || existing.accessMode), allowedUserIds: Array.isArray(req.body.allowedUserIds) ? req.body.allowedUserIds : existing.allowedUserIds };
+    await updateRow(TYPE_SHEET, found.index, [updated.id, updated.name, parseInt(updated.sortOrder) || existing.sortOrder, updated.status, updated.accessMode, updated.allowedUserIds.join(','), updated.displayText || updated.name]);
+    res.json({ success: true, data: updated });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.delete('/types/:id', requireSuperUser, async (req, res) => {
+  try {
+    const found = await findRowById(TYPE_SHEET, req.params.id);
+    if (!found) return res.status(404).json({ success: false, message: 'Category type not found.' });
+    if (found.row[T.NAME] === 'General') return res.status(400).json({ success: false, message: 'The General category type cannot be deleted.' });
+    const categoryRows = await getAllRows(SHEET);
+    for (let i = 0; i < categoryRows.length; i++) {
+      if (categoryRows[i][C.TYPE_ID] === req.params.id) {
+        const category = rowToObj(categoryRows[i]);
+        category.typeId = '';
+        await updateRow(SHEET, i + 2, objToRow(category));
+      }
+    }
+    await deleteRow(TYPE_SHEET, found.index);
+    res.json({ success: true, message: 'Category type deleted.' });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 module.exports = router;

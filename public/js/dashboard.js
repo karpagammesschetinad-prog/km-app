@@ -13,25 +13,28 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function loadDashboard() {
   try {
-    const [expenses, employees, salaries, allLeaves, allPayments] = await Promise.all([
-      api('GET', '/expenses'),
-      api('GET', '/employees'),
-      api('GET', '/salaries'),
-      api('GET', '/leaves'),
-      api('GET', '/payments')
+    const fetchNamed = (name, path) => api('GET', path).catch(error => {
+      throw new Error(`${name}: ${error.message}`);
+    });
+    const [expenses, employees, salaries, allLeaves, allPayments, config] = await Promise.all([
+      fetchNamed('Expenses', '/expenses'),
+      fetchNamed('Employees', '/employees'),
+      fetchNamed('Salaries', '/salaries'),
+      fetchNamed('Leaves', '/leaves'),
+      fetchNamed('Payments', '/payments'),
+      fetchNamed('Configuration', '/config')
     ]);
 
     const now = new Date();
-    const cm = now.getMonth() + 1, cy = now.getFullYear();
+    const fyStart = new Date(config.fiscalYear.start + 'T00:00:00');
+    const fyEnd = new Date(Math.min(now.getTime(), new Date(config.fiscalYear.end + 'T23:59:59').getTime()));
 
     const monthExp = expenses.filter(e => {
       const d = new Date(e.date);
-      return d.getMonth() + 1 === cm && d.getFullYear() === cy;
+      return d >= fyStart && d <= fyEnd;
     });
 
-    const monthSal = salaries.filter(s =>
-      parseInt(s.month) === cm && parseInt(s.year) === cy
-    );
+    const monthSal = salaries.filter(s => s.paymentDate && new Date(s.paymentDate) >= fyStart && new Date(s.paymentDate) <= fyEnd);
 
     const activeEmp = employees.filter(e => e.status === 'Active');
     const pendingExp = expenses.filter(e => e.status === 'Pending');
@@ -43,18 +46,25 @@ async function loadDashboard() {
     const empStats = activeEmp.map(emp => {
       const leaves  = allLeaves.filter(l => l.employeeId === emp.id);
       const payments = allPayments.filter(p => p.employeeId === emp.id);
-      const start = new Date(emp.startDate);
-      const end = new Date(); end.setHours(23,59,59,999);
+      const start = new Date(Math.max(new Date(emp.startDate).getTime(), fyStart.getTime()));
+      const end = fyEnd;
       const totalDays = Math.max(0, (end - start) / 86400000);
       const leaveDays = leaves.reduce((sum, l) => {
-        const ls = new Date(l.startDateTime), le = new Date(l.endDateTime);
+        const ls = new Date(l.startDateTime), le = l.endDateTime ? new Date(l.endDateTime) : now;
         const s = Math.max(ls, start), e = Math.min(le, end);
         return e > s ? sum + (e - s) / 86400000 : sum;
       }, 0);
       const earned = Math.max(0, totalDays - leaveDays) * (emp.perDaySalary - emp.dailyPetta);
       const paid   = payments.reduce((s, p) => s + p.amount, 0);
-      const balance = earned - paid;
-      const onLeave = leaves.some(l => new Date(l.startDateTime) <= now && now <= new Date(l.endDateTime));
+      let carriedBalance = 0;
+      for (let day = new Date(emp.startDate); day < fyStart; day.setDate(day.getDate() + 1)) {
+        const leave = leaves.some(l => new Date(l.startDateTime) <= day && (!l.endDateTime || day <= new Date(l.endDateTime)));
+        const dayKey = day.toISOString().slice(0, 10);
+        const dayPaid = payments.filter(p => p.paymentDate === dayKey).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+        carriedBalance += (leave ? 0 : (emp.perDaySalary - emp.dailyPetta)) - dayPaid;
+      }
+      const balance = carriedBalance + earned - paid;
+      const onLeave = leaves.some(l => new Date(l.startDateTime) <= now && (!l.endDateTime || now <= new Date(l.endDateTime)));
       return { emp, balance, onLeave };
     });
 
@@ -105,11 +115,11 @@ function renderEmployeeStatus(empStats) {
     }
 
     return `<tr>
-      <td><a href="/employee-detail.html?id=${emp.id}" class="fw-semibold text-decoration-none">${emp.name}</a>
+        <td data-label="Employee"><a href="/employee-detail.html?id=${emp.id}" class="fw-semibold text-decoration-none">${emp.name}</a>
           ${emp.phone ? `<div class="text-muted small">${emp.phone}</div>` : ''}</td>
-      <td>${statusBadgeHtml}</td>
-      <td>${salBadgeHtml}</td>
-      <td><a href="/employee-detail.html?id=${emp.id}" class="btn btn-xs btn-outline-primary btn-action"><i class="bi bi-eye"></i></a></td>
+        <td data-label="Status">${statusBadgeHtml}</td>
+        <td data-label="Salary summary">${salBadgeHtml}</td>
+        <td data-label="Actions"><a href="/employee-detail.html?id=${emp.id}" class="btn btn-xs btn-outline-primary btn-action"><i class="bi bi-eye"></i></a></td>
     </tr>`;
   }).join('');
 }
@@ -203,11 +213,11 @@ function renderRecentExpenses(expenses) {
 
   tbody.innerHTML = expenses.map(e => `
     <tr>
-      <td>${formatDate(e.date)}</td>
-      <td><span class="badge bg-light text-dark border">${e.category}</span></td>
-      <td class="text-muted">${e.description || '—'}</td>
-      <td class="fw-semibold">${formatCurrency(e.amount)}</td>
-      <td>${statusBadge(e.status)}</td>
+      <td data-label="Date">${formatDate(e.date)}</td>
+      <td data-label="Category"><span class="badge bg-light text-dark border">${e.category}</span></td>
+      <td data-label="Description" class="text-muted">${e.description || '—'}</td>
+      <td data-label="Amount" class="fw-semibold">${formatCurrency(e.amount)}</td>
+      <td data-label="Status">${statusBadge(e.status)}</td>
     </tr>
   `).join('');
 }

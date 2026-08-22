@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const { SHEETS, getAllRows, appendRow, deleteRow, findRowById } = require('../services/googleSheets');
+const { SHEETS, getAllRows, appendRow, updateRow, deleteRow, findRowById } = require('../services/googleSheets');
 
 const SHEET = SHEETS.LEAVES;
 const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, START: 3, END: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
@@ -36,10 +36,10 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { employeeId, employeeName, startDateTime, endDateTime, remarks } = req.body;
-    if (!employeeId || !startDateTime || !endDateTime) {
-      return res.status(400).json({ success: false, message: 'employeeId, startDateTime and endDateTime are required.' });
+    if (!employeeId || !startDateTime) {
+      return res.status(400).json({ success: false, message: 'employeeId and startDateTime are required.' });
     }
-    if (new Date(endDateTime) <= new Date(startDateTime)) {
+    if (endDateTime && new Date(endDateTime) <= new Date(startDateTime)) {
       return res.status(400).json({ success: false, message: 'End date/time must be after start.' });
     }
     const obj = {
@@ -58,6 +58,21 @@ router.post('/', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
+});
+
+// PUT /api/leaves/:id - close an ongoing leave when the employee returns
+router.put('/:id', async (req, res) => {
+  try {
+    const found = await findRowById(SHEET, req.params.id);
+    if (!found) return res.status(404).json({ success: false, message: 'Leave not found.' });
+    const endDateTime = String(req.body.endDateTime || '').trim();
+    if (!endDateTime) return res.status(400).json({ success: false, message: 'endDateTime is required.' });
+    if (new Date(endDateTime) <= new Date(found.row[C.START])) return res.status(400).json({ success: false, message: 'End date/time must be after start.' });
+    const updated = [...found.row];
+    updated[C.END] = endDateTime;
+    await updateRow(SHEET, found.index, updated);
+    res.json({ success: true, data: rowToObj(updated) });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 // DELETE /api/leaves/:id

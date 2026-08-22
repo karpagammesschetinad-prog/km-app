@@ -14,6 +14,13 @@ const SCREEN_PERMISSIONS = [
     ]
   },
   {
+    key: 'sales', label: 'Sales Capture', icon: 'bi-graph-up-arrow',
+    subs: [
+      { key: 'view', label: 'View sales capture' },
+      { key: 'add', label: 'Enter sales amounts' }
+    ]
+  },
+  {
     key: 'categories', label: 'Categories', icon: 'bi-tags',
     subs: [
       { key: 'view',   label: 'View categories' },
@@ -47,6 +54,7 @@ const SCREEN_PERMISSIONS = [
 const ROLE_DEFAULTS = {
   superuser: {
     expenses:   { enabled: true,  view: true,  add: true,  approve: true },
+    sales:      { enabled: true,  view: true,  add: true },
     categories: { enabled: true,  view: true,  manage: true },
     employees:  { enabled: true,  view: true,  add: true,  leaves: true, payments: true },
     salaries:   { enabled: true,  view: true },
@@ -54,6 +62,7 @@ const ROLE_DEFAULTS = {
   },
   cashier: {
     expenses:   { enabled: true,  view: true,  add: true,  approve: false },
+    sales:      { enabled: true,  view: true,  add: true },
     categories: { enabled: false, view: false, manage: false },
     employees:  { enabled: true,  view: true,  add: false,  leaves: true, payments: true },
     salaries:   { enabled: false, view: false },

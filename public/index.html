@@ -21,6 +21,7 @@
     <div class="sidebar-section-label">Main</div>
     <a href="/index.html"       class="nav-link su-only"><i class="bi bi-speedometer2"></i><span>Dashboard</span></a>
     <a href="/expenses.html"    class="nav-link" data-screen="expenses"><i class="bi bi-receipt"></i><span>Expenses</span></a>
+    <a href="/sales.html"       class="nav-link" data-screen="sales"><i class="bi bi-graph-up-arrow"></i><span>Sales Capture</span></a>
     <a href="/categories.html"  class="nav-link su-only" data-screen="categories"><i class="bi bi-tags"></i><span>Categories</span></a>
     <a href="/employees.html"   class="nav-link su-only" data-screen="employees"><i class="bi bi-people"></i><span>Employees</span></a>
     <a href="/salaries.html"    class="nav-link su-only" data-screen="salaries"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
@@ -90,7 +91,7 @@
         <div class="stat-card">
           <div class="stat-icon bg-warning-subtle text-warning"><i class="bi bi-receipt-cutoff"></i></div>
           <div>
-            <div class="stat-label">Monthly Expenses</div>
+            <div class="stat-label">FY Expenses</div>
             <div class="stat-value" id="stat-expenses"><span class="spinner-border spinner-border-sm text-warning"></span></div>
           </div>
         </div>
@@ -99,7 +100,7 @@
         <div class="stat-card">
           <div class="stat-icon bg-success-subtle text-success"><i class="bi bi-cash-stack"></i></div>
           <div>
-            <div class="stat-label">Monthly Salaries</div>
+            <div class="stat-label">FY Salaries</div>
             <div class="stat-value" id="stat-salaries"><span class="spinner-border spinner-border-sm text-success"></span></div>
           </div>
         </div>
@@ -121,7 +122,7 @@
         <div class="card-panel h-100">
           <div class="card-panel-header">
             <h6 class="card-panel-title">Expenses by Category</h6>
-            <span class="text-muted small">This month</span>
+            <span class="text-muted small">Current FY</span>
           </div>
           <div class="card-panel-body">
             <div class="chart-wrap" style="height:260px;position:relative;">
@@ -152,7 +153,7 @@
         <a href="/expenses.html" class="btn btn-sm btn-outline-primary">View All</a>
       </div>
       <div class="table-responsive">
-        <table class="table">
+        <table class="table mobile-grid-table">
           <thead>
             <tr>
               <th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Status</th>
@@ -172,7 +173,7 @@
         <a href="/employees.html" class="btn btn-sm btn-outline-primary">View All</a>
       </div>
       <div class="table-responsive">
-        <table class="table">
+        <table class="table mobile-grid-table">
           <thead><tr><th>Employee</th><th>Status</th><th>Salary Summary</th><th></th></tr></thead>
           <tbody id="empStatusBody">
             <tr><td colspan="4" class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div></td></tr>

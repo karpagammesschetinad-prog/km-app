@@ -4,13 +4,20 @@
 
 const API_BASE = '/api';
 let CURRENCY = 'USD';
+let idleLogoutTimer = null;
+let idleWarningTimer = null;
+let idleLogoutInProgress = false;
+let idleTimeoutMinutes = null;
+const IDLE_WARNING_SECONDS = 30;
 
-// Load config from server (currency etc.)
-(async () => {
+// Load config from server (currency and security settings)
+const configReady = (async () => {
   try {
     const r = await fetch(`${API_BASE}/config`);
-    const cfg = await r.json();
+    const response = await r.json();
+    const cfg = response.data || response;
     CURRENCY = cfg.currency || 'USD';
+    idleTimeoutMinutes = Number(cfg.idleTimeoutMinutes) || null;
   } catch (_) {}
 })();
 
@@ -119,6 +126,91 @@ function populateEmployeeSelect(selectEl, employees, selectedId = null) {
 /* ---------- Auth state (loaded once per page) ---------- */
 let currentUser = null;
 
+/* ---------- Optional Tamil virtual keyboard ---------- */
+const TAMIL_KEY_ROWS = [
+  ['அ', 'ஆ', 'இ', 'ஈ', 'உ', 'ஊ', 'எ', 'ஏ', 'ஐ', 'ஒ', 'ஓ', 'ஔ'],
+  ['க்', 'க', 'ங', 'ச', 'ஞ', 'ட', 'ண', 'த', 'ந', 'ப', 'ம', 'ய', 'ர', 'ல', 'வ', 'ழ', 'ள', 'ற', 'ன'],
+  ['ா', 'ி', 'ீ', 'ு', 'ூ', 'ெ', 'ே', 'ை', 'ொ', 'ோ', 'ௌ', '்', 'ஂ', 'ஃ']
+];
+let tamilKeyboardTarget = null;
+
+function isTamilKeyboardTarget(element) {
+  if (!element || element.disabled || element.readOnly) return false;
+  if (element.tagName === 'TEXTAREA') return true;
+  return element.tagName === 'INPUT' && ['text', 'search', 'email', 'tel', 'password'].includes(element.type);
+}
+
+function insertTamilText(value) {
+  const target = tamilKeyboardTarget;
+  if (!isTamilKeyboardTarget(target)) return;
+  const start = target.selectionStart ?? target.value.length;
+  const end = target.selectionEnd ?? target.value.length;
+  target.setRangeText(value, start, end, 'end');
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  target.focus();
+}
+
+function deleteTamilText() {
+  const target = tamilKeyboardTarget;
+  if (!isTamilKeyboardTarget(target)) return;
+  const start = target.selectionStart ?? target.value.length;
+  const end = target.selectionEnd ?? target.value.length;
+  if (start !== end) target.setRangeText('', start, end, 'end');
+  else if (start > 0) target.setRangeText('', start - 1, start, 'end');
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  target.focus();
+}
+
+function setupTamilKeyboard() {
+  if (document.getElementById('_tamilKeyboardToggle')) return;
+  const toggle = document.createElement('button');
+  toggle.id = '_tamilKeyboardToggle';
+  toggle.type = 'button';
+  toggle.className = 'tamil-keyboard-toggle';
+  toggle.title = 'Toggle Tamil virtual keyboard';
+  toggle.setAttribute('aria-label', 'Toggle Tamil virtual keyboard');
+  toggle.innerHTML = '<span>தமிழ்</span><i class="bi bi-keyboard"></i>';
+
+  const panel = document.createElement('section');
+  panel.id = '_tamilKeyboardPanel';
+  panel.className = 'tamil-keyboard-panel';
+  panel.setAttribute('aria-label', 'Tamil virtual keyboard');
+  panel.innerHTML = '<div class="tamil-keyboard-header"><strong>Tamil keyboard</strong><button type="button" class="tamil-keyboard-close" aria-label="Close Tamil keyboard"><i class="bi bi-x-lg"></i></button></div>' +
+    TAMIL_KEY_ROWS.map(row => '<div class="tamil-keyboard-row">' + row.map(key => `<button type="button" class="tamil-key" data-tamil-key="${key}">${key}</button>`).join('') + '</div>').join('') +
+    '<div class="tamil-keyboard-row tamil-keyboard-actions"><button type="button" class="tamil-key tamil-key-wide" data-tamil-key=" ">Space</button><button type="button" class="tamil-key" data-tamil-action="backspace" aria-label="Backspace"><i class="bi bi-backspace"></i></button><button type="button" class="tamil-key" data-tamil-action="clear">Clear</button></div>';
+
+  document.body.append(toggle, panel);
+  document.addEventListener('focusin', event => {
+    if (isTamilKeyboardTarget(event.target)) {
+      tamilKeyboardTarget = event.target;
+      panel.classList.add('show');
+      toggle.classList.add('active');
+    }
+  });
+  toggle.addEventListener('click', () => {
+    panel.classList.toggle('show');
+    toggle.classList.toggle('active', panel.classList.contains('show'));
+  });
+  panel.querySelector('.tamil-keyboard-close').addEventListener('click', () => {
+    panel.classList.remove('show');
+    toggle.classList.remove('active');
+  });
+  panel.addEventListener('mousedown', event => event.preventDefault());
+  panel.addEventListener('click', event => {
+    const key = event.target.closest('[data-tamil-key]');
+    const action = event.target.closest('[data-tamil-action]')?.dataset.tamilAction;
+    if (key) insertTamilText(key.dataset.tamilKey);
+    if (action === 'backspace') deleteTamilText();
+    if (action === 'clear' && isTamilKeyboardTarget(tamilKeyboardTarget)) {
+      tamilKeyboardTarget.setRangeText('', 0, tamilKeyboardTarget.value.length, 'end');
+      tamilKeyboardTarget.dispatchEvent(new Event('input', { bubbles: true }));
+      tamilKeyboardTarget.focus();
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', setupTamilKeyboard);
+
 async function loadCurrentUser() {
   try {
     const res = await fetch('/api/auth/me', { cache: 'no-store' });
@@ -152,6 +244,48 @@ function canAccess(screen, sub = null) {
   if (!sp.enabled) return false;
   if (sub === null) return true;
   return !!sp[sub];
+}
+
+function setupIdleLogout() {
+  if (idleLogoutTimer) clearTimeout(idleLogoutTimer);
+  if (idleWarningTimer) clearInterval(idleWarningTimer);
+  let warning = document.getElementById('_idleLogoutWarning');
+  if (!warning) {
+    warning = document.createElement('div');
+    warning.id = '_idleLogoutWarning';
+    warning.className = 'idle-logout-warning';
+    warning.setAttribute('role', 'alert');
+    document.body.appendChild(warning);
+  }
+  warning.classList.remove('show');
+  const resetIdleLogout = () => {
+    if (idleLogoutInProgress) return;
+    clearTimeout(idleLogoutTimer);
+    clearInterval(idleWarningTimer);
+    warning.classList.remove('show');
+    const timeoutMs = idleTimeoutMinutes * 60 * 1000;
+    const warningAt = Math.max(0, timeoutMs - IDLE_WARNING_SECONDS * 1000);
+    idleWarningTimer = setTimeout(() => {
+      let secondsLeft = IDLE_WARNING_SECONDS;
+      warning.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i><strong>Session expiring:</strong> You will be logged out in <strong>${secondsLeft}</strong> seconds.`;
+      warning.classList.add('show');
+      idleWarningTimer = setInterval(() => {
+        secondsLeft -= 1;
+        if (secondsLeft <= 0) return clearInterval(idleWarningTimer);
+        warning.querySelector('strong:last-child').textContent = secondsLeft;
+      }, 1000);
+    }, warningAt);
+    idleLogoutTimer = setTimeout(async () => {
+      clearInterval(idleWarningTimer);
+      idleLogoutInProgress = true;
+      try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+      window.location.href = '/login.html?reason=timeout';
+    }, idleTimeoutMinutes * 60 * 1000);
+  };
+  ['click', 'keydown', 'pointerdown', 'touchstart', 'scroll'].forEach(eventName => {
+    document.addEventListener(eventName, resetIdleLogout, { passive: true });
+  });
+  resetIdleLogout();
 }
 
 async function requireLogin() {
@@ -200,12 +334,22 @@ async function requireLogin() {
         <i class="bi bi-box-arrow-right"></i>
       </button>`;
     navbar.appendChild(div);
+    if (user.role === 'superuser') {
+      const settings = document.createElement('a');
+      settings.className = 'btn btn-sm btn-outline-secondary';
+      settings.href = '/settings.html';
+      settings.title = 'Settings';
+      settings.innerHTML = '<i class="bi bi-gear"></i>';
+      div.prepend(settings);
+    }
     document.getElementById('btnLogout').addEventListener('click', async () => {
       if (!confirm('Are you sure you want to logout?')) return;
       await fetch('/api/auth/logout', { method: 'POST' });
       window.location.href = '/login.html';
     });
   }
+  await configReady;
+  if (idleTimeoutMinutes) setupIdleLogout();
   return user;
 }
 

@@ -21,6 +21,7 @@
     <div class="sidebar-section-label">Main</div>
     <a href="/index.html"      class="nav-link su-only"><i class="bi bi-speedometer2"></i><span>Dashboard</span></a>
     <a href="/expenses.html"   class="nav-link" data-screen="expenses"><i class="bi bi-receipt"></i><span>Expenses</span></a>
+    <a href="/sales.html"       class="nav-link" data-screen="sales"><i class="bi bi-graph-up-arrow"></i><span>Sales Capture</span></a>
     <a href="/categories.html" class="nav-link su-only" data-screen="categories"><i class="bi bi-tags"></i><span>Categories</span></a>
     <a href="/employees.html"  class="nav-link su-only" data-screen="employees"><i class="bi bi-people"></i><span>Employees</span></a>
     <a href="/salaries.html"   class="nav-link su-only" data-screen="salaries"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
@@ -48,14 +49,18 @@
             <h6 class="card-panel-title" id="formTitle">
               <i class="bi bi-pencil-square me-2"></i>Expense
             </h6>
-            <span class="badge bg-primary-subtle text-primary border border-primary-subtle" id="formBadge">Today</span>
+            <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+              <div id="categoryTypeTotals" class="expense-type-totals" aria-live="polite"></div>
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle" id="formBadge">Today</span>
+            </div>
           </div>
           <div class="card-panel-body">
 
             <div class="row g-3 mb-3">
-              <div class="col-12 col-sm-6">
+              <div class="col-12 col-sm-6 expense-date-field">
                 <label class="form-label fw-semibold">Date <span class="text-danger">*</span></label>
-                <input type="date" class="form-control" id="expDate">
+                <input type="text" class="form-control" id="expDate" readonly aria-haspopup="dialog" aria-expanded="false">
+                <div id="expenseDatePicker" class="expense-date-picker" role="dialog" aria-label="Expense date picker"></div>
               </div>
               <div class="col-12 col-sm-6">
                 <label class="form-label fw-semibold">Remarks</label>
@@ -105,7 +110,7 @@
       <div class="modal-body p-0">
 
         <!-- Filters row -->
-        <div class="p-3 border-bottom bg-light">
+        <div class="p-3 border-bottom bg-light expense-report-filters">
           <div class="row g-2 align-items-end">
             <div class="col-6 col-md-auto">
               <label class="form-label mb-1 small fw-semibold">From</label>
@@ -119,7 +124,14 @@
               <label class="form-label mb-1 small fw-semibold">Categories</label>
               <div id="catFilterChips" class="d-flex flex-wrap gap-1"></div>
             </div>
-            <div class="col-auto d-flex gap-2">
+            <div class="col-12">
+              <div class="expense-status-legend" aria-label="Expense approval status colors">
+                <span><i class="expense-status-dot approved"></i>Approved</span>
+                <span><i class="expense-status-dot pending"></i>Pending</span>
+                <span><i class="expense-status-dot rejected"></i>Rejected</span>
+              </div>
+            </div>
+            <div class="col-auto d-flex gap-2 filter-actions">
               <button class="btn btn-sm btn-primary" id="btnFilter">
                 <i class="bi bi-search me-1"></i>Show
               </button>
@@ -140,7 +152,7 @@
 
         <!-- Summary table -->
         <div class="table-responsive">
-          <table class="table mb-0">
+          <table class="table mobile-grid-table mb-0">
             <thead>
               <tr>
                 <th style="width:120px">Date</th>
@@ -151,7 +163,7 @@
               </tr>
             </thead>
             <tbody id="expBody">
-              <tr><td colspan="4" class="text-center py-4 text-muted">
+              <tr><td colspan="5" class="text-center py-4 text-muted">
                 <div class="spinner-border spinner-border-sm text-primary me-2"></div>Loading�
               </td></tr>
             </tbody>

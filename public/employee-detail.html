@@ -23,7 +23,8 @@
     <a href="/expenses.html"   class="nav-link" data-screen="expenses"><i class="bi bi-receipt"></i><span>Expenses</span></a>
     <a href="/categories.html" class="nav-link su-only" data-screen="categories"><i class="bi bi-tags"></i><span>Categories</span></a>
     <a href="/employees.html"  class="nav-link su-only active" data-screen="employees"><i class="bi bi-people"></i><span>Employees</span></a>
-    <a href="/salaries.html"   class="nav-link su-only" data-screen="salaries"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
+      <a href="/sales.html"       class="nav-link" data-screen="sales"><i class="bi bi-graph-up-arrow"></i><span>Sales Capture</span></a>
+      <a href="/salaries.html"   class="nav-link su-only" data-screen="salaries"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
     <a href="/users.html"      class="nav-link su-only" data-screen="users"><i class="bi bi-person-lock"></i><span>Users</span></a>
   </nav>
 </aside>
@@ -131,8 +132,9 @@
               <input type="datetime-local" class="form-control" id="leaveStart" required>
             </div>
             <div class="col-md-6">
-              <label class="form-label">End Date & Time <span class="text-danger">*</span></label>
-              <input type="datetime-local" class="form-control" id="leaveEnd" required>
+              <label class="form-label">End Date & Time <span class="text-muted">(optional)</span></label>
+              <input type="datetime-local" class="form-control" id="leaveEnd">
+              <div class="form-text">Leave blank while the employee is still away.</div>
             </div>
             <div class="col-12">
               <label class="form-label">Remarks</label>
@@ -182,6 +184,11 @@
                   <span class="text-muted small ms-1">— Record this payment as an expense entry</span>
                 </label>
               </div>
+            </div>
+            <div class="col-12" id="payExpenseTypeWrap">
+              <label class="form-label">Expense Category Type <span class="text-danger">*</span></label>
+              <select class="form-select" id="payExpenseType"></select>
+              <div class="form-text">Required only when this payment is added as an expense.</div>
             </div>
           </div>
         </form>

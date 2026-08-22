@@ -2,9 +2,16 @@
 
 let allExpenses = [];
 let allCategories = [];
+let allCategoryTypes = [];
 let pendingRejectDate = null;
+let onSpotEntriesForDate = [];
+let datePickerMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 
-const today = new Date().toISOString().split('T')[0];
+function getLocalDateKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+const today = getLocalDateKey();
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Auth guard
@@ -18,7 +25,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (addSection) addSection.style.display = 'none';
   }
 
-  document.getElementById('expDate').value = today;
+  const dateInput = document.getElementById('expDate');
+  dateInput.value = today;
+  dateInput.addEventListener('click', toggleExpenseDatePicker);
+  document.addEventListener('click', event => {
+    const picker = document.getElementById('expenseDatePicker');
+    if (!picker || picker.contains(event.target) || event.target === dateInput) return;
+    picker.classList.remove('show');
+    dateInput.setAttribute('aria-expanded', 'false');
+  });
 
   const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1)
     .toISOString().split('T')[0];
@@ -26,6 +41,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('fDateTo').value = today;
 
   document.getElementById('expDate').addEventListener('change', function () {
+    if (this.value > today) {
+      this.value = today;
+      showNotification('Future dates cannot be selected.', 'warning');
+      return;
+    }
     loadDateIntoForm(this.value);
   });
 
@@ -58,11 +78,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btnConfirmReject').addEventListener('click', confirmReject);
 
   try {
-    [allCategories, allExpenses] = await Promise.all([
+    [allCategories, allCategoryTypes, allExpenses] = await Promise.all([
       api('GET', '/categories'),
+      api('GET', '/categories/types/all'),
       api('GET', '/expenses')
     ]);
     loadDateIntoForm(today);
+    renderExpenseDatePicker();
   } catch (err) {
     showNotification('Error loading data: ' + err.message, 'danger');
   }
@@ -71,7 +93,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 /* ---- Load a date into the entry form ---- */
 
 function loadDateIntoForm(date) {
+  if (!date || date > today) {
+    document.getElementById('expDate').value = today;
+    return loadDateIntoForm(today);
+  }
   const existing = getExistingForDate(date);
+  onSpotEntriesForDate = allExpenses.filter(e => e.date === date && e.onSpot && !e.employeeId);
   const hasData = Object.keys(existing).length > 0;
   const isToday = date === today;
 
@@ -79,6 +106,8 @@ function loadDateIntoForm(date) {
     '<i class="bi bi-pencil-square me-2"></i>Expense';
 
   const badge = document.getElementById('formBadge');
+  updateDateStatusColor(date);
+  renderExpenseDatePicker();
   if (isToday) {
     badge.textContent = 'Today';
     badge.className = 'badge bg-primary-subtle text-primary border border-primary-subtle';
@@ -95,12 +124,12 @@ function loadDateIntoForm(date) {
 
   // Check if date is approved
   const approvedRow = allExpenses.find(e => e.date === date && (e.approvalStatus === 'Approved' || e.approvalStatus === 'AutoApproved'));
-  const isApproved = !!approvedRow && !isSuperUser();
+  const isApproved = !!approvedRow;
 
   // Show rejection notice if cashier sees a rejected date
   const rejectedRow = allExpenses.find(e => e.date === date && e.approvalStatus === 'Rejected');
   const noticeEl = document.getElementById('rejectionNotice');
-  if (rejectedRow && !isSuperUser()) {
+  if (rejectedRow && !isSuperUser() && !isApproved) {
     noticeEl.innerHTML =
       '<i class="bi bi-exclamation-triangle-fill me-2"></i><strong>Rejected:</strong> ' +
       (rejectedRow.rejectionReason || 'Please correct and resubmit.') +
@@ -135,10 +164,58 @@ function loadDateIntoForm(date) {
   }
 }
 
+function updateDateStatusColor(date) {
+  const input = document.getElementById('expDate');
+  if (!input) return;
+  input.classList.remove('expense-date-input-approved', 'expense-date-input-rejected', 'expense-date-input-neutral');
+  const statuses = allExpenses.filter(expense => expense.date === date).map(expense => expense.approvalStatus);
+  const status = statuses.includes('Rejected') ? 'rejected' : statuses.some(value => value === 'Approved' || value === 'AutoApproved') ? 'approved' : 'neutral';
+  input.classList.add(`expense-date-input-${status}`);
+}
+
+function toggleExpenseDatePicker() {
+  const picker = document.getElementById('expenseDatePicker');
+  const input = document.getElementById('expDate');
+  const open = picker.classList.toggle('show');
+  input.setAttribute('aria-expanded', String(open));
+  if (open) renderExpenseDatePicker();
+}
+
+function renderExpenseDatePicker() {
+  const picker = document.getElementById('expenseDatePicker');
+  if (!picker) return;
+  const year = datePickerMonth.getFullYear();
+  const month = datePickerMonth.getMonth();
+  const statuses = {};
+  allExpenses.forEach(expense => {
+    const current = statuses[expense.date];
+    if (expense.approvalStatus === 'Rejected' || current === 'Rejected') statuses[expense.date] = 'Rejected';
+    else if (expense.approvalStatus === 'Approved' || expense.approvalStatus === 'AutoApproved' || current === 'Approved') statuses[expense.date] = 'Approved';
+    else statuses[expense.date] = expense.approvalStatus;
+  });
+  let days = Array(new Date(year, month, 1).getDay()).fill('<span class="expense-date-picker-empty"></span>').join('');
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = getLocalDateKey(new Date(year, month, day));
+    const status = statuses[date];
+    const state = status === 'Rejected' ? 'rejected' : (status === 'Approved' ? 'approved' : 'neutral');
+    days += `<button type="button" class="expense-date-picker-day ${state}${date === document.getElementById('expDate').value ? ' selected' : ''}" data-picker-date="${date}" ${date > today ? 'disabled' : ''}>${day}</button>`;
+  }
+  picker.innerHTML = `<div class="expense-date-picker-header"><button type="button" data-picker-nav="prev" aria-label="Previous month"><i class="bi bi-chevron-left"></i></button><strong>${datePickerMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</strong><button type="button" data-picker-nav="next" aria-label="Next month"><i class="bi bi-chevron-right"></i></button></div><div class="expense-date-picker-weekdays">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day => `<span>${day}</span>`).join('')}</div><div class="expense-date-picker-grid">${days}</div><div class="expense-date-picker-legend"><span><i class="approved"></i>Approved</span><span><i class="rejected"></i>Rejected</span><span><i class="neutral"></i>Not approved/rejected</span></div>`;
+  picker.querySelectorAll('[data-picker-date]').forEach(button => button.addEventListener('click', () => {
+    document.getElementById('expDate').value = button.dataset.pickerDate;
+    picker.classList.remove('show');
+    document.getElementById('expDate').setAttribute('aria-expanded', 'false');
+    loadDateIntoForm(button.dataset.pickerDate);
+  }));
+  picker.querySelector('[data-picker-nav="prev"]')?.addEventListener('click', () => { datePickerMonth = new Date(year, month - 1, 1); renderExpenseDatePicker(); });
+  picker.querySelector('[data-picker-nav="next"]')?.addEventListener('click', () => { datePickerMonth = new Date(year, month + 1, 1); renderExpenseDatePicker(); });
+}
+
 function getExistingForDate(date) {
   const map = {};
   allExpenses.filter(e => e.date === date).forEach(e => {
-    if (e.category) map[e.category] = (map[e.category] || 0) + (parseFloat(e.amount) || 0);
+    if (e.category && !e.onSpot) map[e.category] = (map[e.category] || 0) + (parseFloat(e.amount) || 0);
   });
   return map;
 }
@@ -152,45 +229,106 @@ function buildCategoryInputs(existingMap, isReadOnly) {
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const container = document.getElementById('categoryInputs');
 
-  if (!active.length && !Object.keys(existingMap).length) {
+  if (!active.length && !Object.keys(existingMap).length && !onSpotEntriesForDate.length) {
     container.innerHTML = '<div class="text-center text-muted py-3">No active categories. <a href="/categories.html">Manage</a></div>';
     return;
   }
 
-  const activeCatNames = active.map(c => c.name);
   const readonlyAttr = isReadOnly ? ' readonly disabled style="font-size:1rem;background:#f8f9fa"' : ' style="font-size:1rem"';
-  const items = active.map(c => {
-    const val = existingMap[c.name] > 0 ? existingMap[c.name] : '';
-    return '<div class="d-flex align-items-center gap-3 py-2 border-bottom">' +
-      '<span class="fw-medium flex-grow-1" style="font-size:1rem">' + c.name + '</span>' +
-      '<div class="input-group" style="width:160px;flex-shrink:0">' +
-      '<span class="input-group-text fw-semibold" style="font-size:1rem">&#8377;</span>' +
-      '<input type="number" class="form-control cat-amount" data-category="' + c.name + '" ' +
-      'min="0" step="0.01" placeholder="0" value="' + val + '" oninput="updateTotal()"' + readonlyAttr + '>' +
-      '</div></div>';
+  const typeById = new Map(allCategoryTypes.map(t => [t.id, t]));
+  const legacyType = allCategoryTypes.find(t => t.name === 'General') || allCategoryTypes.find(t => t.sortOrder === 1) || allCategoryTypes[0] || { id: '', name: 'General', sortOrder: 0 };
+  const grouped = new Map();
+  active.forEach(c => {
+    const type = typeById.get(c.typeId) || legacyType;
+    if (!grouped.has(type.id)) grouped.set(type.id, { type, categories: [] });
+    grouped.get(type.id).categories.push(c);
+  });
+  allExpenses.filter(e => e.date === document.getElementById('expDate').value && e.employeeId && !e.onSpot).forEach(entry => {
+    const type = typeById.get(entry.typeId) || legacyType;
+    if (!grouped.has(type.id)) grouped.set(type.id, { type, categories: [] });
+    grouped.get(type.id).salaryEntries = grouped.get(type.id).salaryEntries || [];
+    grouped.get(type.id).salaryEntries.push(entry);
+  });
+  onSpotEntriesForDate.forEach(entry => {
+    const type = typeById.get(entry.typeId) || legacyType;
+    if (!grouped.has(type.id)) grouped.set(type.id, { type, categories: [] });
+    grouped.get(type.id).onSpotEntries = grouped.get(type.id).onSpotEntries || [];
+    grouped.get(type.id).onSpotEntries.push(entry);
+  });
+  const cards = [...grouped.values()].sort((a, b) => a.type.sortOrder - b.type.sortOrder).map(({ type, categories, onSpotEntries = [], salaryEntries = [] }) => {
+    const items = categories.map(c => {
+      const val = existingMap[c.name] > 0 ? existingMap[c.name] : '';
+      return '<div class="expense-category-row d-flex align-items-center gap-3 py-2">' +
+        '<span class="fw-medium flex-grow-1">' + c.name + '</span>' +
+        '<div class="input-group expense-amount-input">' +
+        '<span class="input-group-text fw-semibold">&#8377;</span>' +
+        '<input type="number" class="form-control cat-amount" data-category="' + c.name + '" data-type="' + type.id + '" data-onspot="false" ' +
+        'min="0" step="0.01" placeholder="0" value="' + val + '" oninput="updateTotal()"' + readonlyAttr + '>' +
+        '</div></div>';
+    }).join('');
+    const onSpotRows = onSpotEntries.map(entry => '<div class="expense-category-row onspot-row d-flex align-items-center gap-3 py-2">' +
+      '<input type="text" class="form-control onspot-name flex-grow-1" data-type="' + type.id + '" value="' + escapeHtml(entry.category) + '" placeholder="On-spot category"' + (isReadOnly ? ' readonly disabled' : '') + '>' +
+      '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="' + escapeHtml(entry.category) + '" data-type="' + type.id + '" data-onspot="true" min="0" step="0.01" value="' + entry.amount + '" oninput="updateTotal()"' + readonlyAttr + '></div></div>').join('');
+    const salaryRows = salaryEntries.map(entry => '<div class="expense-category-row salary-expense-row d-flex align-items-center gap-3 py-2">' +
+      '<span class="fw-medium flex-grow-1"><i class="bi bi-cash-coin me-1 text-success"></i>' + escapeHtml(entry.category) + '<small class="d-block text-muted">Salary payment</small></span>' +
+      '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="' + escapeHtml(entry.category) + '" data-type="' + type.id + '" value="' + entry.amount + '" readonly disabled></div></div>').join('');
+    const onSpotAction = isReadOnly ? '' : '<button type="button" class="btn btn-sm btn-outline-secondary onspot-add" onclick="addOnSpotRow(this)"><i class="bi bi-plus-lg me-1"></i>On-spot category</button>';
+    return '<section class="expense-category-type-card is-collapsed" data-type-card="' + type.id + '">' +
+      '<button type="button" class="expense-category-type-header" aria-expanded="false" onclick="toggleExpenseType(this)">' +
+      '<span class="expense-category-type-title"><i class="bi bi-chevron-right expense-type-chevron"></i><span>' + (type.displayText || type.name) + '</span></span>' +
+      '<strong class="expense-type-total" data-type-total="' + type.id + '">' + formatCurrency(0) + '</strong></button>' +
+      '<div class="expense-category-type-content">' + items + salaryRows + onSpotRows + '<div class="onspot-action-row">' + onSpotAction + '</div></div></section>';
   }).join('');
 
   // Show read-only entries for categories not in the active list (e.g. employee salary payments)
+  const salaryNames = new Set(allExpenses.filter(e => e.date === document.getElementById('expDate').value && e.employeeId).map(e => e.category));
   const extraItems = Object.keys(existingMap)
-    .filter(k => !activeCatNames.includes(k) && existingMap[k] > 0)
+    .filter(k => !active.some(c => c.name === k) && !salaryNames.has(k) && existingMap[k] > 0)
     .map(k => {
-      return '<div class="d-flex align-items-center gap-3 py-2 border-bottom bg-light rounded px-2">' +
-        '<span class="fw-medium flex-grow-1" style="font-size:1rem"><i class="bi bi-lock me-1 text-muted"></i>' + k + '</span>' +
-        '<div class="input-group" style="width:160px;flex-shrink:0">' +
-        '<span class="input-group-text fw-semibold" style="font-size:1rem">&#8377;</span>' +
-        '<input type="number" class="form-control cat-amount" data-category="' + k + '" ' +
-        'value="' + existingMap[k] + '" readonly disabled style="font-size:1rem;background:#f8f9fa">' +
-        '</div></div>';
+      return '<div class="expense-category-row d-flex align-items-center gap-3 py-2 bg-light rounded px-2">' +
+        '<span class="fw-medium flex-grow-1"><i class="bi bi-lock me-1 text-muted"></i>' + k + '</span>' +
+        '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span>' +
+        '<input type="number" class="form-control cat-amount" data-category="' + k + '" value="' + existingMap[k] + '" readonly disabled></div></div>';
     }).join('');
 
-  container.innerHTML = '<div>' + items + extraItems + '</div>';
+  container.innerHTML = cards + (extraItems ? '<section class="expense-category-type-card expense-category-type-locked is-collapsed"><button type="button" class="expense-category-type-header" aria-expanded="false" onclick="toggleExpenseType(this)"><span class="expense-category-type-title"><i class="bi bi-chevron-right expense-type-chevron"></i><span>Other recorded entries</span></span></button><div class="expense-category-type-content">' + extraItems + '</div></section>' : '');
+  updateTotal();
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+}
+
+function addOnSpotRow(button) {
+  const card = button.closest('.expense-category-type-card');
+  const typeId = card.dataset.typeCard;
+  const content = card.querySelector('.expense-category-type-content');
+  const actions = card.querySelector('.onspot-action-row');
+  const row = document.createElement('div');
+  row.className = 'expense-category-row onspot-row d-flex align-items-center gap-3 py-2';
+  row.innerHTML = '<input type="text" class="form-control onspot-name flex-grow-1" data-type="' + typeId + '" placeholder="On-spot category">' +
+    '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="" data-type="' + typeId + '" data-onspot="true" min="0" step="0.01" placeholder="0" oninput="updateTotal()"></div>';
+  content.insertBefore(row, actions);
+  row.querySelector('.onspot-name').focus();
+}
+
+function toggleExpenseType(button) {
+  const card = button.closest('.expense-category-type-card');
+  const expanded = card.classList.toggle('is-collapsed') === false;
+  button.setAttribute('aria-expanded', String(expanded));
 }
 
 function updateTotal() {
   let total = 0;
+  const typeTotals = {};
   document.querySelectorAll('.cat-amount').forEach(inp => {
-    total += parseFloat(inp.value) || 0;
+    const amount = parseFloat(inp.value) || 0;
+    total += amount;
+    if (inp.dataset.type) typeTotals[inp.dataset.type] = (typeTotals[inp.dataset.type] || 0) + amount;
   });
+  document.querySelectorAll('[data-type-total]').forEach(el => { el.textContent = formatCurrency(typeTotals[el.dataset.typeTotal] || 0); });
+  const overall = document.getElementById('categoryTypeTotals');
+  if (overall) overall.innerHTML = '<span class="expense-overall-label">All types</span><strong>' + formatCurrency(total) + '</strong>';
   document.getElementById('expRunningTotal').textContent = formatCurrency(total);
 }
 
@@ -199,11 +337,19 @@ function updateTotal() {
 async function save() {
   const date = document.getElementById('expDate').value;
   if (!date) { showNotification('Please select a date.', 'warning'); return; }
+  if (date > today) { showNotification('Future dates cannot be saved.', 'warning'); return; }
+  if (allExpenses.some(e => e.date === date && (e.approvalStatus === 'Approved' || e.approvalStatus === 'AutoApproved'))) {
+    showNotification('Approved dates cannot be edited.', 'warning');
+    loadDateIntoForm(date);
+    return;
+  }
 
   const entries = [];
   document.querySelectorAll('.cat-amount:not([readonly])').forEach(inp => {
     const amount = parseFloat(inp.value);
-    if (amount > 0) entries.push({ category: inp.dataset.category, amount });
+    const onSpot = inp.dataset.onspot === 'true';
+    const name = onSpot ? inp.closest('.onspot-row')?.querySelector('.onspot-name')?.value.trim() : inp.dataset.category;
+    if (amount > 0 && name) entries.push({ category: name, amount, typeId: inp.dataset.type, onSpot });
   });
 
   if (!entries.length) { showNotification('Enter at least one amount greater than 0.', 'warning'); return; }
@@ -215,7 +361,7 @@ async function save() {
 
   try {
     await api('POST', '/expenses/bulk', { date, entries, remarks });
-    const msg = isSuperUser() ? 'Expense saved and approved.' : 'Expense submitted for approval.';
+    const msg = 'Expense submitted for approval.';
     showNotification(msg);
     allExpenses = await api('GET', '/expenses');
     loadDateIntoForm(date);
@@ -339,6 +485,8 @@ function renderSummary() {
       .map(([k, v]) => `<span class="badge bg-light text-dark border me-1 mb-1">${k}: ${formatCurrency(v)}</span>`)
       .join('');
     const statusBadgeHtml = approvalStatusBadge(entry.status);
+    const dateStatusClass = entry.status === 'Rejected' ? 'expense-date-rejected' :
+      (entry.status === 'Pending' ? 'expense-date-pending' : 'expense-date-approved');
 
     let actionBtns = `<button class="btn btn-sm btn-outline-secondary btn-action me-1"
       onclick="editFromReport('${date}')" title="Edit"><i class="bi bi-pencil"></i></button>`;
@@ -351,13 +499,13 @@ function renderSummary() {
     }
 
     return `<tr>
-      <td class="fw-semibold text-nowrap small">${formatDate(date)}</td>
-      <td><div class="d-flex flex-wrap">${catBadges}</div>
+      <td data-label="Date" class="fw-semibold text-nowrap small ${dateStatusClass}"><span>${formatDate(date)}</span></td>
+      <td data-label="Categories"><div class="d-flex flex-wrap">${catBadges}</div>
         ${entry.submittedBy ? '<div class="text-muted" style="font-size:.75rem">by ' + entry.submittedBy + '</div>' : ''}
       </td>
-      <td class="text-end fw-semibold text-nowrap">${formatCurrency(dayTotal)}</td>
-      <td>${statusBadgeHtml}</td>
-      <td class="text-center text-nowrap">${actionBtns}</td>
+      <td data-label="Total" class="text-end fw-semibold text-nowrap">${formatCurrency(dayTotal)}</td>
+      <td data-label="Status">${statusBadgeHtml}</td>
+      <td data-label="Actions" class="text-center text-nowrap">${actionBtns}</td>
     </tr>`;
   }).join('');
 

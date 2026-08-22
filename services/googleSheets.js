@@ -1,13 +1,18 @@
 const { google } = require('googleapis');
 const { v4: uuidv4 } = require('uuid');
+const { environment, getSpreadsheetId } = require('../config/environment');
 
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const SPREADSHEET_ID = getSpreadsheetId();
 
 const SHEETS = {
   EXPENSES: 'Expenses',
+  SALES: 'Sales',
+  SALES_ENTRIES: 'SalesEntries',
   EMPLOYEES: 'Employees',
   SALARIES: 'Salaries',
   EXPENSE_CATEGORIES: 'ExpenseCategories',
+  EXPENSE_CATEGORY_TYPES: 'ExpenseCategoryTypes',
+  SETTINGS: 'Settings',
   USERS: 'Users',
   LEAVES: 'Leaves',
   SALARY_PAYMENTS: 'SalaryPayments',
@@ -15,13 +20,17 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  EXPENSES: ['ID', 'Date', 'Category', 'Description', 'Amount', 'EmployeeID', 'EmployeeName', 'SubmittedBy', 'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'RejectionReason', 'CreatedAt'],
+  EXPENSES: ['ID', 'Date', 'Category', 'Description', 'Amount', 'EmployeeID', 'EmployeeName', 'SubmittedBy', 'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'RejectionReason', 'CreatedAt', 'CategoryTypeID', 'IsOnSpot', 'PaymentID', 'Shift'],
+  SALES: ['ID', 'Date', 'Morning', 'Afternoon', 'Dinner', 'TotalSales', 'ExpenseTotal', 'Remaining', 'EnteredBy', 'CreatedAt', 'MorningEnteredBy', 'AfternoonEnteredBy', 'DinnerEnteredBy'],
+  SALES_ENTRIES: ['ID', 'Date', 'Shift', 'PaymentType', 'OnlineVendor', 'Amount', 'EnteredBy', 'CreatedAt', 'UpdatedAt'],
   EMPLOYEES: ['ID', 'Name', 'Address', 'Phone', 'StartDate', 'PerDaySalary', 'DailyPetta', 'Status', 'DailySalaryEnabled'],
   LEAVES: ['ID', 'EmployeeID', 'EmployeeName', 'StartDateTime', 'EndDateTime', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARY_PAYMENTS: ['ID', 'EmployeeID', 'EmployeeName', 'PaymentDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   PETTA_HISTORY:   ['ID', 'EmployeeID', 'EmployeeName', 'EffectiveDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARIES: ['ID', 'EmployeeID', 'EmployeeName', 'Month', 'Year', 'BaseSalary', 'Allowances', 'Deductions', 'NetSalary', 'PaymentDate', 'Status'],
   EXPENSE_CATEGORIES: ['ID', 'Name', 'SortOrder', 'Status'],
+  EXPENSE_CATEGORY_TYPES: ['ID', 'Name', 'SortOrder', 'Status', 'AccessMode', 'AllowedUserIDs', 'DisplayText'],
+  SETTINGS: ['Key', 'Value'],
   USERS: ['ID', 'Username', 'DisplayName', 'Role', 'PasswordHash', 'Status', 'CreatedAt', 'Permissions']
 };
 
@@ -44,7 +53,7 @@ async function getSheetsClient() {
 
 async function initializeSheets() {
   if (!SPREADSHEET_ID) {
-    throw new Error('SPREADSHEET_ID environment variable is not set.');
+    throw new Error(`No spreadsheet configured for ${environment}. Set SPREADSHEET_ID_${environment.toUpperCase()}.`);
   }
 
   const sheets = await getSheetsClient();
@@ -127,6 +136,22 @@ async function initializeSheets() {
           valueInputOption: 'RAW',
           insertDataOption: 'INSERT_ROWS',
           resource: { values: seedValues }
+        });
+      }
+      if (key === 'EXPENSE_CATEGORY_TYPES') {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${name}!A1`,
+          valueInputOption: 'RAW',
+          insertDataOption: 'INSERT_ROWS',
+          resource: { values: [[uuidv4(), 'General', 1, 'Active', 'All', '', 'General']] }
+        });
+      }
+      if (key === 'SETTINGS') {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${name}!A1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+          resource: { values: [['FY_START_MONTH', '4'], ['FY_START_DAY', '1'], ['FY_START_DATE', ''], ['FY_END_DATE', ''], ['IDLE_TIMEOUT_MINUTES', '15']] }
         });
       }
     }

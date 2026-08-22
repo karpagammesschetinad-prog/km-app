@@ -2,6 +2,7 @@
 
 let allEmpStats = [];
 let allPaymentsLog = [];
+let fiscalYearConfig = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
@@ -38,12 +39,18 @@ function dateKey(d) {
   return `${y}-${m}-${day}`;
 }
 
+function getFiscalRange() {
+  const today = parseDateOnly(new Date());
+  const configuredStart = parseDateOnly(fiscalYearConfig?.fiscalYear?.start);
+  return { start: configuredStart || new Date(today.getFullYear(), 3, 1), end: today };
+}
+
 function getLeaveFractionForDay(dayStart, leaves) {
   const dayEnd = addDays(dayStart, 1);
   let frac = 0;
   leaves.forEach(l => {
     const ls = new Date(l.startDateTime);
-    const le = new Date(l.endDateTime);
+    const le = l.endDateTime ? new Date(l.endDateTime) : new Date();
     const s = new Date(Math.max(ls.getTime(), dayStart.getTime()));
     const e = new Date(Math.min(le.getTime(), dayEnd.getTime()));
     if (e > s) frac += (e - s) / 86400000;
@@ -70,9 +77,11 @@ function getPettaForDate(day, timeline) {
 }
 
 function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
-  const start = parseDateOnly(emp.startDate);
-  const today = parseDateOnly(new Date());
-  if (!start || !today || start > today) {
+  const employeeStart = parseDateOnly(emp.startDate);
+  const fiscal = getFiscalRange();
+  const start = employeeStart > fiscal.start ? employeeStart : fiscal.start;
+  const today = fiscal.end;
+  if (!employeeStart || !start || !today || start > today) {
     return { workedDays: 0, earned: 0, totalPaid: 0, balance: 0, currentPetta: parseFloat(emp.dailyPetta) || 0 };
   }
 
@@ -101,6 +110,15 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
   let segEarned = 0;
   let segPaid = 0;
   let segOpening = 0;
+  for (let day = new Date(employeeStart); day < start; day = addDays(day, 1)) {
+    const leaveFrac = getLeaveFractionForDay(day, leaves);
+    const paid = (payments || []).filter(p => {
+      const paymentDate = parseDateOnly(p.paymentDate);
+      return paymentDate && dateKey(paymentDate) === dateKey(day);
+    }).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+    segOpening += Math.max(0, 1 - leaveFrac) * (perDaySalary - getPettaForDate(day, timeline)) - paid;
+  }
+  runningBalance = segOpening;
 
   for (let day = new Date(start); day <= today; day = addDays(day, 1)) {
     const leaveFrac = getLeaveFractionForDay(day, leaves);
@@ -143,12 +161,15 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
 async function loadSalaryPage() {
   document.getElementById('salBody').innerHTML = loadingRow(8);
   try {
-    const [employees, allLeaves, allPayments, allPetta] = await Promise.all([
+    const [employees, allLeaves, allPayments, allPetta, config] = await Promise.all([
       api('GET', '/employees'),
       api('GET', '/leaves'),
       api('GET', '/payments'),
-      api('GET', '/petta')
+      api('GET', '/petta'),
+      api('GET', '/config')
     ]);
+
+    fiscalYearConfig = config;
 
     allPaymentsLog = allPayments;
 
@@ -161,7 +182,7 @@ async function loadSalaryPage() {
       const pettaHistory = allPetta.filter(p => p.employeeId === emp.id);
 
       const sal = calcEmployeeSalary(emp, leaves, payments, pettaHistory);
-      const onLeave = leaves.some(l => new Date(l.startDateTime) <= now && now <= new Date(l.endDateTime));
+      const onLeave = leaves.some(l => new Date(l.startDateTime) <= now && (!l.endDateTime || now <= new Date(l.endDateTime)));
 
       return {
         emp,
@@ -205,22 +226,22 @@ function renderTable(stats) {
     const balLabel = isAdv ? 'Advance' : (balance > 0 ? 'Pending' : 'Settled');
 
     return `<tr>
-      <td>
+      <td data-label="Employee">
         <a href="/employee-detail.html?id=${emp.id}" class="fw-semibold text-decoration-none">${emp.name}</a>
         ${onLeave ? '<span class="badge bg-primary ms-1">On Leave</span>' : ''}
         ${emp.phone ? `<div class="text-muted small">${emp.phone}</div>` : ''}
       </td>
-      <td>${formatDate(emp.startDate)}</td>
-      <td>${formatCurrency(emp.perDaySalary)}<span class="text-muted small"> - ${formatCurrency(currentPetta)}</span></td>
-      <td>${workedDays.toFixed(1)} days</td>
-      <td class="text-success fw-semibold">${formatCurrency(earned)}</td>
-      <td class="text-info fw-semibold">${formatCurrency(totalPaid)}</td>
-      <td>
+      <td data-label="Start date">${formatDate(emp.startDate)}</td>
+      <td data-label="Per day">${formatCurrency(emp.perDaySalary)}<span class="text-muted small"> - ${formatCurrency(currentPetta)}</span></td>
+      <td data-label="Days worked">${workedDays.toFixed(1)} days</td>
+      <td data-label="Earned" class="text-success fw-semibold">${formatCurrency(earned)}</td>
+      <td data-label="Total paid" class="text-info fw-semibold">${formatCurrency(totalPaid)}</td>
+      <td data-label="Balance">
         <span class="badge bg-${balColor}-subtle text-${balColor} border border-${balColor}-subtle px-2 py-1">
           ${balLabel}: ${formatCurrency(balAbs)}
         </span>
       </td>
-      <td>
+      <td data-label="Actions">
         <a href="/employee-detail.html?id=${emp.id}" class="btn btn-xs btn-outline-primary btn-action">
           <i class="bi bi-eye"></i>
         </a>
@@ -249,14 +270,14 @@ function renderPaymentLog(payments, employees) {
   tbody.innerHTML = sorted.map(p => {
     const emp = employees.find(e => e.id === p.employeeId);
     return `<tr>
-      <td>${formatDate(p.paymentDate)}</td>
-      <td>
+      <td data-label="Date">${formatDate(p.paymentDate)}</td>
+      <td data-label="Employee">
         <a href="/employee-detail.html?id=${p.employeeId}" class="fw-semibold text-decoration-none">${p.employeeName}</a>
         ${emp ? `<div class="text-muted small">${emp.phone || ''}</div>` : ''}
       </td>
-      <td class="fw-semibold text-success">${formatCurrency(p.amount)}</td>
-      <td>${p.remarks || '-'}</td>
-      <td class="text-muted small">${p.createdBy || '-'}</td>
+      <td data-label="Amount" class="fw-semibold text-success">${formatCurrency(p.amount)}</td>
+      <td data-label="Remarks">${p.remarks || '-'}</td>
+      <td data-label="Recorded by" class="text-muted small">${p.createdBy || '-'}</td>
     </tr>`;
   }).join('');
 
