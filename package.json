@@ -4,10 +4,10 @@
   "description": "Expense tracking and employee salary management with Google Sheets",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node -e \"process.env.NODE_ENV='production'; require('dotenv').config({ path: '.env.production' }); require('./server');\"",
     "dev": "nodemon server.js",
     "start:dev": "node server.js",
-    "start:prod": "node -e \"require('dotenv').config({ path: '.env.production' }); require('./server');\"",
+    "start:prod": "npm start",
     "migrate:dev:safe": "node scripts/safe-sheet-migrate.js development",
     "migrate:prod:safe": "node scripts/safe-sheet-migrate.js production"
   },
