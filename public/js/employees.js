@@ -93,6 +93,7 @@ function setupModal() {
     document.getElementById('empStartDate').value = new Date().toISOString().split('T')[0];
     document.getElementById('empStatus').value = 'Active';
     document.getElementById('empDailyPay').checked = false;
+    document.getElementById('empTemporary').checked = false;
     bootstrap.Modal.getOrCreateInstance(document.getElementById('empModal')).show();
   });
   document.getElementById('btnSaveEmployee').addEventListener('click', save);
@@ -110,7 +111,8 @@ async function save() {
     perDaySalary:       parseFloat(document.getElementById('empPerDay').value),
     dailyPetta:         parseFloat(document.getElementById('empPetta').value) || 0,
     status:             document.getElementById('empStatus').value,
-    dailySalaryEnabled: document.getElementById('empDailyPay').checked
+    dailySalaryEnabled: document.getElementById('empDailyPay').checked,
+    temporaryEmployee:  document.getElementById('empTemporary').checked
   };
 
   const btn = document.getElementById('btnSaveEmployee');
@@ -146,6 +148,7 @@ async function openEdit(id) {
   document.getElementById('empPetta').value     = e.dailyPetta;
   document.getElementById('empStatus').value    = e.status;
   document.getElementById('empDailyPay').checked = !!e.dailySalaryEnabled;
+  document.getElementById('empTemporary').checked = !!e.temporaryEmployee;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('empModal')).show();
 }
 

@@ -6,6 +6,7 @@ const { requireAuth } = require('../middleware/authMiddleware');
 
 const EXPENSE_SHEET = SHEETS.EXPENSES;
 const EXPENSE_C = { DATE: 1, CATEGORY: 2, DESCRIPTION: 3, AMOUNT: 4, EMP_ID: 5, EMP_NAME: 6, PAYMENT_ID: 15 };
+const EMPLOYEE_C = { ID: 0, NAME: 1 };
 
 const SHEET = SHEETS.SALARY_PAYMENTS;
 const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
@@ -69,10 +70,18 @@ router.post('/', requireAuth, async (req, res) => {
       const today = getBusinessDate();
       if (paymentDate !== today) return res.status(400).json({ success: false, message: 'Cashier payments must use today\'s date.' });
     }
-    if (addAsExpense) {
-      if (!expenseTypeId) return res.status(400).json({ success: false, message: 'Expense category type is required when adding as expense.' });
+    const employeeRows = await getAllRows(SHEETS.EMPLOYEES);
+    const employee = employeeRows.find(row => row[EMPLOYEE_C.ID] === employeeId);
+    const isTemporaryEmployee = String(employee?.[9] || '').toLowerCase() === 'true';
+    const shouldAddAsExpense = !!addAsExpense || isTemporaryEmployee;
+    let resolvedExpenseTypeId = expenseTypeId || '';
+    if (shouldAddAsExpense) {
       const typeRows = await getAllRows(SHEETS.EXPENSE_CATEGORY_TYPES);
-      const type = typeRows.find(row => row[TYPE_C.ID] === expenseTypeId);
+      if (!resolvedExpenseTypeId) {
+        const generalType = typeRows.find(row => String(row[TYPE_C.NAME] || '').trim().toLowerCase() === 'general' && (row[TYPE_C.STATUS] || 'Active') === 'Active');
+        resolvedExpenseTypeId = generalType?.[TYPE_C.ID] || '';
+      }
+      const type = typeRows.find(row => row[TYPE_C.ID] === resolvedExpenseTypeId);
       if (!type || !canUseExpenseType(type, req.session.user)) return res.status(403).json({ success: false, message: 'You do not have access to this expense category type.' });
     }
     const obj = {
@@ -89,7 +98,7 @@ router.post('/', requireAuth, async (req, res) => {
                             obj.amount, obj.remarks, obj.createdBy, obj.createdAt]);
 
     // Also record as an expense if cashier confirmed
-    if (addAsExpense) {
+    if (shouldAddAsExpense) {
       const user = req.session?.user || {};
       const isSuperUser = user.role === 'superuser';
       const expenseRow = [
@@ -106,9 +115,10 @@ router.post('/', requireAuth, async (req, res) => {
         '',                                // ApprovedAt
         '',                                // RejectionReason
         obj.createdAt,                     // CreatedAt
-        expenseTypeId || '',               // CategoryTypeID
+        resolvedExpenseTypeId,              // CategoryTypeID
         '',                                // IsOnSpot
-        obj.id                             // PaymentID
+        obj.id,                            // PaymentID
+        isTemporaryEmployee ? 'Night' : '' // Shift
       ];
       await appendRow(EXPENSE_SHEET, expenseRow);
     }

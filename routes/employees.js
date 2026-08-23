@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { SHEETS, getAllRows, appendRow, updateRow, deleteRow, findRowById } = require('../services/googleSheets');
 
 const SHEET = SHEETS.EMPLOYEES;
-const C = { ID: 0, NAME: 1, ADDRESS: 2, PHONE: 3, START: 4, PER_DAY: 5, PETTA: 6, STATUS: 7, DAILY_PAY: 8 };
+const C = { ID: 0, NAME: 1, ADDRESS: 2, PHONE: 3, START: 4, PER_DAY: 5, PETTA: 6, STATUS: 7, DAILY_PAY: 8, TEMPORARY: 9 };
 
 function rowToObj(row) {
   return {
@@ -16,13 +16,14 @@ function rowToObj(row) {
     perDaySalary:       parseFloat(row[C.PER_DAY]) || 0,
     dailyPetta:         parseFloat(row[C.PETTA])   || 0,
     status:             row[C.STATUS]    || 'Active',
-    dailySalaryEnabled: row[C.DAILY_PAY] === 'true' || row[C.DAILY_PAY] === true
+    dailySalaryEnabled: row[C.DAILY_PAY] === 'true' || row[C.DAILY_PAY] === true,
+    temporaryEmployee: row[C.TEMPORARY] === 'true' || row[C.TEMPORARY] === true
   };
 }
 
 function objToRow(o) {
   return [o.id, o.name, o.address || '', o.phone || '', o.startDate || '',
-          o.perDaySalary, o.dailyPetta, o.status, o.dailySalaryEnabled ? 'true' : 'false'];
+          o.perDaySalary, o.dailyPetta, o.status, o.dailySalaryEnabled ? 'true' : 'false', o.temporaryEmployee ? 'true' : 'false'];
 }
 
 router.get('/', async (req, res) => {
@@ -46,7 +47,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { name, phone, address, startDate, perDaySalary, dailyPetta = 0, status = 'Active', dailySalaryEnabled = false } = req.body;
+    const { name, phone, address, startDate, perDaySalary, dailyPetta = 0, status = 'Active', dailySalaryEnabled = false, temporaryEmployee = false } = req.body;
     if (!name || perDaySalary === undefined || !startDate) {
       return res.status(400).json({ success: false, message: 'name, startDate, and perDaySalary are required.' });
     }
@@ -59,7 +60,8 @@ router.post('/', async (req, res) => {
       perDaySalary: parseFloat(perDaySalary),
       dailyPetta: parseFloat(dailyPetta) || 0,
       status,
-      dailySalaryEnabled: !!dailySalaryEnabled
+      dailySalaryEnabled: !!dailySalaryEnabled,
+      temporaryEmployee: !!temporaryEmployee
     };
     await appendRow(SHEET, objToRow(obj));
     res.status(201).json({ success: true, data: obj });
@@ -77,6 +79,7 @@ router.put('/:id', async (req, res) => {
     updated.perDaySalary       = parseFloat(updated.perDaySalary) || 0;
     updated.dailyPetta         = parseFloat(updated.dailyPetta)   || 0;
     updated.dailySalaryEnabled = updated.dailySalaryEnabled === true || updated.dailySalaryEnabled === 'true';
+    updated.temporaryEmployee  = updated.temporaryEmployee === true || updated.temporaryEmployee === 'true';
     await updateRow(SHEET, found.index, objToRow(updated));
     res.json({ success: true, data: updated });
   } catch (err) {

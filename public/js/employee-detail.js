@@ -542,6 +542,11 @@ function setupModals() {
     document.getElementById('payDate').value = currentDate;
     document.getElementById('payDate').max = currentDate;
     document.getElementById('payDate').disabled = !isSuperUser();
+    expenseToggle.checked = !!empData.temporaryEmployee || expenseToggle.checked;
+    expenseToggle.disabled = !!empData.temporaryEmployee;
+    expenseToggle.closest('.form-check')?.querySelector('label span')?.replaceChildren(document.createTextNode(empData.temporaryEmployee
+      ? ' — Temporary employee payments are always recorded as Night expenses'
+      : ' — Record this payment as an expense entry'));
     // Pre-fill today's date automatically for daily-pay employees
     if (empData.dailySalaryEnabled) {
       document.getElementById('payDate').value = currentDate;
@@ -577,6 +582,7 @@ function openEdit() {
   document.getElementById('editPetta').value       = empData.dailyPetta;
   document.getElementById('editStatus').value      = empData.status;
   document.getElementById('editDailyPay').checked  = !!empData.dailySalaryEnabled;
+  document.getElementById('editTemporary').checked  = !!empData.temporaryEmployee;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('editEmpModal')).show();
 }
 
@@ -594,7 +600,8 @@ async function saveEdit() {
       perDaySalary:       parseFloat(document.getElementById('editPerDay').value),
       dailyPetta:         parseFloat(document.getElementById('editPetta').value) || 0,
       status:             document.getElementById('editStatus').value,
-      dailySalaryEnabled: document.getElementById('editDailyPay').checked
+      dailySalaryEnabled: document.getElementById('editDailyPay').checked,
+      temporaryEmployee:  document.getElementById('editTemporary').checked
     });
     bootstrap.Modal.getInstance(document.getElementById('editEmpModal')).hide();
     showNotification('Employee updated.');
