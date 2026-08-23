@@ -117,7 +117,7 @@ router.get('/', requireAuth, async (req, res) => {
       .filter(row => row.date === date)
       .map(row => {
         if (!isCashType(row.paymentType)) return row;
-        return { ...row, amount: row.amount - (shiftExpenses[row.shift] || 0) };
+        return { ...row, cashTotal: row.amount + (shiftExpenses[row.shift] || 0) };
       });
     // Return full day entries so cashier users can also view superuser-saved values.
     res.json({ success: true, data: rows });
@@ -163,7 +163,7 @@ router.post('/', requireAuth, async (req, res) => {
       valid.forEach(entry => {
         const key = entryKey({ date, shift: entry.shift, paymentType: entry.paymentType, onlineVendor: entry.onlineVendor });
         const submittedAmount = Number(entry.amount);
-        const storedAmount = isCashType(entry.paymentType) ? submittedAmount + (shiftExpenses[entry.shift] || 0) : submittedAmount;
+        const storedAmount = isCashType(entry.paymentType) ? submittedAmount - (shiftExpenses[entry.shift] || 0) : submittedAmount;
         dedupedByKey.set(key, { ...entry, amount: storedAmount });
       });
       const upsertEntries = [...dedupedByKey.values()];
