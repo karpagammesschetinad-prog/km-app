@@ -6,7 +6,6 @@ const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware'
 
 const C = { ID: 0, DATE: 1, SHIFT: 2, PAYMENT_TYPE: 3, VENDOR: 4, AMOUNT: 5, ENTERED_BY: 6, CREATED_AT: 7, UPDATED_AT: 8 };
 const SHIFTS = ['Morning', 'Afternoon', 'Night', 'Day'];
-const EXPENSE = { DATE: 1, AMOUNT: 4, TYPE_ID: 13, SHIFT: 16, EMP_ID: 5 };
 const ONLINE_VENDOR_PAYMENT_TYPE = 'OnlineVendor';
 const writeLocks = new Map();
 const normalizeShift = shift => {
@@ -37,31 +36,6 @@ const parse = row => ({
   createdAt: row[C.CREATED_AT] || '',
   updatedAt: row[C.UPDATED_AT] || row[C.CREATED_AT] || ''
 });
-
-function expenseShiftForSales(row, categoryTypes) {
-  const explicit = normalizeShift(row[EXPENSE.SHIFT]);
-  if (explicit) return explicit;
-  if (!row[EXPENSE.TYPE_ID]) return row[EXPENSE.EMP_ID] ? '' : 'Morning';
-  const type = categoryTypes.find(item => item[0] === row[EXPENSE.TYPE_ID]);
-  const name = String(type?.[1] || '').toLowerCase();
-  if (name.includes('morning')) return 'Morning';
-  if (name.includes('afternoon')) return 'Afternoon';
-  if (name.includes('night') || name.includes('dinner') || name.includes('evening')) return 'Night';
-  return '';
-}
-
-function getShiftExpenseTotals(expenses, date, categoryTypes) {
-  const totals = { Morning: 0, Afternoon: 0, Night: 0 };
-  expenses.filter(row => row[EXPENSE.DATE] === date).forEach(row => {
-    const shift = expenseShiftForSales(row, categoryTypes);
-    if (totals[shift] !== undefined) totals[shift] += parseFloat(row[EXPENSE.AMOUNT]) || 0;
-  });
-  return totals;
-}
-
-function isCashType(value) {
-  return normalizeText(value).toLowerCase() === 'cash';
-}
 
 async function withWriteLock(lockKey, work) {
   const previousTail = writeLocks.get(lockKey) || Promise.resolve();
@@ -106,19 +80,15 @@ router.get('/history', requireSuperUser, async (req, res) => {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const date = req.query.date || localDate();
-    const [salesRows, expenseRows, categoryTypes] = await Promise.all([
-      getAllRows(SHEETS.SALES_ENTRIES),
-      getAllRows(SHEETS.EXPENSES),
-      getAllRows(SHEETS.EXPENSE_CATEGORY_TYPES)
-    ]);
-    const shiftExpenses = getShiftExpenseTotals(expenseRows, date, categoryTypes);
-    const rows = salesRows
-      .map(parse)
-      .filter(row => row.date === date)
-      .map(row => {
-        if (!isCashType(row.paymentType)) return row;
-        return { ...row, cashTotal: row.amount + (shiftExpenses[row.shift] || 0) };
-      });
+    const salesRows = await getAllRows(SHEETS.SALES_ENTRIES);
+    const latestByKey = new Map();
+    salesRows
+      .map((row, index) => ({ row, index, parsed: parse(row) }))
+      .filter(item => item.parsed.date === date)
+      .forEach(item => latestByKey.set(entryKey(item.parsed), item));
+    const rows = [...latestByKey.values()]
+      .sort((a, b) => a.index - b.index)
+      .map(item => item.parsed);
     // Return full day entries so cashier users can also view superuser-saved values.
     res.json({ success: true, data: rows });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
@@ -152,19 +122,12 @@ router.post('/', requireAuth, async (req, res) => {
         return amountValid && shiftValid && configuredTypes.includes(entry.paymentType) && (!entry.onlineVendor || configuredVendors.includes(entry.onlineVendor));
       });
       if (!valid.length) return res.status(400).json({ success: false, message: 'Enter at least one valid sales amount.' });
-      const [rows, expenseRows, categoryTypes] = await Promise.all([
-        getAllRows(SHEETS.SALES_ENTRIES),
-        getAllRows(SHEETS.EXPENSES),
-        getAllRows(SHEETS.EXPENSE_CATEGORY_TYPES)
-      ]);
-      const shiftExpenses = getShiftExpenseTotals(expenseRows, date, categoryTypes);
+      const rows = await getAllRows(SHEETS.SALES_ENTRIES);
       // Guard 1: if same key appears multiple times in one request, keep only last value.
       const dedupedByKey = new Map();
       valid.forEach(entry => {
         const key = entryKey({ date, shift: entry.shift, paymentType: entry.paymentType, onlineVendor: entry.onlineVendor });
-        const submittedAmount = Number(entry.amount);
-        const storedAmount = isCashType(entry.paymentType) ? submittedAmount - (shiftExpenses[entry.shift] || 0) : submittedAmount;
-        dedupedByKey.set(key, { ...entry, amount: storedAmount });
+        dedupedByKey.set(key, { ...entry, amount: Number(entry.amount) });
       });
       const upsertEntries = [...dedupedByKey.values()];
       const user = req.session.user.username;

@@ -194,6 +194,13 @@ function setupTamilKeyboard() {
     '<div class="tamil-keyboard-row tamil-keyboard-actions"><button type="button" class="tamil-key tamil-key-wide" data-tamil-key=" ">Space</button><button type="button" class="tamil-key" data-tamil-action="backspace" aria-label="Backspace"><i class="bi bi-backspace"></i></button><button type="button" class="tamil-key" data-tamil-action="clear">Clear</button></div>';
 
   document.body.append(toggle, panel);
+  const hideKeyboardIfFocusMoved = () => {
+    const active = document.activeElement;
+    if (isTamilKeyboardTarget(active) || panel.contains(active) || toggle.contains(active)) return;
+    document.body.classList.remove('tamil-keyboard-ready');
+    panel.classList.remove('show');
+    toggle.classList.remove('active');
+  };
   const nativeKeyboardCheckbox = panel.querySelector('#_useNativeKeyboard');
   nativeKeyboardCheckbox.checked = usesNativeKeyboard();
   nativeKeyboardCheckbox.addEventListener('change', () => {
@@ -212,11 +219,19 @@ function setupTamilKeyboard() {
     if (isTamilKeyboardTarget(event.target)) {
       applyKeyboardMode(event.target);
       tamilKeyboardTarget = event.target;
+      document.body.classList.add('tamil-keyboard-ready');
       if (!usesNativeKeyboard()) {
         panel.classList.add('show');
         toggle.classList.add('active');
       }
     }
+  });
+  document.addEventListener('focusout', () => setTimeout(hideKeyboardIfFocusMoved, 0));
+  document.addEventListener('pointerdown', event => {
+    if (isTamilKeyboardTarget(event.target) || panel.contains(event.target) || toggle.contains(event.target)) return;
+    document.body.classList.remove('tamil-keyboard-ready');
+    panel.classList.remove('show');
+    toggle.classList.remove('active');
   });
   toggle.addEventListener('click', () => {
     panel.classList.toggle('show');

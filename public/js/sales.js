@@ -23,7 +23,12 @@ const formatAuditDateTime = value => {
 let paymentTypeHistoryModal = null;
 
 function calculateRemainingSales(entries) {
-  return (entries || []).reduce((total, entry) => total + (Number(entry.amount) || 0), 0);
+  return (entries || []).reduce((total, entry) => {
+    const amount = Number(entry.amount) || 0;
+    return total + (entry.paymentType?.toLowerCase() === 'cash'
+      ? amount - (Number(salesExpensesByShift[entry.shift]) || 0)
+      : amount);
+  }, 0);
 }
 
 function renderPaymentTypeSummary(targetEl, entries, shiftExpenses = {}) {
@@ -39,15 +44,18 @@ function renderPaymentTypeSummary(targetEl, entries, shiftExpenses = {}) {
     if (values.has(shift) && values.get(shift).has(paymentType)) values.get(shift).set(paymentType, values.get(shift).get(paymentType) + (Number(entry.amount) || 0));
   });
   const table = targetEl.closest('table');
-  if (table) table.querySelector('thead').innerHTML = `<tr><th>Shift</th><th>Expenses</th><th>Cash Payment</th><th>Cash Remaining</th>${paymentTypes.filter(type => type !== 'Cash').map(type => `<th>${type}</th>`).join('')}<th>Remaining</th><th>Total Sales</th></tr>`;
+  if (table) table.querySelector('thead').innerHTML = `<tr><th>Shift</th><th>Expenses</th><th>Cash Payment</th><th>Cash Remaining</th>${paymentTypes.filter(type => type !== 'Cash').map(type => `<th>${type}</th>`).join('')}<th>Total Remaining</th><th>Total Sales</th></tr>`;
   targetEl.innerHTML = shifts.map(shift => {
     const row = values.get(shift);
     const expenses = shift === 'Day Online' ? 0 : (Number(shiftExpenses[shift]) || 0);
-    const cashRemaining = row.get('Cash');
-    const remaining = [...row.values()].reduce((sum, amount) => sum + amount, 0);
-    const total = remaining + expenses;
-    const cashPayment = shift === 'Day Online' ? cashRemaining : cashRemaining + expenses;
-    return `<tr><td data-label="Shift" class="fw-semibold">${shift}</td><td data-label="Expenses">${formatCurrency(expenses)}</td><td data-label="Cash Payment">${formatCurrency(cashPayment)}</td><td data-label="Cash Remaining">${formatCurrency(cashRemaining)}</td>${paymentTypes.filter(type => type !== 'Cash').map(type => `<td data-label="${type}">${formatCurrency(row.get(type))}</td>`).join('')}<td data-label="Remaining">${formatCurrency(remaining)}</td><td data-label="Total Sales" class="text-success fw-semibold">${formatCurrency(total)}</td></tr>`;
+    const cashPayment = row.get('Cash');
+    const cashRemaining = shift === 'Day Online' ? 0 : cashPayment - expenses;
+    const otherPayments = [...row.entries()]
+      .filter(([paymentType]) => paymentType !== 'Cash')
+      .reduce((sum, [, amount]) => sum + amount, 0);
+    const remaining = cashRemaining + otherPayments;
+    const total = cashPayment + otherPayments;
+    return `<tr><td data-label="Shift" class="fw-semibold">${shift}</td><td data-label="Expenses">${formatCurrency(expenses)}</td><td data-label="Cash Payment">${formatCurrency(cashPayment)}</td><td data-label="Cash Remaining">${formatCurrency(cashRemaining)}</td>${paymentTypes.filter(type => type !== 'Cash').map(type => `<td data-label="${type}">${formatCurrency(row.get(type))}</td>`).join('')}<td data-label="Total Remaining">${formatCurrency(remaining)}</td><td data-label="Total Sales" class="text-success fw-semibold">${formatCurrency(total)}</td></tr>`;
   }).join('');
 }
 
@@ -71,7 +79,7 @@ function ensurePaymentTypeHistoryUI() {
   const trigger = document.createElement('button');
   trigger.type = 'button';
   trigger.id = 'openPaymentTypeHistory';
-  trigger.className = 'btn btn-outline-secondary w-100 mt-2';
+  trigger.className = 'btn btn-sm btn-outline-secondary mt-2';
   trigger.innerHTML = '<i class="bi bi-clock-history me-1"></i>Payment Type History';
   saveBtn.insertAdjacentElement('afterend', trigger);
 
@@ -129,11 +137,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user || !canAccess('sales')) { window.location.href = '/expenses.html'; return; }
   const superUser = isSuperUser();
+  document.body.classList.toggle('cashier-sales-view', !superUser);
   if (superUser) {
     const row = document.querySelector('.row.g-3');
     const summaryCol = document.getElementById('superSummary');
-    const dailySalesCol = row?.querySelector('.col-12.col-lg-5');
-    if (row && summaryCol && dailySalesCol) row.insertBefore(summaryCol, dailySalesCol);
   }
   const dateInput = document.getElementById('salesDate');
   dateInput.value = salesTodayKey; dateInput.max = salesTodayKey; dateInput.disabled = !superUser;
@@ -147,8 +154,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadSales();
     if (superUser) await loadSummary();
   });
-  document.getElementById('saveSales').addEventListener('click', saveSales);
-  if (!superUser) document.getElementById('superSummary').remove();
+  document.getElementById('saveSales')?.addEventListener('click', saveSales);
+  if (!superUser) {
+    document.getElementById('superSummaryRow')?.remove();
+  }
   await loadSales();
   if (superUser) await loadSummary();
 });
@@ -158,28 +167,19 @@ async function loadSales() {
   try {
     salesToday = await api('GET', `/sales?date=${encodeURIComponent(date)}`);
     salesEntries = (await api('GET', `/sales-entries?date=${encodeURIComponent(date)}`)).map(entry => ({ ...entry, shift: normalizeShift(entry.shift) }));
-    salesExpensesByShift = salesToday.summary?.shiftExpenses || {};
-    renderSalesEntryGrid();
-    document.getElementById('salesDateLabel').textContent = date === salesTodayKey ? 'Today' : new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const row = isSuperUser() ? salesToday.rows?.find(item => item.date === date) : salesToday;
-    ['morning', 'afternoon', 'dinner'].forEach(key => { originalSalesValues[key] = row?.[key] || 0; });
-    if (isSuperUser() && salesToday.summary) {
-      document.getElementById('cashierRemaining').textContent = formatCurrency(calculateRemainingSales(salesEntries));
-    } else {
-      updateCashierTotal();
-    }
+    salesExpensesByShift = salesToday.summary?.shiftExpenses || salesToday.shiftExpenses || {};
+    const dateLabel = document.getElementById('salesDateLabel');
+    if (dateLabel) dateLabel.textContent = date === salesTodayKey ? 'Today' : new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    renderSalesShiftCards();
   } catch (error) { showNotification('Failed to load sales: ' + error.message, 'danger'); }
 }
 
 function updateCashierTotal() {
-  const totalEl = document.getElementById('cashierRemaining');
   document.querySelectorAll('.sales-entry-value[data-cash-expense]').forEach(input => {
     const label = input.parentElement.querySelector('.sales-entry-after-expense');
     if (label) label.textContent = `After expenses: ${formatCurrency((parseFloat(input.value) || 0) - (parseFloat(input.dataset.cashExpense) || 0))}`;
   });
-  if (!totalEl || !isSuperUser()) return;
-  const total = [...document.querySelectorAll('.sales-entry-value')].reduce((sum, input) => sum + (parseFloat(input.value) || 0), 0);
-  totalEl.textContent = formatCurrency(total);
+  refreshSalesShiftTotals();
 }
 
 async function loadSalesConfiguration() {
@@ -188,33 +188,29 @@ async function loadSalesConfiguration() {
   salesConfig.onlineVendors = config.onlineVendors || [];
 }
 
-function renderSalesEntryGrid() {
-  const oldInputs = document.querySelectorAll('.sales-shift-input');
-  const saveButton = document.getElementById('saveSales');
-  const grid = document.getElementById('salesEntryGrid') || document.createElement('div');
-  grid.id = 'salesEntryGrid';
-  grid.className = 'sales-entry-grid';
-  oldInputs.forEach(input => input.remove());
-  const entries = salesEntries || [];
-  const paymentCells = salesConfig.paymentTypes.map(type => SHIFT_LABELS.map(shift => {
-    const matching = entries.find(entry => entry.paymentType === type && entry.shift === shift) || {};
-    const isCash = type.toLowerCase() === 'cash';
-    const cashExpense = isCash ? (Number(salesExpensesByShift[shift]) || Math.max(0, (matching.cashTotal || 0) - (matching.amount || 0))) : 0;
-    const displayAmount = isCash
-      ? (matching.cashTotal ?? ((Number(matching.amount) || 0) + cashExpense))
-      : matching.amount;
-    const afterExpense = Number(displayAmount) - cashExpense;
-    return `<div class="sales-entry-cell"><label class="form-label">${shift} - ${type}</label><input type="number" class="form-control sales-entry-value mt-1" data-shift="${shift}" data-payment-type="${type}" data-cash-expense="${cashExpense}" min="0" step="0.01" placeholder="0" value="${displayAmount || ''}">${isCash ? `<div class="sales-entry-after-expense text-muted small mt-1">After expenses: ${formatCurrency(afterExpense)}</div>` : ''}</div>`;
-  }).join('')).join('');
-  const vendorCells = salesConfig.onlineVendors.map(vendor => {
-    const matching = entries.find(entry => entry.paymentType === ONLINE_VENDOR_PAYMENT_TYPE && entry.shift === 'Day' && entry.onlineVendor === vendor) || {};
-    return `<div class="sales-entry-cell"><label class="form-label">Online Vendor - ${vendor}</label><input type="number" class="form-control sales-entry-value mt-1" data-shift="Day" data-payment-type="${ONLINE_VENDOR_PAYMENT_TYPE}" data-online-vendor="${vendor}" min="0" step="0.01" placeholder="0" value="${matching.amount || ''}"></div>`;
+function renderSalesShiftCards() {
+  const container = document.getElementById('salesShiftCards');
+  if (!container) return;
+  const otherTypes = salesConfig.paymentTypes.filter(type => type.toLowerCase() !== 'cash');
+  container.innerHTML = SHIFT_LABELS.map(shift => {
+    const cash = salesEntries.find(entry => entry.shift === shift && entry.paymentType.toLowerCase() === 'cash') || {};
+    const expense = Number(salesExpensesByShift[shift]) || 0;
+    const otherFields = otherTypes.map(type => {
+      const entry = salesEntries.find(item => item.shift === shift && item.paymentType === type) || {};
+      return `<div class="mb-2"><label class="form-label">${type}</label><input type="number" class="form-control sales-entry-value" data-shift="${shift}" data-payment-type="${type}" min="0" step="0.01" placeholder="0" value="${entry.amount || ''}"></div>`;
+    }).join('');
+    return `<div class="col-12 col-md-4"><section class="card-panel sales-shift-card"><div class="card-panel-header"><h6 class="card-panel-title">${shift} Sales</h6><span class="badge bg-warning-subtle text-warning">Expense: ${formatCurrency(expense)}</span></div><div class="card-panel-body"><label class="form-label">Total Cash Payment</label><input type="number" class="form-control sales-entry-value" data-shift="${shift}" data-payment-type="Cash" data-cash-expense="${expense}" min="0" step="0.01" placeholder="0" value="${cash.amount || ''}"><div class="sales-entry-after-expense text-muted small mt-1">After expenses: ${formatCurrency((Number(cash.amount) || 0) - expense)}</div><div class="mt-3 pt-2 border-top"><div class="small fw-semibold text-muted mb-2">Other Payment Types</div>${otherFields || '<div class="small text-muted">No other payment types configured.</div>'}</div><div class="sales-shift-total mt-3 pt-2 border-top" data-shift-total="${shift}"></div></div></section></div>`;
   }).join('');
-  const vendorSection = salesConfig.onlineVendors.length ? `<div class="col-12 mt-2 mb-1 fw-semibold text-primary">Online Sales By Vendor (Day Basis)</div>${vendorCells}` : '';
-  grid.innerHTML = paymentCells + vendorSection;
-  saveButton.before(grid);
-  document.querySelectorAll('.sales-entry-value').forEach(input => input.addEventListener('input', updateCashierTotal));
-  updateCashierTotal();
+  container.querySelectorAll('.sales-entry-value').forEach(input => input.addEventListener('input', updateCashierTotal));
+  refreshSalesShiftTotals();
+}
+
+function refreshSalesShiftTotals() {
+  document.querySelectorAll('[data-shift-total]').forEach(totalEl => {
+    const shift = totalEl.dataset.shiftTotal;
+    const values = [...document.querySelectorAll(`.sales-entry-value[data-shift="${shift}"]`)].reduce((sum, input) => sum + (Number(input.value) || 0), 0);
+    totalEl.textContent = `Shift total entered: ${formatCurrency(values)}`;
+  });
 }
 
 async function saveSales() {
@@ -245,7 +241,8 @@ async function loadSummary() {
     document.getElementById('summarySales').textContent = formatCurrency(totalSales);
     document.getElementById('summaryExpenses').textContent = formatCurrency(data.summary.expenseTotal);
     document.getElementById('summaryRemaining').textContent = formatCurrency(remainingSales);
-    document.getElementById('cashierRemaining').textContent = formatCurrency(remainingSales);
+    const cashierRemaining = document.getElementById('cashierRemaining');
+    if (cashierRemaining) cashierRemaining.textContent = formatCurrency(remainingSales);
       let shiftSummary = document.getElementById('shiftSummary');
       let salesEntryAuditRows = document.getElementById('salesEntryAuditRows');
       if (!shiftSummary) {
@@ -254,7 +251,7 @@ async function loadSummary() {
         if (detailTable) {
           const summaryTable = document.createElement('div');
           summaryTable.className = 'table-responsive mb-3';
-          summaryTable.innerHTML = '<table class="table mobile-grid-table shift-summary-table mb-3"><thead><tr><th>Shift</th><th>Expenses</th><th>Cash Payment</th><th>Cash Remaining</th><th>Remaining</th><th>Total Sales</th></tr></thead><tbody id="shiftSummary"></tbody></table><table class="table mobile-grid-table sales-audit-table"><thead><tr><th>Shift</th><th>Payment Type</th><th>Online Vendor</th><th>Amount</th><th>Last Updated By</th><th>Last Updated At</th></tr></thead><tbody id="salesEntryAuditRows"></tbody></table>';
+          summaryTable.innerHTML = '<table class="table mobile-grid-table shift-summary-table mb-3"><thead><tr><th>Shift</th><th>Expenses</th><th>Cash Payment</th><th>Cash Remaining</th><th>Total Remaining</th><th>Total Sales</th></tr></thead><tbody id="shiftSummary"></tbody></table><table class="table mobile-grid-table sales-audit-table"><thead><tr><th>Shift</th><th>Payment Type</th><th>Online Vendor</th><th>Amount</th><th>Last Updated By</th><th>Last Updated At</th></tr></thead><tbody id="salesEntryAuditRows"></tbody></table>';
           detailTable.before(summaryTable);
           shiftSummary = summaryTable.querySelector('#shiftSummary');
           salesEntryAuditRows = summaryTable.querySelector('#salesEntryAuditRows');

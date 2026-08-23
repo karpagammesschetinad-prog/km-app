@@ -251,17 +251,18 @@ body {
 /* ---- Optional Tamil virtual keyboard ---- */
 .tamil-keyboard-toggle {
   position: fixed; right: 1rem; bottom: 1rem; z-index: 2000;
-  display: inline-flex; align-items: center; gap: .35rem;
+  display: none; align-items: center; gap: .35rem;
   padding: .45rem .7rem; border: 1px solid #93c5fd; border-radius: 8px;
   background: #fff; color: #1d4ed8; box-shadow: 0 4px 14px rgba(15,23,42,.16); cursor: pointer;
 }
+body.tamil-keyboard-ready .tamil-keyboard-toggle { display: inline-flex; }
 .tamil-keyboard-toggle:hover, .tamil-keyboard-toggle.active { background: #eff6ff; }
 .tamil-keyboard-panel {
   position: fixed; right: 1rem; bottom: 3.8rem; z-index: 1999; display: none;
   width: min(680px, calc(100vw - 2rem)); padding: .65rem; border: 1px solid var(--border);
   border-radius: 10px; background: #fff; box-shadow: 0 12px 30px rgba(15,23,42,.2);
 }
-.tamil-keyboard-panel.show { display: block; }
+body.tamil-keyboard-ready .tamil-keyboard-panel.show { display: block; }
 .tamil-keyboard-header { display: flex; justify-content: space-between; align-items: center; padding: 0 .15rem .45rem; font-size: .8rem; }
 .tamil-keyboard-close { border: 0; background: transparent; color: var(--text-muted); cursor: pointer; padding: .25rem; }
 .tamil-keyboard-row { display: flex; gap: .3rem; margin-top: .3rem; }
@@ -362,12 +363,35 @@ body {
 .sales-entry-cell { padding: .75rem; border: 1px solid var(--border); border-radius: 8px; background: #f8fafc; }
 .sales-entry-cell .form-label { margin-bottom: .35rem; font-weight: 600; }
 .sales-entry-vendor { margin-bottom: .35rem; }
-@media (min-width: 576px) {
-  .sales-page .row.g-3 > .col-12 { width: 100%; }
-}
+.sales-page .content-wrapper { width: min(100%, 1600px); margin-inline: auto; }
+.sales-page.cashier-sales-view .content-wrapper { padding-top: .25rem; }
+.sales-page #salesShiftCards,
+.sales-page #superSummary,
+.sales-page .content-wrapper > .card-panel,
+.sales-page .content-wrapper > .d-flex { width: 100%; }
+.sales-page #salesShiftCards { margin-top: 0; }
+.sales-page #openPaymentTypeHistory { display: block; margin-left: auto; }
+.sales-shift-card { height: 100%; }
+.sales-shift-card { border-color: #bfdbfe; background: #f8fbff; }
+.sales-shift-card .card-panel-header { background: #dbeafe; border-bottom-color: #bfdbfe; }
+.sales-shift-card:nth-child(2) { border-color: #a7f3d0; background: #f6fffb; }
+.sales-shift-card:nth-child(2) .card-panel-header { background: #d1fae5; border-bottom-color: #a7f3d0; }
+.sales-shift-card:nth-child(3) { border-color: #fed7aa; background: #fffaf5; }
+.sales-shift-card:nth-child(3) .card-panel-header { background: #ffedd5; border-bottom-color: #fed7aa; }
+.sales-shift-card .card-panel-header { min-height: 2.75rem; padding: .55rem .75rem; }
+.sales-shift-card .card-panel-body { min-height: 0; padding: .7rem .75rem; }
+.sales-shift-card .card-panel-title { font-size: .88rem; }
+.sales-shift-card .form-label { font-size: .76rem; margin-bottom: .2rem; }
+.sales-shift-card .mb-2 { margin-bottom: .45rem !important; }
+.sales-shift-card .mt-3 { margin-top: .7rem !important; }
+.sales-shift-card .pt-2 { padding-top: .45rem !important; }
+.sales-shift-card .badge { font-size: .65rem; }
+.sales-shift-card .form-control { min-height: 2.75rem; font-size: .95rem; }
+.sales-entry-after-expense { color: #0369a1 !important; font-weight: 600; }
+.sales-shift-total { color: var(--primary); font-weight: 700; }
 @media (min-width: 768px) and (max-width: 1439.98px) and (orientation: landscape) {
   .sales-page .content-wrapper { padding: 1.25rem; }
-  .sales-page .row.g-3 > .col-12 { width: 100%; }
+  .sales-page #superSummary { width: 100%; }
   .sales-page .card-panel-body { padding: 1.15rem 1.25rem; }
   .sales-page .sales-entry-grid { grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: .9rem; }
   .sales-page .sales-entry-cell { min-height: 6.4rem; padding: .9rem; }
@@ -511,12 +535,6 @@ body {
   .sales-summary-box { min-height: auto; padding: .75rem .8rem; }
   #superSummary .sales-summary-box small { font-size: .66rem; }
   #superSummary .sales-summary-box strong { font-size: 1rem; }
-  #salesEntryGrid + .sales-remaining-box + #saveSales {
-    position: sticky;
-    bottom: .5rem;
-    z-index: 15;
-    box-shadow: 0 8px 18px rgba(15, 23, 42, .14);
-  }
   #superSummary .mobile-grid-table tbody tr {
     margin-bottom: .6rem;
     border: 1px solid var(--border);

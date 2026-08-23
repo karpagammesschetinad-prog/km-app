@@ -6,6 +6,7 @@ let allCategoryTypes = [];
 let pendingRejectDate = null;
 let onSpotEntriesForDate = [];
 let datePickerMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let expenseEmployees = [];
 
 function getLocalDateKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -18,6 +19,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
   if (!canAccess('expenses')) { window.location.href = '/index.html'; return; }
+  document.getElementById('btnEmployeeExpense').style.display = canAccess('expenses', 'add') ? '' : 'none';
+  document.getElementById('btnEmployeeExpense').addEventListener('click', openEmployeeExpenseModal);
+  document.getElementById('btnSaveEmployeeExpense').addEventListener('click', saveEmployeeExpense);
 
   // Hide add form if no add sub-permission
   if (!canAccess('expenses', 'add')) {
@@ -78,10 +82,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btnConfirmReject').addEventListener('click', confirmReject);
 
   try {
-    [allCategories, allCategoryTypes, allExpenses] = await Promise.all([
+    [allCategories, allCategoryTypes, allExpenses, expenseEmployees] = await Promise.all([
       api('GET', '/categories'),
       api('GET', '/categories/types/all'),
-      api('GET', '/expenses')
+      api('GET', '/expenses'),
+      api('GET', '/employees')
     ]);
     loadDateIntoForm(today);
     renderExpenseDatePicker();
@@ -89,6 +94,49 @@ document.addEventListener('DOMContentLoaded', async () => {
     showNotification('Error loading data: ' + err.message, 'danger');
   }
 });
+
+function openEmployeeExpenseModal() {
+  const employeeSelect = document.getElementById('employeeExpenseEmployee');
+  const typeSelect = document.getElementById('employeeExpenseType');
+  employeeSelect.innerHTML = '<option value="">— Select Employee —</option>' + expenseEmployees
+    .filter(employee => employee.status === 'Active')
+    .map(employee => `<option value="${employee.id}">${escapeHtml(employee.name)}</option>`).join('');
+  typeSelect.innerHTML = '<option value="">— Select Expense Type —</option>' + allCategoryTypes
+    .filter(type => type.status === 'Active')
+    .map(type => `<option value="${type.id}">${escapeHtml(type.name)}</option>`).join('');
+  const form = document.getElementById('employeeExpenseForm');
+  form.reset();
+  document.getElementById('employeeExpenseDate').value = today;
+  document.getElementById('employeeExpenseDate').max = today;
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('employeeExpenseModal')).show();
+}
+
+async function saveEmployeeExpense() {
+  const form = document.getElementById('employeeExpenseForm');
+  if (!form.checkValidity()) { form.reportValidity(); return; }
+  const employee = expenseEmployees.find(item => item.id === document.getElementById('employeeExpenseEmployee').value);
+  const button = document.getElementById('btnSaveEmployeeExpense');
+  button.disabled = true;
+  try {
+    await api('POST', '/payments', {
+      employeeId: employee.id,
+      employeeName: employee.name,
+      paymentDate: document.getElementById('employeeExpenseDate').value,
+      amount: parseFloat(document.getElementById('employeeExpenseAmount').value),
+      remarks: document.getElementById('employeeExpenseRemarks').value.trim(),
+      addAsExpense: true,
+      expenseTypeId: document.getElementById('employeeExpenseType').value
+    });
+    bootstrap.Modal.getInstance(document.getElementById('employeeExpenseModal')).hide();
+    showNotification('Employee payment added as an expense.');
+    allExpenses = await api('GET', '/expenses');
+    loadDateIntoForm(document.getElementById('expDate').value);
+  } catch (err) {
+    showNotification('Save failed: ' + err.message, 'danger');
+  } finally {
+    button.disabled = false;
+  }
+}
 
 /* ---- Load a date into the entry form ---- */
 
@@ -268,10 +316,12 @@ function buildCategoryInputs(existingMap, isReadOnly) {
     }).join('');
     const onSpotRows = onSpotEntries.map(entry => '<div class="expense-category-row onspot-row d-flex align-items-center gap-3 py-2">' +
       '<input type="text" class="form-control onspot-name flex-grow-1" data-type="' + type.id + '" value="' + escapeHtml(entry.category) + '" placeholder="On-spot category"' + (isReadOnly ? ' readonly disabled' : '') + '>' +
-      '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="' + escapeHtml(entry.category) + '" data-type="' + type.id + '" data-onspot="true" min="0" step="0.01" value="' + entry.amount + '" oninput="updateTotal()"' + readonlyAttr + '></div></div>').join('');
+      '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="' + escapeHtml(entry.category) + '" data-type="' + type.id + '" data-onspot="true" min="0" step="0.01" value="' + entry.amount + '" oninput="updateTotal()"' + readonlyAttr + '></div>' +
+      (isReadOnly ? '' : '<button type="button" class="btn btn-sm btn-outline-danger onspot-delete" title="Delete on-spot expense" onclick="deleteOnSpotExpense(\'' + entry.id + '\')"><i class="bi bi-trash"></i></button>') + '</div>').join('');
     const salaryRows = salaryEntries.map(entry => '<div class="expense-category-row salary-expense-row d-flex align-items-center gap-3 py-2">' +
       '<span class="fw-medium flex-grow-1"><i class="bi bi-cash-coin me-1 text-success"></i>' + escapeHtml(entry.category) + '<small class="d-block text-muted">Salary payment</small></span>' +
-      '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="' + escapeHtml(entry.category) + '" data-type="' + type.id + '" value="' + entry.amount + '" readonly disabled></div></div>').join('');
+      '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="' + escapeHtml(entry.category) + '" data-type="' + type.id + '" value="' + entry.amount + '" readonly disabled></div>' +
+      (isReadOnly || !entry.paymentId ? '' : '<button type="button" class="btn btn-sm btn-outline-danger salary-expense-delete" title="Delete employee payment" onclick="deleteEmployeePayment(\'' + entry.paymentId + '\')"><i class="bi bi-trash"></i></button>') + '</div>').join('');
     const onSpotAction = isReadOnly ? '' : '<button type="button" class="btn btn-sm btn-outline-secondary onspot-add" onclick="addOnSpotRow(this)"><i class="bi bi-plus-lg me-1"></i>On-spot category</button>';
     return '<section class="expense-category-type-card is-collapsed" data-type-card="' + type.id + '">' +
       '<button type="button" class="expense-category-type-header" aria-expanded="false" onclick="toggleExpenseType(this)">' +
@@ -310,6 +360,30 @@ function addOnSpotRow(button) {
     '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="" data-type="' + typeId + '" data-onspot="true" min="0" step="0.01" placeholder="0" oninput="updateTotal()"></div>';
   content.insertBefore(row, actions);
   row.querySelector('.onspot-name').focus();
+}
+
+async function deleteOnSpotExpense(id) {
+  if (!id || !confirm('Delete this on-spot expense?')) return;
+  try {
+    await api('DELETE', '/expenses/' + encodeURIComponent(id));
+    showNotification('On-spot expense deleted.');
+    allExpenses = await api('GET', '/expenses');
+    loadDateIntoForm(document.getElementById('expDate').value);
+  } catch (err) {
+    showNotification('Delete failed: ' + err.message, 'danger');
+  }
+}
+
+async function deleteEmployeePayment(id) {
+  if (!id || !confirm('Delete this employee payment and its expense?')) return;
+  try {
+    await api('DELETE', '/payments/' + encodeURIComponent(id));
+    showNotification('Employee payment deleted.');
+    allExpenses = await api('GET', '/expenses');
+    loadDateIntoForm(document.getElementById('expDate').value);
+  } catch (err) {
+    showNotification('Delete failed: ' + err.message, 'danger');
+  }
 }
 
 function toggleExpenseType(button) {

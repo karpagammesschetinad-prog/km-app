@@ -246,11 +246,20 @@ router.post('/reject/:date', requireSuperUser, async (req, res) => {
   }
 });
 
-// DELETE
-router.delete('/:id', requireSuperUser, async (req, res) => {
+// DELETE editable on-spot expenses
+router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const found = await findRowById(SHEET, req.params.id);
     if (!found) return res.status(404).json({ success: false, message: 'Expense not found.' });
+    const expense = rowToObj(found.row);
+    if (!expense.onSpot) return res.status(403).json({ success: false, message: 'Only on-spot expenses can be deleted here.' });
+    if (expense.approvalStatus === 'Approved' || expense.approvalStatus === 'AutoApproved') {
+      return res.status(409).json({ success: false, message: 'Approved expenses cannot be deleted.' });
+    }
+    const access = await getExpenseAccess(req.session.user, true);
+    if (expense.typeId ? !access.allowedTypes.has(expense.typeId) : !access.allowedCategories.has(expense.category)) {
+      return res.status(403).json({ success: false, message: 'Access denied for this expense category.' });
+    }
     await deleteRow(SHEET, found.index);
     res.json({ success: true, message: 'Expense deleted.' });
   } catch (err) {

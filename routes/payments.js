@@ -132,6 +132,7 @@ router.post('/', requireAuth, async (req, res) => {
 // DELETE /api/payments/:id
 router.delete('/:id', async (req, res) => {
   try {
+    if (!req.session?.user) return res.status(401).json({ success: false, message: 'Not authenticated.' });
     const found = await findRowById(SHEET, req.params.id);
     if (!found) return res.status(404).json({ success: false, message: 'Payment not found.' });
     const payment = rowToObj(found.row);
@@ -142,6 +143,9 @@ router.delete('/:id', async (req, res) => {
           row[EXPENSE_C.DATE] === payment.paymentDate &&
           parseFloat(row[EXPENSE_C.AMOUNT]) === payment.amount &&
           [payment.employeeName, payment.employeeId].filter(Boolean).includes(row[EXPENSE_C.CATEGORY])));
+    if (linked.some(({ row }) => row[8] === 'Approved' || row[8] === 'AutoApproved')) {
+      return res.status(409).json({ success: false, message: 'Approved employee expenses cannot be deleted.' });
+    }
     for (let i = linked.length - 1; i >= 0; i--) {
       await deleteRow(EXPENSE_SHEET, linked[i].index + 2);
     }

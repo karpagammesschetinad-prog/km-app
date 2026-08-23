@@ -58,14 +58,15 @@ function shiftExpenseTotals(rows, date, categoryTypes) {
   return totals;
 }
 
-function salesEntryTotals(rows, date) {
+function salesEntryTotals(rows, date, shiftExpenses) {
   const remainingByShift = { Morning: 0, Afternoon: 0, Night: 0 };
   let daySales = 0;
   rows.filter(row => row[SALES_ENTRY.DATE] === date).forEach(row => {
     const shift = normalizeSalesShift(row[SALES_ENTRY.SHIFT]);
     const amount = parseFloat(row[SALES_ENTRY.AMOUNT]) || 0;
     if (shift === 'Morning' || shift === 'Afternoon' || shift === 'Night') {
-      remainingByShift[shift] += amount;
+      const isCash = String(row[SALES_ENTRY.PAYMENT_TYPE] || '').trim().toLowerCase() === 'cash';
+      remainingByShift[shift] += isCash ? amount - (shiftExpenses[shift] || 0) : amount;
     } else if (shift === 'Day') {
       daySales += amount;
     }
@@ -82,11 +83,11 @@ router.get('/', requireAuth, async (req, res) => {
     const rows = salesRows.map(rowToObj).filter(row => req.session.user.role === 'superuser' || row.date === businessDate());
     if (req.session.user.role !== 'superuser') {
       const own = rows.find(row => row.date === date) || { date, morning: 0, afternoon: 0, dinner: 0, totalSales: 0, remaining: 0, enteredBy: '' };
-      return res.json({ success: true, data: { date, morning: own.morning, afternoon: own.afternoon, dinner: own.dinner, remaining: own.remaining } });
+      return res.json({ success: true, data: { date, morning: own.morning, afternoon: own.afternoon, dinner: own.dinner, remaining: own.remaining, shiftExpenses } });
     }
     const summaryRows = salesRows.map(rowToObj).filter(row => row.date === date);
     const hasEntryData = salesEntryRows.some(row => row[SALES_ENTRY.DATE] === date);
-    const entryTotals = salesEntryTotals(salesEntryRows, date);
+    const entryTotals = salesEntryTotals(salesEntryRows, date, shiftExpenses);
     const remainingByShift = hasEntryData ? entryTotals.remainingByShift : {
       Morning: summaryRows.reduce((total, row) => total + row.morning, 0),
       Afternoon: summaryRows.reduce((total, row) => total + row.afternoon, 0),
@@ -129,7 +130,7 @@ router.get('/history', requireSuperUser, async (req, res) => {
     const entryDates = new Set(entryRows.map(row => row[SALES_ENTRY.DATE]).filter(date => date >= startKey && date <= endKey));
     entryDates.forEach(date => {
       const shiftExpenses = shiftExpenseTotals(expenseRows, date, categoryTypes);
-      const totals = salesEntryTotals(entryRows, date);
+      const totals = salesEntryTotals(entryRows, date, shiftExpenses);
       const remaining = Object.values(totals.remainingByShift).reduce((sum, value) => sum + value, 0) + totals.daySales;
       entrySales.set(date, expenseTotal(expenseRows, date) + remaining);
     });
