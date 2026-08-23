@@ -133,6 +133,20 @@ const TAMIL_KEY_ROWS = [
   ['ா', 'ி', 'ீ', 'ு', 'ூ', 'ெ', 'ே', 'ை', 'ொ', 'ோ', 'ௌ', '்', 'ஂ', 'ஃ']
 ];
 let tamilKeyboardTarget = null;
+const NATIVE_KEYBOARD_STORAGE_KEY = 'biztracker-use-native-keyboard';
+
+function usesNativeKeyboard() {
+  return localStorage.getItem(NATIVE_KEYBOARD_STORAGE_KEY) === 'true';
+}
+
+function applyKeyboardMode(element) {
+  if (!isTamilKeyboardTarget(element)) return;
+  element.setAttribute('inputmode', usesNativeKeyboard() ? 'text' : 'none');
+}
+
+function applyKeyboardModeToInputs() {
+  document.querySelectorAll('input, textarea').forEach(applyKeyboardMode);
+}
 
 function isTamilKeyboardTarget(element) {
   if (!element || element.disabled || element.readOnly) return false;
@@ -175,16 +189,33 @@ function setupTamilKeyboard() {
   panel.id = '_tamilKeyboardPanel';
   panel.className = 'tamil-keyboard-panel';
   panel.setAttribute('aria-label', 'Tamil virtual keyboard');
-  panel.innerHTML = '<div class="tamil-keyboard-header"><strong>Tamil keyboard</strong><button type="button" class="tamil-keyboard-close" aria-label="Close Tamil keyboard"><i class="bi bi-x-lg"></i></button></div>' +
+  panel.innerHTML = '<div class="tamil-keyboard-header"><strong>Tamil keyboard</strong><label class="small d-flex align-items-center gap-1" title="Allow the device keyboard for text fields"><input type="checkbox" id="_useNativeKeyboard"> Device keyboard</label><button type="button" class="tamil-keyboard-close" aria-label="Close Tamil keyboard"><i class="bi bi-x-lg"></i></button></div>' +
     TAMIL_KEY_ROWS.map(row => '<div class="tamil-keyboard-row">' + row.map(key => `<button type="button" class="tamil-key" data-tamil-key="${key}">${key}</button>`).join('') + '</div>').join('') +
     '<div class="tamil-keyboard-row tamil-keyboard-actions"><button type="button" class="tamil-key tamil-key-wide" data-tamil-key=" ">Space</button><button type="button" class="tamil-key" data-tamil-action="backspace" aria-label="Backspace"><i class="bi bi-backspace"></i></button><button type="button" class="tamil-key" data-tamil-action="clear">Clear</button></div>';
 
   document.body.append(toggle, panel);
-  document.addEventListener('focusin', event => {
-    if (isTamilKeyboardTarget(event.target)) {
-      tamilKeyboardTarget = event.target;
+  const nativeKeyboardCheckbox = panel.querySelector('#_useNativeKeyboard');
+  nativeKeyboardCheckbox.checked = usesNativeKeyboard();
+  nativeKeyboardCheckbox.addEventListener('change', () => {
+    localStorage.setItem(NATIVE_KEYBOARD_STORAGE_KEY, String(nativeKeyboardCheckbox.checked));
+    applyKeyboardModeToInputs();
+    if (nativeKeyboardCheckbox.checked) {
+      panel.classList.remove('show');
+      toggle.classList.remove('active');
+    } else if (isTamilKeyboardTarget(tamilKeyboardTarget)) {
       panel.classList.add('show');
       toggle.classList.add('active');
+    }
+  });
+  applyKeyboardModeToInputs();
+  document.addEventListener('focusin', event => {
+    if (isTamilKeyboardTarget(event.target)) {
+      applyKeyboardMode(event.target);
+      tamilKeyboardTarget = event.target;
+      if (!usesNativeKeyboard()) {
+        panel.classList.add('show');
+        toggle.classList.add('active');
+      }
     }
   });
   toggle.addEventListener('click', () => {
