@@ -77,14 +77,14 @@ function getPettaForDate(day, timeline) {
 }
 
 function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
-  if (emp.temporaryEmployee) {
-    const totalPaid = (payments || []).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
-    return { workedDays: 0, earned: 0, totalPaid, balance: 0, currentPetta: 0 };
-  }
   const employeeStart = parseDateOnly(emp.startDate);
   const fiscal = getFiscalRange();
   const start = employeeStart > fiscal.start ? employeeStart : fiscal.start;
   const today = fiscal.end;
+  if (emp.temporaryEmployee) {
+    const totalPaid = (payments || []).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
+    return { workedDays: 0, earned: totalPaid, totalPaid, balance: 0, currentPetta: 0 };
+  }
   if (!employeeStart || !start || !today || start > today) {
     return { workedDays: 0, earned: 0, totalPaid: 0, balance: 0, currentPetta: parseFloat(emp.dailyPetta) || 0 };
   }
@@ -156,8 +156,8 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
   return {
     workedDays,
     earned,
-    totalPaid,
-    balance: runningBalance,
+    totalPaid: emp.dailySalaryEnabled ? earned : totalPaid,
+    balance: emp.dailySalaryEnabled ? 0 : runningBalance,
     currentPetta: getPettaForDate(today, timeline)
   };
 }
@@ -236,7 +236,7 @@ function renderTable(stats) {
         ${emp.phone ? `<div class="text-muted small">${emp.phone}</div>` : ''}
       </td>
       <td data-label="Start date">${formatDate(emp.startDate)}</td>
-      <td data-label="Per day">${formatCurrency(emp.perDaySalary)}<span class="text-muted small"> - ${formatCurrency(currentPetta)}</span></td>
+      <td data-label="Per day">${emp.temporaryEmployee ? '<span class="text-muted">Dynamic</span>' : `${formatCurrency(emp.perDaySalary)}<span class="text-muted small"> - ${formatCurrency(currentPetta)}</span>`}</td>
       <td data-label="Days worked">${workedDays.toFixed(1)} days</td>
       <td data-label="Earned" class="text-success fw-semibold">${formatCurrency(earned)}</td>
       <td data-label="Total paid" class="text-info fw-semibold">${formatCurrency(totalPaid)}</td>

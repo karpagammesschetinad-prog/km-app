@@ -114,14 +114,26 @@ function getPettaForDate(day, timeline) {
 }
 
 function calcSalary(fiscalStart = null, fiscalEnd = null) {
-  if (empData.temporaryEmployee) {
-    const totalPaid = (empPayments || []).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
-    return { totalDays: '0.0', leaveDays: '0.0', workedDays: '0.0', earnedSalary: 0, totalPaid, balance: 0, currentPetta: 0, periods: [] };
-  }
   const employeeStart = parseDateOnly(empData.startDate);
   const fiscalDates = getDefaultCalculationDates();
   const start = fiscalStart || fiscalDates.start;
   const today = fiscalEnd || fiscalDates.end;
+  if (empData.temporaryEmployee) {
+    const paymentsByDate = new Map();
+    (empPayments || []).forEach(payment => {
+      const paymentDate = parseDateOnly(payment.paymentDate);
+      if (!paymentDate || (start && paymentDate < start) || (today && paymentDate > today)) return;
+      const key = dateKey(paymentDate);
+      paymentsByDate.set(key, (paymentsByDate.get(key) || 0) + (parseFloat(payment.amount) || 0));
+    });
+    const periods = [...paymentsByDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, paid]) => ({
+      start: parseDateOnly(date), end: parseDateOnly(date), petta: empData.dailySalaryEnabled ? (parseFloat(empData.dailyPetta) || 0) : 0,
+      totalDays: 1, leaveDays: 0, workedDays: 1, earned: paid, paid,
+      opening: 0, closing: 0
+    }));
+    const totalPaid = periods.reduce((sum, period) => sum + period.paid, 0);
+    return { totalDays: periods.length.toFixed(1), leaveDays: '0.0', workedDays: periods.length.toFixed(1), earnedSalary: totalPaid, totalPaid, balance: 0, currentPetta: empData.dailySalaryEnabled ? (parseFloat(empData.dailyPetta) || 0) : 0, periods };
+  }
   const calculationStart = employeeStart > start ? employeeStart : start;
   if (!employeeStart || !start || !today || calculationStart > today) {
     return {
@@ -223,15 +235,19 @@ function calcSalary(fiscalStart = null, fiscalEnd = null) {
     }
   }
 
+  const dailyPayPeriods = empData.dailySalaryEnabled
+    ? periods.map(period => ({ ...period, paid: period.earned, opening: 0, closing: 0 }))
+    : periods;
+  const dailyPayTotal = empData.dailySalaryEnabled ? earnedSalary : totalPaid;
   return {
     totalDays: totalDays.toFixed(1),
     leaveDays: leaveDays.toFixed(1),
     workedDays: workedDays.toFixed(1),
     earnedSalary,
-    totalPaid,
-    balance: runningBalance,
+    totalPaid: dailyPayTotal,
+    balance: empData.dailySalaryEnabled ? 0 : runningBalance,
     currentPetta: getPettaForDate(today, timeline),
-    periods
+    periods: dailyPayPeriods
   };
 }
 
@@ -266,6 +282,12 @@ function render() {
   const dailyPayBadge = empData.dailySalaryEnabled
     ? '<span class="badge bg-info-subtle text-info border border-info-subtle ms-1"><i class="bi bi-calendar-day me-1"></i>Daily Pay</span>'
     : '';
+  const dailyPayLabel = empData.temporaryEmployee ? 'Dynamic Daily Pay' : 'Per Day Salary';
+  const dailyPayValue = empData.temporaryEmployee ? 'Based on recorded payments' : formatCurrency(empData.perDaySalary);
+  const dailyPettaLabel = empData.temporaryEmployee ? 'Total Paid' : 'Current Petta';
+  const dailyPettaValue = empData.temporaryEmployee ? formatCurrency(sal.totalPaid) : formatCurrency(sal.currentPetta);
+  const dailyNetLabel = empData.temporaryEmployee ? 'Salary Status' : 'Current Net Per Day';
+  const dailyNetValue = empData.temporaryEmployee ? 'Paid amount is final' : formatCurrency((parseFloat(empData.perDaySalary) || 0) - sal.currentPetta);
 
   document.getElementById('detailContent').innerHTML = `
 
@@ -299,16 +321,16 @@ function render() {
           </div>
           ${showSalary ? `
           <div class="col-sm-6 col-lg-3">
-            <div class="info-label">Per Day Salary</div>
-            <div class="info-value fw-semibold text-success">${formatCurrency(empData.perDaySalary)}</div>
+            <div class="info-label">${dailyPayLabel}</div>
+            <div class="info-value fw-semibold text-success">${dailyPayValue}</div>
           </div>
           <div class="col-sm-6 col-lg-3">
-            <div class="info-label">Current Petta</div>
-            <div class="info-value text-warning">${formatCurrency(sal.currentPetta)}</div>
+            <div class="info-label">${dailyPettaLabel}</div>
+            <div class="info-value text-warning">${dailyPettaValue}</div>
           </div>
           <div class="col-sm-6 col-lg-3">
-            <div class="info-label">Current Net Per Day</div>
-            <div class="info-value fw-semibold">${formatCurrency((parseFloat(empData.perDaySalary) || 0) - sal.currentPetta)}</div>
+            <div class="info-label">${dailyNetLabel}</div>
+            <div class="info-value fw-semibold">${dailyNetValue}</div>
           </div>` : ''}
         </div>
       </div>
@@ -318,7 +340,7 @@ function render() {
     ${showSalary ? `
     <div class="card-panel mb-3">
       <div class="card-panel-header">
-        <h6 class="card-panel-title"><i class="bi bi-calculator me-2"></i>Salary Summary</h6>
+        <h6 class="card-panel-title"><i class="bi bi-calculator me-2"></i>${empData.temporaryEmployee ? 'Temporary Pay Summary' : (empData.dailySalaryEnabled ? 'Daily Pay Summary' : 'Salary Summary')}</h6>
         <span class="badge bg-${balanceColor}-subtle text-${balanceColor} border border-${balanceColor}-subtle px-3 py-2 fs-6">
           <i class="bi ${balanceIcon} me-1"></i>${balanceLabel}: ${formatCurrency(balanceAbs)}
         </span>
@@ -371,7 +393,7 @@ function render() {
     <div class="card-panel mb-3">
       <div class="card-panel-header">
         <h6 class="card-panel-title"><i class="bi bi-collection me-2"></i>Consolidated Salary Periods</h6>
-        <span class="text-muted small">Opening balance of each period includes previous pending/advance</span>
+        <span class="text-muted small">${empData.temporaryEmployee ? 'Each recorded payment is the final amount for that work day.' : (empData.dailySalaryEnabled ? 'Fixed per-day salary paid daily; each payment closes the period.' : 'Opening balance of each period includes previous pending/advance')}</span>
       </div>
       <div class="table-responsive">
         <table class="table mobile-grid-table">

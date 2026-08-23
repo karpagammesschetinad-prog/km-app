@@ -16,13 +16,14 @@ async function loadDashboard() {
     const fetchNamed = (name, path) => api('GET', path).catch(error => {
       throw new Error(`${name}: ${error.message}`);
     });
-    const [expenses, employees, salaries, allLeaves, allPayments, config] = await Promise.all([
+    const [expenses, employees, salaries, allLeaves, allPayments, config, salesHistory] = await Promise.all([
       fetchNamed('Expenses', '/expenses'),
       fetchNamed('Employees', '/employees'),
       fetchNamed('Salaries', '/salaries'),
       fetchNamed('Leaves', '/leaves'),
       fetchNamed('Payments', '/payments'),
-      fetchNamed('Configuration', '/config')
+      fetchNamed('Configuration', '/config'),
+      fetchNamed('Sales', '/sales/history?days=20')
     ]);
 
     const now = new Date();
@@ -35,8 +36,13 @@ async function loadDashboard() {
     });
 
     const monthSal = salaries.filter(s => s.paymentDate && new Date(s.paymentDate) >= fyStart && new Date(s.paymentDate) <= fyEnd);
+    const expenseChartStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 19);
+    const recentChartExpenses = expenses.filter(e => {
+      const d = new Date(`${e.date}T00:00:00`);
+      return d >= expenseChartStart && d <= now;
+    });
 
-    const activeEmp = employees.filter(e => e.status === 'Active');
+    const activeEmp = employees.filter(e => e.status === 'Active' && !e.temporaryEmployee);
     const pendingExp = expenses.filter(e => e.status === 'Pending');
 
     const totalExp = monthExp.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
@@ -80,8 +86,8 @@ async function loadDashboard() {
     document.getElementById('stat-salaries').textContent   = formatCurrency(totalSal);
     document.getElementById('stat-pending').textContent    = pendingExp.length;
 
-    renderCategoryChart(monthExp);
-    renderTrendChart(expenses);
+    renderCategoryChart(recentChartExpenses);
+    renderTrendChart(recentChartExpenses, salesHistory, now);
     renderRecentExpenses(expenses.slice(-6).reverse());
     renderEmployeeStatus(empStats);
 
@@ -136,7 +142,7 @@ function renderCategoryChart(expenses) {
 
   if (Object.keys(cats).length === 0) {
     ctx.closest('.chart-wrap').innerHTML =
-      '<p class="text-center text-muted py-4 small">No expense data for this month</p>';
+      '<p class="text-center text-muted py-4 small">No expense data for the last 20 days</p>';
     return;
   }
 
@@ -160,30 +166,38 @@ function renderCategoryChart(expenses) {
   });
 }
 
-function renderTrendChart(expenses) {
+function renderTrendChart(expenses, salesHistory = [], referenceDate = new Date()) {
   const ctx = document.getElementById('chartTrend');
   if (!ctx) return;
 
-  const now = new Date();
-  const months = Array.from({ length: 6 }, (_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
-    return { label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }), m: d.getMonth() + 1, y: d.getFullYear() };
+  const days = Array.from({ length: 20 }, (_, i) => {
+    const d = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() - (19 - i));
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return { label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), key };
   });
 
-  const data = months.map(mo =>
+  const data = days.map(day =>
     expenses
-      .filter(e => { const d = new Date(e.date); return d.getMonth() + 1 === mo.m && d.getFullYear() === mo.y; })
+      .filter(e => e.date === day.key)
       .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
   );
+  const salesByDate = new Map((salesHistory || []).map(row => [row.date, Number(row.totalSales) || 0]));
+  const salesData = days.map(day => salesByDate.get(day.key) || 0);
 
   new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: months.map(m => m.label),
+      labels: days.map(day => day.label),
       datasets: [{
         label: 'Expenses',
         data,
         backgroundColor: 'rgba(59,130,246,.8)',
+        borderRadius: 6,
+        borderSkipped: false
+      }, {
+        label: 'Sales',
+        data: salesData,
+        backgroundColor: 'rgba(34,197,94,.8)',
         borderRadius: 6,
         borderSkipped: false
       }]
@@ -191,7 +205,7 @@ function renderTrendChart(expenses) {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { display: false },
+        legend: { display: true, position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11 } } },
         tooltip: { callbacks: { label: c => ` ${formatCurrency(c.raw)}` } }
       },
       scales: {

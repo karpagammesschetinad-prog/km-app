@@ -16,8 +16,8 @@ function rowToObj(row) {
     perDaySalary:       parseFloat(row[C.PER_DAY]) || 0,
     dailyPetta:         parseFloat(row[C.PETTA])   || 0,
     status:             row[C.STATUS]    || 'Active',
-    dailySalaryEnabled: row[C.DAILY_PAY] === 'true' || row[C.DAILY_PAY] === true,
-    temporaryEmployee: row[C.TEMPORARY] === 'true' || row[C.TEMPORARY] === true
+    dailySalaryEnabled: String(row[C.DAILY_PAY] || '').toLowerCase() === 'true' || row[C.DAILY_PAY] === true,
+    temporaryEmployee: String(row[C.TEMPORARY] || '').toLowerCase() === 'true' || row[C.TEMPORARY] === true
   };
 }
 

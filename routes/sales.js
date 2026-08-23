@@ -88,6 +88,30 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+router.get('/history', requireSuperUser, async (req, res) => {
+  try {
+    const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 20));
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
+    const startKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+    const endKey = businessDate();
+    const [legacyRows, entryRows] = await Promise.all([
+      getAllRows(SHEETS.SALES),
+      getAllRows(SHEETS.SALES_ENTRIES)
+    ]);
+    const legacySales = new Map(legacyRows.map(rowToObj)
+      .filter(row => row.date >= startKey && row.date <= endKey)
+      .map(row => [row.date, row.totalSales]));
+    const entrySales = new Map();
+    entryRows.map(row => ({ date: row[1] || '', amount: parseFloat(row[5]) || 0 }))
+      .filter(row => row.date >= startKey && row.date <= endKey)
+      .forEach(row => entrySales.set(row.date, (entrySales.get(row.date) || 0) + row.amount));
+    const dates = new Set([...legacySales.keys(), ...entrySales.keys()]);
+    const rows = [...dates].sort().map(date => ({ date, totalSales: entrySales.has(date) ? entrySales.get(date) : legacySales.get(date) }));
+    res.json({ success: true, data: rows });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 router.post('/', requireAuth, async (req, res) => {
   try {
     const date = String(req.body.date || '').trim();
