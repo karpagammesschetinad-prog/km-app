@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { SHEETS, getAllRows, appendRow, updateRow, deleteRow } = require('../services/googleSheets');
-const { requireAuth } = require('../middleware/authMiddleware');
+const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware');
 
 const C = { ID: 0, DATE: 1, SHIFT: 2, PAYMENT_TYPE: 3, VENDOR: 4, AMOUNT: 5, ENTERED_BY: 6, CREATED_AT: 7, UPDATED_AT: 8 };
 const SHIFTS = ['Morning', 'Afternoon', 'Night', 'Day'];
@@ -78,7 +78,7 @@ async function withWriteLock(lockKey, work) {
   }
 }
 
-router.get('/history', requireAuth, async (req, res) => {
+router.get('/history', requireSuperUser, async (req, res) => {
   try {
     const paymentType = normalizeText(req.query.paymentType);
     if (!paymentType) return res.status(400).json({ success: false, message: 'paymentType is required.' });

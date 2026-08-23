@@ -21,9 +21,9 @@
     <div class="sidebar-section-label">Main</div>
     <a href="/index.html" class="nav-link su-only"><i class="bi bi-speedometer2"></i><span>Dashboard</span></a>
     <a href="/expenses.html"    class="nav-link" data-screen="expenses"><i class="bi bi-receipt"></i><span>Expenses</span></a>
+    <a href="/sales.html"       class="nav-link" data-screen="sales"><i class="bi bi-graph-up-arrow"></i><span>Sales Capture</span></a>
     <a href="/categories.html"  class="nav-link su-only" data-screen="categories"><i class="bi bi-tags"></i><span>Categories</span></a>
     <a href="/employees.html"   class="nav-link su-only" data-screen="employees"><i class="bi bi-people"></i><span>Employees</span></a>
-      <a href="/sales.html"       class="nav-link" data-screen="sales"><i class="bi bi-graph-up-arrow"></i><span>Sales Capture</span></a>
       <a href="/salaries.html" class="nav-link su-only" data-screen="salaries"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
     <a href="/users.html" class="nav-link su-only" data-screen="users"><i class="bi bi-person-lock"></i><span>Users</span></a>
   </nav>
@@ -35,7 +35,7 @@
       <button class="mobile-toggle" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
       <h1 class="page-title">Employees</h1>
     </div>
-    <button class="btn btn-primary btn-sm" id="btnAddEmployee">
+    <button class="btn btn-primary btn-sm su-only" data-screen="employees" data-sub="add" id="btnAddEmployee">
       <i class="bi bi-person-plus me-1"></i>Add Employee
     </button>
   </nav>
@@ -101,8 +101,8 @@
               <input type="date" class="form-control" id="empStartDate" required>
             </div>
             <div class="col-md-6">
-              <label class="form-label">Per Day Salary (₹) <span class="text-danger">*</span></label>
-              <input type="number" class="form-control" id="empPerDay" required min="0" step="0.01" placeholder="0">
+              <label class="form-label">Per Day Salary (₹)</label>
+              <input type="number" class="form-control" id="empPerDay" min="0" step="0.01" placeholder="Not used for temporary employees">
             </div>
             <div class="col-md-6">
               <label class="form-label">Daily Petta (₹)</label>

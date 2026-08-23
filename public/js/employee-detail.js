@@ -114,6 +114,10 @@ function getPettaForDate(day, timeline) {
 }
 
 function calcSalary(fiscalStart = null, fiscalEnd = null) {
+  if (empData.temporaryEmployee) {
+    const totalPaid = (empPayments || []).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
+    return { totalDays: '0.0', leaveDays: '0.0', workedDays: '0.0', earnedSalary: 0, totalPaid, balance: 0, currentPetta: 0, periods: [] };
+  }
   const employeeStart = parseDateOnly(empData.startDate);
   const fiscalDates = getDefaultCalculationDates();
   const start = fiscalStart || fiscalDates.start;
@@ -526,6 +530,15 @@ function formatDateTime(str) {
 
 /* ── Modals ── */
 function setupModals() {
+  const temporaryToggle = document.getElementById('editTemporary');
+  const perDayInput = document.getElementById('editPerDay');
+  const pettaInput = document.getElementById('editPetta');
+  temporaryToggle.addEventListener('change', () => {
+    const temporary = temporaryToggle.checked;
+    perDayInput.disabled = temporary;
+    pettaInput.disabled = temporary;
+    if (temporary) { perDayInput.value = ''; pettaInput.value = ''; }
+  });
   document.getElementById('btnSaveLeave').addEventListener('click', saveLeave);
   document.getElementById('btnSavePayment').addEventListener('click', savePayment);
   document.getElementById('btnSaveEdit').addEventListener('click', saveEdit);
@@ -583,6 +596,7 @@ function openEdit() {
   document.getElementById('editStatus').value      = empData.status;
   document.getElementById('editDailyPay').checked  = !!empData.dailySalaryEnabled;
   document.getElementById('editTemporary').checked  = !!empData.temporaryEmployee;
+  document.getElementById('editTemporary').dispatchEvent(new Event('change'));
   bootstrap.Modal.getOrCreateInstance(document.getElementById('editEmpModal')).show();
 }
 
@@ -597,7 +611,7 @@ async function saveEdit() {
       phone:              document.getElementById('editPhone').value.trim(),
       address:            document.getElementById('editAddress').value.trim(),
       startDate:          document.getElementById('editStartDate').value,
-      perDaySalary:       parseFloat(document.getElementById('editPerDay').value),
+      perDaySalary:       parseFloat(document.getElementById('editPerDay').value) || 0,
       dailyPetta:         parseFloat(document.getElementById('editPetta').value) || 0,
       status:             document.getElementById('editStatus').value,
       dailySalaryEnabled: document.getElementById('editDailyPay').checked,

@@ -77,6 +77,10 @@ function getPettaForDate(day, timeline) {
 }
 
 function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
+  if (emp.temporaryEmployee) {
+    const totalPaid = (payments || []).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
+    return { workedDays: 0, earned: 0, totalPaid, balance: 0, currentPetta: 0 };
+  }
   const employeeStart = parseDateOnly(emp.startDate);
   const fiscal = getFiscalRange();
   const start = employeeStart > fiscal.start ? employeeStart : fiscal.start;

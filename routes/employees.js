@@ -48,8 +48,11 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { name, phone, address, startDate, perDaySalary, dailyPetta = 0, status = 'Active', dailySalaryEnabled = false, temporaryEmployee = false } = req.body;
-    if (!name || perDaySalary === undefined || !startDate) {
-      return res.status(400).json({ success: false, message: 'name, startDate, and perDaySalary are required.' });
+    if (!name || !startDate) {
+      return res.status(400).json({ success: false, message: 'name and startDate are required.' });
+    }
+    if (!temporaryEmployee && perDaySalary === undefined) {
+      return res.status(400).json({ success: false, message: 'perDaySalary is required for regular employees.' });
     }
     const obj = {
       id: uuidv4(),

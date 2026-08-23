@@ -112,7 +112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.querySelector('.sales-remaining-box')?.classList.add('d-none');
   }
   await loadSalesConfiguration();
-  ensurePaymentTypeHistoryUI();
+  if (superUser) ensurePaymentTypeHistoryUI();
   dateInput.addEventListener('change', async () => {
     await loadSales();
     if (superUser) await loadSummary();

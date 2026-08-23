@@ -86,6 +86,16 @@ function renderTable(list) {
 }
 
 function setupModal() {
+  const temporaryToggle = document.getElementById('empTemporary');
+  const perDayInput = document.getElementById('empPerDay');
+  const pettaInput = document.getElementById('empPetta');
+  temporaryToggle.addEventListener('change', () => {
+    const temporary = temporaryToggle.checked;
+    perDayInput.required = !temporary;
+    perDayInput.disabled = temporary;
+    pettaInput.disabled = temporary;
+    if (temporary) { perDayInput.value = ''; pettaInput.value = ''; }
+  });
   document.getElementById('btnAddEmployee').addEventListener('click', () => {
     editingEmpId = null;
     document.getElementById('empForm').reset();
@@ -94,6 +104,7 @@ function setupModal() {
     document.getElementById('empStatus').value = 'Active';
     document.getElementById('empDailyPay').checked = false;
     document.getElementById('empTemporary').checked = false;
+    temporaryToggle.dispatchEvent(new Event('change'));
     bootstrap.Modal.getOrCreateInstance(document.getElementById('empModal')).show();
   });
   document.getElementById('btnSaveEmployee').addEventListener('click', save);
@@ -108,7 +119,7 @@ async function save() {
     phone:              document.getElementById('empPhone').value.trim(),
     address:            document.getElementById('empAddress').value.trim(),
     startDate:          document.getElementById('empStartDate').value,
-    perDaySalary:       parseFloat(document.getElementById('empPerDay').value),
+    perDaySalary:       parseFloat(document.getElementById('empPerDay').value) || 0,
     dailyPetta:         parseFloat(document.getElementById('empPetta').value) || 0,
     status:             document.getElementById('empStatus').value,
     dailySalaryEnabled: document.getElementById('empDailyPay').checked,
@@ -149,6 +160,11 @@ async function openEdit(id) {
   document.getElementById('empStatus').value    = e.status;
   document.getElementById('empDailyPay').checked = !!e.dailySalaryEnabled;
   document.getElementById('empTemporary').checked = !!e.temporaryEmployee;
+  temporaryToggle.dispatchEvent(new Event('change'));
+  if (!e.temporaryEmployee) {
+    document.getElementById('empPerDay').value = e.perDaySalary;
+    document.getElementById('empPetta').value = e.dailyPetta;
+  }
   bootstrap.Modal.getOrCreateInstance(document.getElementById('empModal')).show();
 }
 

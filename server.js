@@ -10,6 +10,7 @@ const { environment, getSpreadsheetId } = require('./config/environment');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 
 app.use(cors({ credentials: true, origin: true }));
 app.use(express.json());
@@ -20,10 +21,14 @@ app.use(session({
   cookie: { httpOnly: true, maxAge: 8 * 60 * 60 * 1000 } // 8 hours
 }));
 
-// Serve JS/CSS with no-cache so browsers always get the latest version
-app.use('/js', express.static(path.join(__dirname, 'public/js'), { etag: false, lastModified: false, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-store'); } }));
-app.use('/css', express.static(path.join(__dirname, 'public/css'), { etag: false, lastModified: false, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-store'); } }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Keep API data network-only so cached assets never affect synchronization or writes.
+app.use('/api', (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
+
+// Cache static assets briefly; ETag revalidation picks up deployed changes safely.
+const staticCacheHeaders = res => { res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate'); };
+app.use('/js', express.static(path.join(__dirname, 'public/js'), { setHeaders: staticCacheHeaders }));
+app.use('/css', express.static(path.join(__dirname, 'public/css'), { setHeaders: staticCacheHeaders }));
+app.use(express.static(path.join(__dirname, 'public'), { setHeaders: staticCacheHeaders }));
 
 // Config endpoint (public)
 app.get('/api/config', async (req, res) => {
@@ -77,8 +82,8 @@ app.get('*', (req, res) => {
 });
 
 async function startServer() {
-  app.listen(PORT, async () => {
-    console.log(`\nBizTracker running at http://localhost:${PORT}\n`);
+  const server = app.listen(PORT, HOST, async () => {
+    console.log(`\nBizTracker running at http://${HOST}:${PORT}\n`);
 
     if (!getSpreadsheetId() || !process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
       console.warn(`⚠  WARNING: Spreadsheet configuration for ${environment} or GOOGLE_SERVICE_ACCOUNT_KEY is not set`);
@@ -95,6 +100,20 @@ async function startServer() {
       console.error('   API calls will return errors until credentials are fixed.\n');
     }
   });
+
+  server.on('error', err => {
+    console.error('✖  Server startup/runtime error:', err.message);
+    process.exit(1);
+  });
 }
+
+process.on('unhandledRejection', reason => {
+  console.error('✖  Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', err => {
+  console.error('✖  Uncaught exception:', err);
+  process.exit(1);
+});
 
 startServer();
