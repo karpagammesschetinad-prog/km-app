@@ -44,7 +44,11 @@ function renderPaymentTypeSummary(targetEl, entries, shiftExpenses = {}) {
     if (values.has(shift) && values.get(shift).has(paymentType)) values.get(shift).set(paymentType, values.get(shift).get(paymentType) + (Number(entry.amount) || 0));
   });
   const table = targetEl.closest('table');
-  if (table) table.querySelector('thead').innerHTML = `<tr><th>Shift</th><th>Expenses</th><th>Cash Payment</th><th>Cash Remaining</th>${paymentTypes.filter(type => type !== 'Cash').map(type => `<th>${type}</th>`).join('')}<th>Total Remaining</th><th>Total Sales</th></tr>`;
+  if (table) table.querySelector('thead').innerHTML = `<tr><th>Shift</th><th>Cash Payment</th>${paymentTypes.filter(type => type !== 'Cash').map(type => `<th>${type}</th>`).join('')}<th>Cash Remaining</th><th>Other Payments</th><th>Total Remaining</th><th>Expenses</th><th>Total Sales</th></tr>`;
+  const totals = new Map(paymentTypes.map(type => [type, 0]));
+  let totalExpenses = 0;
+  let totalRemaining = 0;
+  let grandTotal = 0;
   targetEl.innerHTML = shifts.map(shift => {
     const row = values.get(shift);
     const expenses = shift === 'Day Online' ? 0 : (Number(shiftExpenses[shift]) || 0);
@@ -55,8 +59,13 @@ function renderPaymentTypeSummary(targetEl, entries, shiftExpenses = {}) {
       .reduce((sum, [, amount]) => sum + amount, 0);
     const remaining = cashRemaining + otherPayments;
     const total = cashPayment + otherPayments;
-    return `<tr><td data-label="Shift" class="fw-semibold">${shift}</td><td data-label="Expenses">${formatCurrency(expenses)}</td><td data-label="Cash Payment">${formatCurrency(cashPayment)}</td><td data-label="Cash Remaining">${formatCurrency(cashRemaining)}</td>${paymentTypes.filter(type => type !== 'Cash').map(type => `<td data-label="${type}">${formatCurrency(row.get(type))}</td>`).join('')}<td data-label="Total Remaining">${formatCurrency(remaining)}</td><td data-label="Total Sales" class="text-success fw-semibold">${formatCurrency(total)}</td></tr>`;
-  }).join('');
+    totalExpenses += expenses;
+    totalRemaining += remaining;
+    grandTotal += total;
+    totals.set('Cash', totals.get('Cash') + cashPayment);
+    paymentTypes.filter(type => type !== 'Cash').forEach(type => totals.set(type, totals.get(type) + row.get(type)));
+    return `<tr><td data-label="Shift" class="fw-semibold">${shift}</td><td data-label="Cash Payment">${formatCurrency(cashPayment)}</td>${paymentTypes.filter(type => type !== 'Cash').map(type => `<td data-label="${type}">${formatCurrency(row.get(type))}</td>`).join('')}<td data-label="Cash Remaining">${formatCurrency(cashRemaining)}</td><td data-label="Other Payments">${formatCurrency(otherPayments)}</td><td data-label="Total Remaining">${formatCurrency(remaining)}</td><td data-label="Expenses">${formatCurrency(expenses)}</td><td data-label="Total Sales" class="text-success fw-semibold">${formatCurrency(total)}</td></tr>`;
+  }).join('') + `<tr class="sales-total-row"><td data-label="Shift" class="fw-semibold">Total</td><td data-label="Cash Payment">${formatCurrency(totals.get('Cash'))}</td>${paymentTypes.filter(type => type !== 'Cash').map(type => `<td data-label="${type}">${formatCurrency(totals.get(type))}</td>`).join('')}<td data-label="Cash Remaining">${formatCurrency((totals.get('Cash') || 0) - totalExpenses)}</td><td data-label="Other Payments">${formatCurrency(paymentTypes.filter(type => type !== 'Cash').reduce((sum, type) => sum + totals.get(type), 0))}</td><td data-label="Total Remaining">${formatCurrency(totalRemaining)}</td><td data-label="Expenses">${formatCurrency(totalExpenses)}</td><td data-label="Total Sales" class="text-success fw-semibold">${formatCurrency(grandTotal)}</td></tr>`;
 }
 
 function renderShiftSummaryRows(targetEl, shiftExpenses, remainingByShift, dayOnlineTotal = 0) {
@@ -251,7 +260,7 @@ async function loadSummary() {
         if (detailTable) {
           const summaryTable = document.createElement('div');
           summaryTable.className = 'table-responsive mb-3';
-          summaryTable.innerHTML = '<table class="table mobile-grid-table shift-summary-table mb-3"><thead><tr><th>Shift</th><th>Expenses</th><th>Cash Payment</th><th>Cash Remaining</th><th>Total Remaining</th><th>Total Sales</th></tr></thead><tbody id="shiftSummary"></tbody></table><table class="table mobile-grid-table sales-audit-table"><thead><tr><th>Shift</th><th>Payment Type</th><th>Online Vendor</th><th>Amount</th><th>Last Updated By</th><th>Last Updated At</th></tr></thead><tbody id="salesEntryAuditRows"></tbody></table>';
+          summaryTable.innerHTML = '<table class="table mobile-grid-table shift-summary-table mb-3"><thead><tr><th>Shift</th><th>Cash Payment</th><th>Cash Remaining</th><th>Other Payments</th><th>Total Remaining</th><th>Expenses</th><th>Total Sales</th></tr></thead><tbody id="shiftSummary"></tbody></table><table class="table mobile-grid-table sales-audit-table"><thead><tr><th>Shift</th><th>Payment Type</th><th>Online Vendor</th><th>Amount</th><th>Last Updated By</th><th>Last Updated At</th></tr></thead><tbody id="salesEntryAuditRows"></tbody></table>';
           detailTable.before(summaryTable);
           shiftSummary = summaryTable.querySelector('#shiftSummary');
           salesEntryAuditRows = summaryTable.querySelector('#salesEntryAuditRows');
