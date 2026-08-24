@@ -12,6 +12,14 @@ const SHEET = SHEETS.SALARY_PAYMENTS;
 const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
 const TYPE_C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5 };
 
+function normalizePaymentShift(value) {
+  const shift = String(value || '').trim().toLowerCase();
+  if (shift === 'morning') return 'Morning';
+  if (shift === 'afternoon') return 'Afternoon';
+  if (shift === 'night' || shift === 'dinner') return 'Night';
+  return '';
+}
+
 function getBusinessDate() {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: process.env.APP_TIMEZONE || 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit'
@@ -59,7 +67,7 @@ router.get('/', requireAuth, async (req, res) => {
 // POST /api/payments
 router.post('/', requireAuth, async (req, res) => {
   try {
-    const { employeeId, employeeName, paymentDate, amount, remarks, addAsExpense, expenseTypeId } = req.body;
+    const { employeeId, employeeName, paymentDate, amount, remarks, addAsExpense, expenseTypeId, expenseShift } = req.body;
     if (!employeeId || !paymentDate || amount === undefined) {
       return res.status(400).json({ success: false, message: 'employeeId, paymentDate and amount are required.' });
     }
@@ -73,8 +81,10 @@ router.post('/', requireAuth, async (req, res) => {
     const employeeRows = await getAllRows(SHEETS.EMPLOYEES);
     const employee = employeeRows.find(row => row[EMPLOYEE_C.ID] === employeeId);
     const isTemporaryEmployee = String(employee?.[9] || '').toLowerCase() === 'true';
+    const resolvedExpenseShift = normalizePaymentShift(expenseShift);
     const shouldAddAsExpense = !!addAsExpense || isTemporaryEmployee;
     let resolvedExpenseTypeId = expenseTypeId || '';
+    let resolvedShift = resolvedExpenseShift;
     if (shouldAddAsExpense) {
       const typeRows = await getAllRows(SHEETS.EXPENSE_CATEGORY_TYPES);
       if (!resolvedExpenseTypeId) {
@@ -83,6 +93,10 @@ router.post('/', requireAuth, async (req, res) => {
       }
       const type = typeRows.find(row => row[TYPE_C.ID] === resolvedExpenseTypeId);
       if (!type || !canUseExpenseType(type, req.session.user)) return res.status(403).json({ success: false, message: 'You do not have access to this expense category type.' });
+      if (isTemporaryEmployee && !resolvedShift) resolvedShift = normalizePaymentShift(type[TYPE_C.NAME]);
+      if (isTemporaryEmployee && !resolvedShift) {
+        return res.status(400).json({ success: false, message: 'Select a Morning, Afternoon, or Night expense type for temporary employee payments.' });
+      }
     }
     const obj = {
       id: uuidv4(),
@@ -118,7 +132,7 @@ router.post('/', requireAuth, async (req, res) => {
         resolvedExpenseTypeId,              // CategoryTypeID
         '',                                // IsOnSpot
         obj.id,                            // PaymentID
-        isTemporaryEmployee ? 'Night' : '' // Shift
+        isTemporaryEmployee ? resolvedShift : '' // Shift
       ];
       await appendRow(EXPENSE_SHEET, expenseRow);
     }

@@ -106,9 +106,60 @@ function openEmployeeExpenseModal() {
     .map(type => `<option value="${type.id}">${escapeHtml(type.name)}</option>`).join('');
   const form = document.getElementById('employeeExpenseForm');
   form.reset();
-  document.getElementById('employeeExpenseDate').value = today;
-  document.getElementById('employeeExpenseDate').max = today;
   bootstrap.Modal.getOrCreateInstance(document.getElementById('employeeExpenseModal')).show();
+}
+
+function captureExpenseDraft() {
+  return {
+    remarks: document.getElementById('expRemarks')?.value || '',
+    rows: [...document.querySelectorAll('.cat-amount:not([disabled])')].map(input => {
+      const row = input.closest('.expense-category-row');
+      const onSpot = input.dataset.onspot === 'true';
+      return {
+        onSpot,
+        type: input.dataset.type || row?.querySelector('.onspot-name')?.dataset.type || '',
+        category: onSpot ? (row?.querySelector('.onspot-name')?.value.trim() || '') : (input.dataset.category || ''),
+        amount: input.value || ''
+      };
+    }).filter(item => item.category || item.amount)
+  };
+}
+
+function restoreExpenseDraft(draft) {
+  if (!draft) return;
+  const remarks = document.getElementById('expRemarks');
+  if (remarks) remarks.value = draft.remarks || '';
+  (draft.rows || []).forEach(item => {
+    if (item.onSpot) {
+      let row = [...document.querySelectorAll('.onspot-row')].find(candidate =>
+        candidate.querySelector('.onspot-name')?.dataset.type === item.type &&
+        candidate.querySelector('.onspot-name')?.value.trim() === item.category
+      );
+      if (!row) {
+        const card = document.querySelector(`[data-type-card="${item.type}"]`);
+        const content = card?.querySelector('.expense-category-type-content');
+        const actions = card?.querySelector('.onspot-action-row');
+        if (content && actions) {
+          row = document.createElement('div');
+          row.className = 'expense-category-row onspot-row d-flex align-items-center gap-3 py-2';
+          row.innerHTML = '<input type="text" class="form-control onspot-name flex-grow-1" data-type="' + item.type + '" placeholder="On-spot category">' +
+            '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="" data-type="' + item.type + '" data-onspot="true" min="0" step="0.01" placeholder="0" oninput="updateTotal()"></div>';
+          content.insertBefore(row, actions);
+        }
+      }
+      if (row) {
+        const nameInput = row.querySelector('.onspot-name');
+        const amountInput = row.querySelector('.cat-amount');
+        if (nameInput) nameInput.value = item.category;
+        if (amountInput) amountInput.value = item.amount;
+      }
+      return;
+    }
+    const input = [...document.querySelectorAll('.cat-amount[data-onspot="false"]')]
+      .find(candidate => candidate.dataset.type === item.type && candidate.dataset.category === item.category);
+    if (input) input.value = item.amount;
+  });
+  updateTotal();
 }
 
 async function saveEmployeeExpense() {
@@ -117,11 +168,12 @@ async function saveEmployeeExpense() {
   const employee = expenseEmployees.find(item => item.id === document.getElementById('employeeExpenseEmployee').value);
   const button = document.getElementById('btnSaveEmployeeExpense');
   button.disabled = true;
+  const draft = captureExpenseDraft();
   try {
     await api('POST', '/payments', {
       employeeId: employee.id,
       employeeName: employee.name,
-      paymentDate: document.getElementById('employeeExpenseDate').value,
+      paymentDate: document.getElementById('expDate').value,
       amount: parseFloat(document.getElementById('employeeExpenseAmount').value),
       remarks: document.getElementById('employeeExpenseRemarks').value.trim(),
       addAsExpense: true,
@@ -131,6 +183,7 @@ async function saveEmployeeExpense() {
     showNotification('Employee payment added as an expense.');
     allExpenses = await api('GET', '/expenses');
     loadDateIntoForm(document.getElementById('expDate').value);
+    restoreExpenseDraft(draft);
   } catch (err) {
     showNotification('Save failed: ' + err.message, 'danger');
   } finally {

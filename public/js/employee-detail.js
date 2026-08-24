@@ -580,7 +580,7 @@ function setupModals() {
     expenseToggle.checked = !!empData.temporaryEmployee || expenseToggle.checked;
     expenseToggle.disabled = !!empData.temporaryEmployee;
     expenseToggle.closest('.form-check')?.querySelector('label span')?.replaceChildren(document.createTextNode(empData.temporaryEmployee
-      ? ' — Temporary employee payments are always recorded as Night expenses'
+      ? ' — Temporary employee payments are always recorded as expenses for the selected shift'
       : ' — Record this payment as an expense entry'));
     // Pre-fill today's date automatically for daily-pay employees
     if (empData.dailySalaryEnabled) {
