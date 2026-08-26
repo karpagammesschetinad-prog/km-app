@@ -20,7 +20,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  EXPENSES: ['ID', 'Date', 'Category', 'Description', 'Amount', 'EmployeeID', 'EmployeeName', 'SubmittedBy', 'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'RejectionReason', 'CreatedAt', 'CategoryTypeID', 'IsOnSpot', 'PaymentID', 'Shift'],
+  EXPENSES: ['ID', 'Date', 'Category', 'Description', 'Amount', 'EmployeeID', 'EmployeeName', 'SubmittedBy', 'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'RejectionReason', 'CreatedAt', 'CategoryTypeID', 'IsOnSpot', 'PaymentID', 'Shift', 'ExpenseMode'],
   SALES: ['ID', 'Date', 'Morning', 'Afternoon', 'Dinner', 'TotalSales', 'ExpenseTotal', 'Remaining', 'EnteredBy', 'CreatedAt', 'MorningEnteredBy', 'AfternoonEnteredBy', 'DinnerEnteredBy'],
   SALES_ENTRIES: ['ID', 'Date', 'Shift', 'PaymentType', 'OnlineVendor', 'Amount', 'EnteredBy', 'CreatedAt', 'UpdatedAt'],
   EMPLOYEES: ['ID', 'Name', 'Address', 'Phone', 'StartDate', 'PerDaySalary', 'DailyPetta', 'Status', 'DailySalaryEnabled', 'TemporaryEmployee'],
@@ -28,8 +28,8 @@ const HEADERS = {
   SALARY_PAYMENTS: ['ID', 'EmployeeID', 'EmployeeName', 'PaymentDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   PETTA_HISTORY:   ['ID', 'EmployeeID', 'EmployeeName', 'EffectiveDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARIES: ['ID', 'EmployeeID', 'EmployeeName', 'Month', 'Year', 'BaseSalary', 'Allowances', 'Deductions', 'NetSalary', 'PaymentDate', 'Status'],
-  EXPENSE_CATEGORIES: ['ID', 'Name', 'SortOrder', 'Status'],
-  EXPENSE_CATEGORY_TYPES: ['ID', 'Name', 'SortOrder', 'Status', 'AccessMode', 'AllowedUserIDs', 'DisplayText'],
+  EXPENSE_CATEGORIES: ['ID', 'Name', 'SortOrder', 'Status', 'CategoryTypeID', 'ExcludeDailyCashSales'],
+  EXPENSE_CATEGORY_TYPES: ['ID', 'Name', 'SortOrder', 'Status', 'AccessMode', 'AllowedUserIDs', 'DisplayText', 'ExpenseWorkflow'],
   SETTINGS: ['Key', 'Value'],
   USERS: ['ID', 'Username', 'DisplayName', 'Role', 'PasswordHash', 'Status', 'CreatedAt', 'Permissions']
 };
@@ -144,7 +144,7 @@ async function initializeSheets() {
           range: `${name}!A1`,
           valueInputOption: 'RAW',
           insertDataOption: 'INSERT_ROWS',
-          resource: { values: [[uuidv4(), 'General', 1, 'Active', 'All', '', 'General']] }
+          resource: { values: [[uuidv4(), 'General', 1, 'Active', 'All', '', 'General', 'Daily Cash']] }
         });
       }
       if (key === 'SETTINGS') {

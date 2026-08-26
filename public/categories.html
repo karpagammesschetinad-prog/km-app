@@ -49,7 +49,7 @@
       </div>
       <div class="table-responsive">
         <table class="table mobile-grid-table">
-          <thead><tr><th>Order</th><th>Internal Name</th><th>Display Text</th><th>Access</th><th>Users</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Order</th><th>Internal Name</th><th>Display Text</th><th>Workflow</th><th>Access</th><th>Users</th><th>Actions</th></tr></thead>
           <tbody id="typeBody"></tbody>
         </table>
       </div>
@@ -145,6 +145,14 @@
       <div class="col-md-6"><label class="form-label">Display Text</label><input class="form-control" id="typeDisplayText" placeholder="e.g. காலை"></div>
       <div class="col-md-3"><label class="form-label">Order</label><input type="number" class="form-control" id="typeOrder" min="1"></div>
       <div class="col-md-3"><label class="form-label">Status</label><select class="form-select" id="typeStatus"><option>Active</option><option>Inactive</option></select></div>
+      <div class="col-md-6">
+        <label class="form-label">Expense Behavior</label>
+        <select class="form-select" id="typeWorkflow">
+          <option value="Daily Cash">Daily Expenses Against Daily Cash Sale</option>
+          <option value="Daily Non Cash">Daily Expenses Not Against Daily Cash Sale</option>
+          <option value="Occasional">Occasional Expenses Not Against Daily Cash Sale</option>
+        </select>
+      </div>
       <div class="col-12"><label class="form-label">Access</label><select class="form-select" id="typeAccess"><option value="All">All users with expense access</option><option value="Limited">Limited users only</option></select></div>
       <div class="col-12" id="typeUsersWrap"><label class="form-label">Allowed Users</label><div id="typeUsers" class="row g-2"></div></div>
     </div></form></div>

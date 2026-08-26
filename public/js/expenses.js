@@ -7,6 +7,16 @@ let pendingRejectDate = null;
 let onSpotEntriesForDate = [];
 let datePickerMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let expenseEmployees = [];
+let autoSaveTimer = null;
+let autoSaveInFlight = false;
+let autoSavePending = false;
+
+function normalizeWorkflow(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'occasional' || normalized === 'occasional_excluded') return 'Occasional';
+  if (normalized === 'daily non cash' || normalized === 'daily_non_cash' || normalized === 'dailycashexcluded') return 'Daily Non Cash';
+  return 'Daily Cash';
+}
 
 function getLocalDateKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -22,6 +32,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btnEmployeeExpense').style.display = canAccess('expenses', 'add') ? '' : 'none';
   document.getElementById('btnEmployeeExpense').addEventListener('click', openEmployeeExpenseModal);
   document.getElementById('btnSaveEmployeeExpense').addEventListener('click', saveEmployeeExpense);
+  document.getElementById('btnOccasionalExpense').style.display = canAccess('expenses', 'add') ? '' : 'none';
+  document.getElementById('btnOccasionalExpense').addEventListener('click', openOccasionalExpenseModal);
+  document.getElementById('occasionalExpenseType').addEventListener('change', populateOccasionalCategories);
+  document.getElementById('btnSaveOccasionalExpense').addEventListener('click', saveOccasionalExpense);
 
   // Hide add form if no add sub-permission
   if (!canAccess('expenses', 'add')) {
@@ -54,6 +68,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('btnSaveExpense').addEventListener('click', save);
+  const saveButton = document.getElementById('btnSaveExpense');
+  if (saveButton) saveButton.style.display = 'none';
+  document.getElementById('expRemarks').addEventListener('blur', () => scheduleAutoSave());
+  document.getElementById('categoryInputs').addEventListener('focusout', event => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (target.matches('.cat-amount:not([readonly]):not([disabled]), .onspot-name:not([readonly]):not([disabled])')) {
+      scheduleAutoSave();
+    }
+  });
 
   document.getElementById('btnReport').addEventListener('click', () => {
     if (!isSuperUser()) return;
@@ -90,6 +114,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     ]);
     loadDateIntoForm(today);
     renderExpenseDatePicker();
+    renderOccasionalExpenses();
+    if (!allCategoryTypes.some(type => type.status === 'Active' && normalizeWorkflow(type.workflow) === 'Occasional')) {
+      document.getElementById('btnOccasionalExpense').style.display = 'none';
+    }
   } catch (err) {
     showNotification('Error loading data: ' + err.message, 'danger');
   }
@@ -102,11 +130,116 @@ function openEmployeeExpenseModal() {
     .filter(employee => employee.status === 'Active')
     .map(employee => `<option value="${employee.id}">${escapeHtml(employee.name)}</option>`).join('');
   typeSelect.innerHTML = '<option value="">— Select Expense Type —</option>' + allCategoryTypes
-    .filter(type => type.status === 'Active')
+    .filter(type => type.status === 'Active' && normalizeWorkflow(type.workflow) !== 'Occasional')
     .map(type => `<option value="${type.id}">${escapeHtml(type.name)}</option>`).join('');
   const form = document.getElementById('employeeExpenseForm');
   form.reset();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('employeeExpenseModal')).show();
+}
+
+function openOccasionalExpenseModal() {
+  const form = document.getElementById('occasionalExpenseForm');
+  form.reset();
+  document.getElementById('occasionalExpenseDate').value = today;
+  document.getElementById('occasionalExpenseDate').max = today;
+  const typeSelect = document.getElementById('occasionalExpenseType');
+  typeSelect.innerHTML = '<option value="">— Select Expense Type —</option>' + allCategoryTypes
+    .filter(type => type.status === 'Active' && normalizeWorkflow(type.workflow) === 'Occasional')
+    .map(type => `<option value="${type.id}">${escapeHtml(type.displayText || type.name)}</option>`).join('');
+  populateOccasionalCategories();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('occasionalExpenseModal')).show();
+}
+
+function populateOccasionalCategories() {
+  const typeId = document.getElementById('occasionalExpenseType').value;
+  const categorySelect = document.getElementById('occasionalExpenseCategory');
+  categorySelect.innerHTML = '<option value="">— Select Category —</option>' + allCategories
+    .filter(category => category.status === 'Active' && category.typeId === typeId)
+    .sort((first, second) => first.sortOrder - second.sortOrder)
+    .map(category => `<option value="${escapeHtml(category.name)}">${escapeHtml(category.name)}</option>`).join('');
+}
+
+async function saveOccasionalExpense() {
+  const form = document.getElementById('occasionalExpenseForm');
+  if (!form.checkValidity()) { form.reportValidity(); return; }
+  const button = document.getElementById('btnSaveOccasionalExpense');
+  button.disabled = true;
+  try {
+    await api('POST', '/expenses/occasional', {
+      date: document.getElementById('occasionalExpenseDate').value,
+      typeId: document.getElementById('occasionalExpenseType').value,
+      category: document.getElementById('occasionalExpenseCategory').value,
+      amount: parseFloat(document.getElementById('occasionalExpenseAmount').value),
+      remarks: document.getElementById('occasionalExpenseRemarks').value.trim()
+    });
+    bootstrap.Modal.getInstance(document.getElementById('occasionalExpenseModal')).hide();
+    showNotification('Occasional expenses saved.');
+    allExpenses = await api('GET', '/expenses');
+    renderOccasionalExpenses();
+  } catch (err) {
+    showNotification('Save failed: ' + err.message, 'danger');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function scheduleAutoSave() {
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(runAutoSave, 180);
+}
+
+function setAutoSaveStatus(text, tone = 'muted', icon = 'bi-cloud-check') {
+  const status = document.getElementById('autoSaveStatus');
+  if (!status) return;
+  status.classList.remove('text-muted', 'text-primary', 'text-danger', 'text-success');
+  status.classList.add(`text-${tone}`);
+  status.innerHTML = `<i class="bi ${icon} me-1"></i>${text}`;
+}
+
+async function runAutoSave() {
+  if (autoSaveInFlight) {
+    autoSavePending = true;
+    return;
+  }
+  autoSaveInFlight = true;
+  setAutoSaveStatus('Saving changes…', 'primary', 'bi-cloud-upload');
+  try {
+    await save({ silent: true, auto: true });
+    setAutoSaveStatus('All changes saved', 'success', 'bi-cloud-check');
+  } finally {
+    autoSaveInFlight = false;
+    if (autoSavePending) {
+      autoSavePending = false;
+      scheduleAutoSave();
+    }
+  }
+}
+
+function renderOccasionalExpenses() {
+  const body = document.getElementById('occasionalExpenseBody');
+  if (!body) return;
+  const typeNames = new Map(allCategoryTypes.map(type => [type.id, type.displayText || type.name]));
+  const entries = allExpenses.filter(expense => expense.mode === 'Occasional').sort((first, second) => second.date.localeCompare(first.date));
+  const occasionalTotal = entries.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+  const occasionalTotalEl = document.getElementById('occasionalExpensesTotal');
+  if (occasionalTotalEl) occasionalTotalEl.textContent = formatCurrency(occasionalTotal);
+  const canDelete = canAccess('expenses', 'add');
+  body.innerHTML = entries.length ? entries.map(expense => `<tr>
+    <td data-label="Date">${formatDate(expense.date)}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}</td><td data-label="Type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Remarks" class="text-muted">${escapeHtml(expense.description || '—')}</td><td data-label="Amount" class="text-end fw-semibold">${formatCurrency(expense.amount)}</td><td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}</td><td data-label="Actions" class="text-center">${canDelete && expense.approvalStatus !== 'Approved' && expense.approvalStatus !== 'AutoApproved' ? `<button type="button" class="btn btn-sm btn-outline-danger btn-action" title="Delete occasional expense" onclick="deleteOccasionalExpense('${expense.id}')"><i class="bi bi-trash"></i></button>` : ''}</td>
+  </tr>`).join('') : emptyRow(7, 'No occasional expenses recorded.');
+}
+
+async function deleteOccasionalExpense(id) {
+  if (!id || !confirm('Delete this occasional expense?')) return;
+  try {
+    await api('DELETE', '/expenses/' + encodeURIComponent(id));
+    showNotification('Occasional expense deleted.');
+    allExpenses = await api('GET', '/expenses');
+    renderOccasionalExpenses();
+    loadDateIntoForm(document.getElementById('expDate').value);
+  } catch (err) {
+    showNotification('Delete failed: ' + err.message, 'danger');
+  }
 }
 
 function captureExpenseDraft() {
@@ -199,7 +332,7 @@ function loadDateIntoForm(date) {
     return loadDateIntoForm(today);
   }
   const existing = getExistingForDate(date);
-  onSpotEntriesForDate = allExpenses.filter(e => e.date === date && e.onSpot && !e.employeeId);
+  onSpotEntriesForDate = allExpenses.filter(e => e.mode !== 'Occasional' && e.date === date && e.onSpot && !e.employeeId);
   const hasData = Object.keys(existing).length > 0;
   const isToday = date === today;
 
@@ -220,15 +353,15 @@ function loadDateIntoForm(date) {
     badge.className = 'badge bg-secondary-subtle text-secondary border border-secondary-subtle';
   }
 
-  const remarkRow = allExpenses.find(e => e.date === date && e.description);
+  const remarkRow = allExpenses.find(e => e.mode !== 'Occasional' && e.date === date && e.description);
   document.getElementById('expRemarks').value = remarkRow ? remarkRow.description : '';
 
   // Check if date is approved
-  const approvedRow = allExpenses.find(e => e.date === date && (e.approvalStatus === 'Approved' || e.approvalStatus === 'AutoApproved'));
+  const approvedRow = allExpenses.find(e => e.mode !== 'Occasional' && e.date === date && (e.approvalStatus === 'Approved' || e.approvalStatus === 'AutoApproved'));
   const isApproved = !!approvedRow;
 
   // Show rejection notice if cashier sees a rejected date
-  const rejectedRow = allExpenses.find(e => e.date === date && e.approvalStatus === 'Rejected');
+  const rejectedRow = allExpenses.find(e => e.mode !== 'Occasional' && e.date === date && e.approvalStatus === 'Rejected');
   const noticeEl = document.getElementById('rejectionNotice');
   if (rejectedRow && !isSuperUser() && !isApproved) {
     noticeEl.innerHTML =
@@ -269,7 +402,7 @@ function updateDateStatusColor(date) {
   const input = document.getElementById('expDate');
   if (!input) return;
   input.classList.remove('expense-date-input-approved', 'expense-date-input-rejected', 'expense-date-input-neutral');
-  const statuses = allExpenses.filter(expense => expense.date === date).map(expense => expense.approvalStatus);
+  const statuses = allExpenses.filter(expense => expense.mode !== 'Occasional' && expense.date === date).map(expense => expense.approvalStatus);
   const status = statuses.includes('Rejected') ? 'rejected' : statuses.some(value => value === 'Approved' || value === 'AutoApproved') ? 'approved' : 'neutral';
   input.classList.add(`expense-date-input-${status}`);
 }
@@ -315,7 +448,7 @@ function renderExpenseDatePicker() {
 
 function getExistingForDate(date) {
   const map = {};
-  allExpenses.filter(e => e.date === date).forEach(e => {
+  allExpenses.filter(e => e.mode !== 'Occasional' && e.date === date).forEach(e => {
     if (e.category && !e.onSpot) map[e.category] = (map[e.category] || 0) + (parseFloat(e.amount) || 0);
   });
   return map;
@@ -325,8 +458,9 @@ function getExistingForDate(date) {
 
 function buildCategoryInputs(existingMap, isReadOnly) {
   existingMap = existingMap || {};
+  const typeById = new Map(allCategoryTypes.map(t => [t.id, t]));
   const active = allCategories
-    .filter(c => c.status === 'Active')
+    .filter(c => c.status === 'Active' && normalizeWorkflow(typeById.get(c.typeId)?.workflow || 'Daily Cash') !== 'Occasional')
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const container = document.getElementById('categoryInputs');
 
@@ -336,7 +470,6 @@ function buildCategoryInputs(existingMap, isReadOnly) {
   }
 
   const readonlyAttr = isReadOnly ? ' readonly disabled style="font-size:1rem;background:#f8f9fa"' : ' style="font-size:1rem"';
-  const typeById = new Map(allCategoryTypes.map(t => [t.id, t]));
   const legacyType = allCategoryTypes.find(t => t.name === 'General') || allCategoryTypes.find(t => t.sortOrder === 1) || allCategoryTypes[0] || { id: '', name: 'General', sortOrder: 0 };
   const grouped = new Map();
   active.forEach(c => {
@@ -344,7 +477,7 @@ function buildCategoryInputs(existingMap, isReadOnly) {
     if (!grouped.has(type.id)) grouped.set(type.id, { type, categories: [] });
     grouped.get(type.id).categories.push(c);
   });
-  allExpenses.filter(e => e.date === document.getElementById('expDate').value && e.employeeId && !e.onSpot).forEach(entry => {
+  allExpenses.filter(e => e.mode !== 'Occasional' && e.date === document.getElementById('expDate').value && e.employeeId && !e.onSpot).forEach(entry => {
     const type = typeById.get(entry.typeId) || legacyType;
     if (!grouped.has(type.id)) grouped.set(type.id, { type, categories: [] });
     grouped.get(type.id).salaryEntries = grouped.get(type.id).salaryEntries || [];
@@ -356,7 +489,7 @@ function buildCategoryInputs(existingMap, isReadOnly) {
     grouped.get(type.id).onSpotEntries = grouped.get(type.id).onSpotEntries || [];
     grouped.get(type.id).onSpotEntries.push(entry);
   });
-  const cards = [...grouped.values()].sort((a, b) => a.type.sortOrder - b.type.sortOrder).map(({ type, categories, onSpotEntries = [], salaryEntries = [] }) => {
+  const renderCards = groups => groups.map(({ type, categories, onSpotEntries = [], salaryEntries = [] }) => {
     const items = categories.map(c => {
       const val = existingMap[c.name] > 0 ? existingMap[c.name] : '';
       return '<div class="expense-category-row d-flex align-items-center gap-3 py-2">' +
@@ -383,8 +516,17 @@ function buildCategoryInputs(existingMap, isReadOnly) {
       '<div class="expense-category-type-content">' + items + salaryRows + onSpotRows + '<div class="onspot-action-row">' + onSpotAction + '</div></div></section>';
   }).join('');
 
+  const orderedGroups = [...grouped.values()].sort((a, b) => a.type.sortOrder - b.type.sortOrder);
+  const cashGroups = orderedGroups.filter(group => normalizeWorkflow(group.type.workflow || 'Daily Cash') === 'Daily Cash');
+  const nonCashGroups = orderedGroups.filter(group => normalizeWorkflow(group.type.workflow || 'Daily Cash') === 'Daily Non Cash');
+  const cashCards = renderCards(cashGroups);
+  const nonCashCards = renderCards(nonCashGroups);
+  const sectionMarkup =
+    (cashCards ? '<section class="mb-3"><div class="d-flex align-items-center justify-content-between mb-2"><div class="small fw-semibold text-muted">Against Daily Cash Sale</div><div class="small fw-semibold text-primary" id="dailyCashSectionTotal">₹0</div></div>' + cashCards + '</section>' : '') +
+    (nonCashCards ? '<section class="mb-2"><div class="small fw-semibold text-muted mb-2">Not Against Daily Cash Sale</div>' + nonCashCards + '</section>' : '');
+
   // Show read-only entries for categories not in the active list (e.g. employee salary payments)
-  const salaryNames = new Set(allExpenses.filter(e => e.date === document.getElementById('expDate').value && e.employeeId).map(e => e.category));
+  const salaryNames = new Set(allExpenses.filter(e => e.mode !== 'Occasional' && e.date === document.getElementById('expDate').value && e.employeeId).map(e => e.category));
   const extraItems = Object.keys(existingMap)
     .filter(k => !active.some(c => c.name === k) && !salaryNames.has(k) && existingMap[k] > 0)
     .map(k => {
@@ -394,7 +536,7 @@ function buildCategoryInputs(existingMap, isReadOnly) {
         '<input type="number" class="form-control cat-amount" data-category="' + k + '" value="' + existingMap[k] + '" readonly disabled></div></div>';
     }).join('');
 
-  container.innerHTML = cards + (extraItems ? '<section class="expense-category-type-card expense-category-type-locked is-collapsed"><button type="button" class="expense-category-type-header" aria-expanded="false" onclick="toggleExpenseType(this)"><span class="expense-category-type-title"><i class="bi bi-chevron-right expense-type-chevron"></i><span>Other recorded entries</span></span></button><div class="expense-category-type-content">' + extraItems + '</div></section>' : '');
+  container.innerHTML = sectionMarkup + (extraItems ? '<section class="expense-category-type-card expense-category-type-locked is-collapsed"><button type="button" class="expense-category-type-header" aria-expanded="false" onclick="toggleExpenseType(this)"><span class="expense-category-type-title"><i class="bi bi-chevron-right expense-type-chevron"></i><span>Other recorded entries</span></span></button><div class="expense-category-type-content">' + extraItems + '</div></section>' : '');
   updateTotal();
 }
 
@@ -421,6 +563,7 @@ async function deleteOnSpotExpense(id) {
     await api('DELETE', '/expenses/' + encodeURIComponent(id));
     showNotification('On-spot expense deleted.');
     allExpenses = await api('GET', '/expenses');
+    renderOccasionalExpenses();
     loadDateIntoForm(document.getElementById('expDate').value);
   } catch (err) {
     showNotification('Delete failed: ' + err.message, 'danger');
@@ -433,6 +576,7 @@ async function deleteEmployeePayment(id) {
     await api('DELETE', '/payments/' + encodeURIComponent(id));
     showNotification('Employee payment deleted.');
     allExpenses = await api('GET', '/expenses');
+    renderOccasionalExpenses();
     loadDateIntoForm(document.getElementById('expDate').value);
   } catch (err) {
     showNotification('Delete failed: ' + err.message, 'danger');
@@ -446,27 +590,28 @@ function toggleExpenseType(button) {
 }
 
 function updateTotal() {
-  let total = 0;
   const typeTotals = {};
   document.querySelectorAll('.cat-amount').forEach(inp => {
     const amount = parseFloat(inp.value) || 0;
-    total += amount;
     if (inp.dataset.type) typeTotals[inp.dataset.type] = (typeTotals[inp.dataset.type] || 0) + amount;
   });
   document.querySelectorAll('[data-type-total]').forEach(el => { el.textContent = formatCurrency(typeTotals[el.dataset.typeTotal] || 0); });
-  const overall = document.getElementById('categoryTypeTotals');
-  if (overall) overall.innerHTML = '<span class="expense-overall-label">All types</span><strong>' + formatCurrency(total) + '</strong>';
-  document.getElementById('expRunningTotal').textContent = formatCurrency(total);
+  const workflowByTypeId = new Map(allCategoryTypes.map(type => [type.id, normalizeWorkflow(type.workflow || 'Daily Cash')]));
+  const dailyCashTotal = Object.entries(typeTotals).reduce((sum, [typeId, amount]) =>
+    sum + (workflowByTypeId.get(typeId) === 'Daily Cash' ? amount : 0), 0);
+  const dailyCashTotalEl = document.getElementById('dailyCashSectionTotal');
+  if (dailyCashTotalEl) dailyCashTotalEl.textContent = formatCurrency(dailyCashTotal);
 }
 
 /* ---- Save ---- */
 
-async function save() {
+async function save(options = {}) {
+  const silent = !!options.silent;
   const date = document.getElementById('expDate').value;
-  if (!date) { showNotification('Please select a date.', 'warning'); return; }
-  if (date > today) { showNotification('Future dates cannot be saved.', 'warning'); return; }
-  if (allExpenses.some(e => e.date === date && (e.approvalStatus === 'Approved' || e.approvalStatus === 'AutoApproved'))) {
-    showNotification('Approved dates cannot be edited.', 'warning');
+  if (!date) { if (!silent) showNotification('Please select a date.', 'warning'); return; }
+  if (date > today) { if (!silent) showNotification('Future dates cannot be saved.', 'warning'); return; }
+  if (allExpenses.some(e => e.mode !== 'Occasional' && e.date === date && (e.approvalStatus === 'Approved' || e.approvalStatus === 'AutoApproved'))) {
+    if (!silent) showNotification('Approved dates cannot be edited.', 'warning');
     loadDateIntoForm(date);
     return;
   }
@@ -479,7 +624,7 @@ async function save() {
     if (amount > 0 && name) entries.push({ category: name, amount, typeId: inp.dataset.type, onSpot });
   });
 
-  if (!entries.length) { showNotification('Enter at least one amount greater than 0.', 'warning'); return; }
+  if (!entries.length) { if (!silent) showNotification('Enter at least one amount greater than 0.', 'warning'); return; }
 
   const remarks = document.getElementById('expRemarks').value.trim();
   const btn = document.getElementById('btnSaveExpense');
@@ -488,12 +633,15 @@ async function save() {
 
   try {
     await api('POST', '/expenses/bulk', { date, entries, remarks });
-    const msg = 'Expense submitted for approval.';
-    showNotification(msg);
+    if (!silent) {
+      const msg = 'Expense submitted for approval.';
+      showNotification(msg);
+    }
     allExpenses = await api('GET', '/expenses');
     loadDateIntoForm(date);
   } catch (err) {
-    showNotification('Save failed: ' + err.message, 'danger');
+    if (silent) setAutoSaveStatus('Auto-save failed. Retry by editing again.', 'danger', 'bi-cloud-slash');
+    if (!silent) showNotification('Save failed: ' + err.message, 'danger');
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Expense';
@@ -568,6 +716,7 @@ function renderSummary() {
   const selectedCats = getSelectedCats();
 
   const filtered = allExpenses.filter(e => {
+    if (e.mode === 'Occasional') return false;
     if (from && e.date < from) return false;
     if (to   && e.date > to)   return false;
     if (selectedCats.length > 0 && !selectedCats.includes(e.category)) return false;

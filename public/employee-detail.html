@@ -137,13 +137,22 @@
         <form id="leaveForm" novalidate>
           <div class="row g-3">
             <div class="col-md-6">
-              <label class="form-label">Start Date & Time <span class="text-danger">*</span></label>
-              <input type="datetime-local" class="form-control" id="leaveStart" required>
+              <label class="form-label">Start Date <span class="text-danger">*</span></label>
+              <input type="date" class="form-control" id="leaveStartDate" required>
             </div>
             <div class="col-md-6">
-              <label class="form-label">End Date & Time <span class="text-muted">(optional)</span></label>
-              <input type="datetime-local" class="form-control" id="leaveEnd">
+              <label class="form-label">End Date <span class="text-muted">(optional)</span></label>
+              <input type="date" class="form-control" id="leaveEndDate">
               <div class="form-text">Leave blank while the employee is still away.</div>
+            </div>
+            <div class="col-12">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="leaveHalfDay">
+                <label class="form-check-label" for="leaveHalfDay">
+                  <strong>Half Day</strong>
+                  <span class="text-muted small ms-1">— Leave is counted as half a day</span>
+                </label>
+              </div>
             </div>
             <div class="col-12">
               <label class="form-label">Remarks</label>
@@ -187,7 +196,7 @@
             </div>
             <div class="col-12">
               <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="payAddAsExpense" checked>
+                <input class="form-check-input" type="checkbox" role="switch" id="payAddAsExpense">
                 <label class="form-check-label" for="payAddAsExpense">
                   <strong>Add as Expense</strong>
                   <span class="text-muted small ms-1">— Record this payment as an expense entry</span>

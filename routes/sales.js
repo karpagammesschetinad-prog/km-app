@@ -5,8 +5,29 @@ const { SHEETS, getAllRows, appendRow, updateRow, findRowById } = require('../se
 const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware');
 
 const C = { ID: 0, DATE: 1, MORNING: 2, AFTERNOON: 3, DINNER: 4, TOTAL: 5, EXPENSES: 6, REMAINING: 7, ENTERED_BY: 8, CREATED_AT: 9, MORNING_BY: 10, AFTERNOON_BY: 11, DINNER_BY: 12 };
-const EXPENSE = { DATE: 1, AMOUNT: 4, TYPE_ID: 13, SHIFT: 16, EMP_ID: 5 };
+const EXPENSE = { DATE: 1, AMOUNT: 4, TYPE_ID: 13, SHIFT: 16, EMP_ID: 5, MODE: 17 };
 const SALES_ENTRY = { DATE: 1, SHIFT: 2, PAYMENT_TYPE: 3, AMOUNT: 5 };
+const TYPE = { ID: 0, WORKFLOW: 7 };
+
+function normalizeExpenseMode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'occasional' || normalized === 'occasional_excluded') return 'Occasional';
+  if (normalized === 'daily non cash' || normalized === 'daily_non_cash' || normalized === 'dailycashexcluded') return 'Daily Non Cash';
+  return 'Daily Cash';
+}
+
+function getTypeModeMap(categoryTypes) {
+  const map = new Map();
+  (categoryTypes || []).forEach(row => {
+    map.set(row[TYPE.ID] || '', normalizeExpenseMode(row[TYPE.WORKFLOW]));
+  });
+  return map;
+}
+
+function resolveExpenseMode(row, typeModeMap) {
+  if (String(row[EXPENSE.MODE] || '').trim()) return normalizeExpenseMode(row[EXPENSE.MODE]);
+  return typeModeMap.get(row[EXPENSE.TYPE_ID] || '') || 'Daily Cash';
+}
 
 function normalizeSalesShift(shift) {
   const value = String(shift || '').trim().toLowerCase();
@@ -34,8 +55,11 @@ function rowToObj(row) {
   };
 }
 
-function expenseTotal(rows, date) {
-  return rows.filter(row => row[EXPENSE.DATE] === date).reduce((total, row) => total + (parseFloat(row[EXPENSE.AMOUNT]) || 0), 0);
+function expenseTotal(rows, date, categoryTypes) {
+  const typeModeMap = getTypeModeMap(categoryTypes);
+  return rows
+    .filter(row => row[EXPENSE.DATE] === date && resolveExpenseMode(row, typeModeMap) === 'Daily Cash')
+    .reduce((total, row) => total + (parseFloat(row[EXPENSE.AMOUNT]) || 0), 0);
 }
 
 function salesShiftForExpense(row, categoryTypes) {
@@ -51,7 +75,9 @@ function salesShiftForExpense(row, categoryTypes) {
 
 function shiftExpenseTotals(rows, date, categoryTypes) {
   const totals = { Morning: 0, Afternoon: 0, Night: 0 };
-  rows.filter(row => row[EXPENSE.DATE] === date).forEach(row => {
+  const typeModeMap = getTypeModeMap(categoryTypes);
+  const filteredRows = rows.filter(row => row[EXPENSE.DATE] === date && resolveExpenseMode(row, typeModeMap) === 'Daily Cash');
+  filteredRows.forEach(row => {
     const shift = salesShiftForExpense(row, categoryTypes);
     if (totals[shift] !== undefined) totals[shift] += parseFloat(row[EXPENSE.AMOUNT]) || 0;
   });
@@ -79,7 +105,7 @@ router.get('/', requireAuth, async (req, res) => {
     const date = req.query.date || businessDate();
     const [salesRows, salesEntryRows, expenseRows, categoryTypes] = await Promise.all([getAllRows(SHEETS.SALES), getAllRows(SHEETS.SALES_ENTRIES), getAllRows(SHEETS.EXPENSES), getAllRows(SHEETS.EXPENSE_CATEGORY_TYPES)]);
     const shiftExpenses = shiftExpenseTotals(expenseRows, date, categoryTypes);
-    const dailyExpenseTotal = expenseTotal(expenseRows, date);
+    const dailyExpenseTotal = expenseTotal(expenseRows, date, categoryTypes);
     const rows = salesRows.map(rowToObj).filter(row => req.session.user.role === 'superuser' || row.date === businessDate());
     if (req.session.user.role !== 'superuser') {
       const own = rows.find(row => row.date === date) || { date, morning: 0, afternoon: 0, dinner: 0, totalSales: 0, remaining: 0, enteredBy: '' };
@@ -132,7 +158,7 @@ router.get('/history', requireSuperUser, async (req, res) => {
       const shiftExpenses = shiftExpenseTotals(expenseRows, date, categoryTypes);
       const totals = salesEntryTotals(entryRows, date, shiftExpenses);
       const remaining = Object.values(totals.remainingByShift).reduce((sum, value) => sum + value, 0) + totals.daySales;
-      entrySales.set(date, expenseTotal(expenseRows, date) + remaining);
+      entrySales.set(date, expenseTotal(expenseRows, date, categoryTypes) + remaining);
     });
     const dates = new Set([...legacySales.keys(), ...entrySales.keys()]);
     const rows = [...dates].sort().map(date => ({ date, totalSales: entrySales.has(date) ? entrySales.get(date) : legacySales.get(date) }));
@@ -150,7 +176,7 @@ router.post('/', requireAuth, async (req, res) => {
     const expenses = await getAllRows(SHEETS.EXPENSES);
     const categoryTypes = await getAllRows(SHEETS.EXPENSE_CATEGORY_TYPES);
     const shiftExpenses = shiftExpenseTotals(expenses, date, categoryTypes);
-    const expenseTotalValue = expenseTotal(expenses, date);
+    const expenseTotalValue = expenseTotal(expenses, date, categoryTypes);
     const userKey = req.session.user.role === 'superuser' ? (req.body.enteredBy || req.session.user.username) : req.session.user.username;
     const existingRows = await getAllRows(SHEETS.SALES);
     const existingIndex = existingRows.findIndex(row => row[C.DATE] === date);

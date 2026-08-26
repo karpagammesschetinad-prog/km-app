@@ -1,5 +1,8 @@
 /* dashboard.js */
 
+let trendChart = null;
+let salesExpenseChart = null;
+
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
@@ -88,6 +91,7 @@ async function loadDashboard() {
 
     renderCategoryChart(recentChartExpenses);
     renderTrendChart(recentChartExpenses, salesHistory, now);
+    renderSalesExpenseChart(recentChartExpenses, salesHistory, now);
     renderRecentExpenses(expenses.slice(-6).reverse());
     renderEmployeeStatus(empStats);
 
@@ -147,28 +151,65 @@ function renderCategoryChart(expenses) {
   }
 
   const COLORS = ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444','#06b6d4','#f97316','#ec4899','#84cc16'];
-  const labels = Object.keys(cats), data = Object.values(cats);
+  const sortedCategories = Object.entries(cats).sort(([, firstAmount], [, secondAmount]) => secondAmount - firstAmount);
+  const labels = sortedCategories.map(([label]) => label);
+  const data = sortedCategories.map(([, amount]) => amount);
+  const legend = document.getElementById('chartCategoryLegend');
+  if (legend) {
+    legend.innerHTML = labels.map((label, index) =>
+      `<span class="dashboard-category-legend-item"><i style="background-color:${COLORS[index % COLORS.length]}"></i><span>${escapeHtml(label)}</span><strong>${formatCurrency(data[index])}</strong></span>`
+    ).join('');
+  }
 
   new Chart(ctx, {
     type: 'doughnut',
     data: {
       labels,
-      datasets: [{ data, backgroundColor: COLORS.slice(0, labels.length), borderWidth: 0, hoverOffset: 8 }]
+      datasets: [{ data, backgroundColor: labels.map((_, index) => COLORS[index % COLORS.length]), borderWidth: 0, hoverOffset: 8 }]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       cutout: '66%',
       plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11 } } },
+        legend: { display: false },
         tooltip: { callbacks: { label: c => ` ${c.label}: ${formatCurrency(c.raw)}` } }
       }
     }
   });
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+}
+
+function normalizeToAverage(values) {
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return average ? values.map(value => value / average * 100) : values.map(() => 0);
+}
+
+function calculateCorrelation(firstValues, secondValues) {
+  const length = Math.min(firstValues.length, secondValues.length);
+  if (length < 2) return null;
+  const firstAverage = firstValues.slice(0, length).reduce((sum, value) => sum + value, 0) / length;
+  const secondAverage = secondValues.slice(0, length).reduce((sum, value) => sum + value, 0) / length;
+  let covariance = 0;
+  let firstVariance = 0;
+  let secondVariance = 0;
+  for (let index = 0; index < length; index++) {
+    const firstDifference = firstValues[index] - firstAverage;
+    const secondDifference = secondValues[index] - secondAverage;
+    covariance += firstDifference * secondDifference;
+    firstVariance += firstDifference ** 2;
+    secondVariance += secondDifference ** 2;
+  }
+  return firstVariance && secondVariance ? covariance / Math.sqrt(firstVariance * secondVariance) : null;
+}
+
 function renderTrendChart(expenses, salesHistory = [], referenceDate = new Date()) {
   const ctx = document.getElementById('chartTrend');
-  if (!ctx) return;
+  const categoryOptions = document.getElementById('trendCategoryOptions');
+  const categoryButton = document.getElementById('trendCategoryButton');
+  if (!ctx || !categoryOptions || !categoryButton) return;
 
   const days = Array.from({ length: 20 }, (_, i) => {
     const d = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() - (19 - i));
@@ -176,21 +217,134 @@ function renderTrendChart(expenses, salesHistory = [], referenceDate = new Date(
     return { label: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), key };
   });
 
-  const data = days.map(day =>
-    expenses
-      .filter(e => e.date === day.key)
-      .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
-  );
+  const categoryTotals = expenses.reduce((totals, expense) => {
+    const category = expense.category || 'Other';
+    totals[category] = (totals[category] || 0) + (parseFloat(expense.amount) || 0);
+    return totals;
+  }, {});
+  const categories = Object.entries(categoryTotals)
+    .sort(([, firstAmount], [, secondAmount]) => secondAmount - firstAmount)
+    .map(([category]) => category);
+  const previousSelection = new Set([...categoryOptions.querySelectorAll('input:checked')].map(input => input.value));
+  const selectedCategories = categories.filter(category => previousSelection.has(category));
+  if (!selectedCategories.length && categories[0]) selectedCategories.push(categories[0]);
+  categoryOptions.innerHTML = categories.map(category =>
+    `<label class="dropdown-item-text d-flex align-items-center gap-2 py-1"><input class="form-check-input trend-category-check m-0" type="checkbox" value="${escapeHtml(category)}"${selectedCategories.includes(category) ? ' checked' : ''}><span>${escapeHtml(category)}</span></label>`
+  ).join('') || '<span class="dropdown-item-text text-muted small">No expense categories</span>';
+  categoryButton.textContent = selectedCategories.length === 1
+    ? selectedCategories[0]
+    : `${selectedCategories.length} categories selected`;
+
+  const categoryData = new Map(selectedCategories.map(category => [category, days.map(day => expenses
+    .filter(expense => expense.date === day.key && (expense.category || 'Other') === category)
+    .reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0))]));
+  const salesByDate = new Map((salesHistory || []).map(row => [row.date, Number(row.totalSales) || 0]));
+  const salesData = days.map(day => salesByDate.get(day.key) || 0);
+  const normalizedSalesData = normalizeToAverage(salesData);
+  const normalizedCategoryData = new Map(selectedCategories.map(category => [
+    category,
+    normalizeToAverage(categoryData.get(category))
+  ]));
+  const insight = document.getElementById('trendInsight');
+  if (insight) {
+    const relationships = selectedCategories.map(category => {
+      const correlation = calculateCorrelation(salesData, categoryData.get(category));
+      if (correlation === null) return `${escapeHtml(category)}: insufficient variation to compare`;
+      const direction = correlation >= .6 ? 'tracks strongly with sales' : correlation >= .3 ? 'generally rises and falls with sales' : correlation <= -.3 ? 'moves opposite to sales' : 'has no clear movement pattern with sales';
+      return `${escapeHtml(category)}: ${direction} (${correlation.toFixed(2)})`;
+    });
+    insight.innerHTML = relationships.length
+      ? `Indexed to each series' 20-day average (100%). ${relationships.join(' · ')}`
+      : 'Select one or more categories to compare their movement with sales.';
+  }
+
+  categoryOptions.querySelectorAll('.trend-category-check').forEach(input => {
+    input.addEventListener('change', () => renderTrendChart(expenses, salesHistory, referenceDate));
+  });
+  if (trendChart) trendChart.destroy();
+
+  const categoryColors = ['#2563eb', '#ea580c', '#9333ea', '#0891b2', '#ca8a04', '#db2777'];
+  const categoryDatasets = selectedCategories.map((category, index) => ({
+    label: category,
+    data: normalizedCategoryData.get(category),
+    actualData: categoryData.get(category),
+    borderColor: categoryColors[index % categoryColors.length],
+    backgroundColor: `${categoryColors[index % categoryColors.length]}20`,
+    borderWidth: 2,
+    pointRadius: 3,
+    pointHoverRadius: 5,
+    tension: .3,
+    fill: false
+  }));
+
+  trendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: days.map(day => day.label),
+      datasets: [{
+        label: 'Sales',
+        data: normalizedSalesData,
+        actualData: salesData,
+        borderColor: '#16a34a',
+        backgroundColor: 'rgba(22,163,74,.12)',
+        borderWidth: 3,
+        pointRadius: 3,
+        pointHoverRadius: 5,
+        tension: .3,
+        fill: false
+      }, ...categoryDatasets]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11 } } },
+        tooltip: { callbacks: {
+          label: context => {
+            const actual = context.dataset.actualData?.[context.dataIndex] || 0;
+            return ` ${context.dataset.label}: ${formatCurrency(actual)} (${context.raw.toFixed(0)}% of average)`;
+          },
+          afterBody: tooltipItems => {
+            const sales = salesData[tooltipItems[0]?.dataIndex] || 0;
+            if (!sales) return '';
+            const dayIndex = tooltipItems[0]?.dataIndex;
+            return selectedCategories.map(category => {
+              const expense = categoryData.get(category)?.[dayIndex] || 0;
+              return `${category}: ${(expense / sales * 100).toFixed(1)}% of sales`;
+            });
+          }
+        } }
+      },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { callback: value => `${value}%` }, title: { display: true, text: 'Index: 100% = 20-day average' } },
+        x: { grid: { display: false } }
+      }
+    }
+  });
+}
+
+function renderSalesExpenseChart(expenses, salesHistory = [], referenceDate = new Date()) {
+  const ctx = document.getElementById('chartSalesExpense');
+  if (!ctx) return;
+
+  const days = Array.from({ length: 20 }, (_, index) => {
+    const date = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() - (19 - index));
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return { label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), key };
+  });
+  const expenseData = days.map(day => expenses
+    .filter(expense => expense.date === day.key)
+    .reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0));
   const salesByDate = new Map((salesHistory || []).map(row => [row.date, Number(row.totalSales) || 0]));
   const salesData = days.map(day => salesByDate.get(day.key) || 0);
 
-  new Chart(ctx, {
+  if (salesExpenseChart) salesExpenseChart.destroy();
+  salesExpenseChart = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: days.map(day => day.label),
       datasets: [{
         label: 'Expenses',
-        data,
+        data: expenseData,
         backgroundColor: 'rgba(59,130,246,.8)',
         borderRadius: 6,
         borderSkipped: false
@@ -206,10 +360,10 @@ function renderTrendChart(expenses, salesHistory = [], referenceDate = new Date(
       responsive: true, maintainAspectRatio: false,
       plugins: {
         legend: { display: true, position: 'bottom', labels: { boxWidth: 10, padding: 12, font: { size: 11 } } },
-        tooltip: { callbacks: { label: c => ` ${formatCurrency(c.raw)}` } }
+        tooltip: { callbacks: { label: context => ` ${context.dataset.label}: ${formatCurrency(context.raw)}` } }
       },
       scales: {
-        y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { callback: v => formatCurrency(v) } },
+        y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { callback: value => formatCurrency(value) } },
         x: { grid: { display: false } }
       }
     }

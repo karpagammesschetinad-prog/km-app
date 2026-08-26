@@ -125,21 +125,39 @@
             <span class="text-muted small">Last 20 days</span>
           </div>
           <div class="card-panel-body">
-            <div class="chart-wrap" style="height:260px;position:relative;">
+            <div class="chart-wrap dashboard-category-chart" style="height:200px;position:relative;">
               <canvas id="chartCategory"></canvas>
             </div>
+            <div id="chartCategoryLegend" class="dashboard-category-legend"></div>
           </div>
         </div>
       </div>
       <div class="col-md-7">
         <div class="card-panel h-100">
           <div class="card-panel-header">
+            <h6 class="card-panel-title">Category Expense vs Sales</h6>
+            <div class="dropdown" data-bs-auto-close="outside">
+              <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="trendCategoryButton" data-bs-toggle="dropdown" aria-expanded="false">Select categories</button>
+              <div class="dropdown-menu dropdown-menu-end p-2" id="trendCategoryOptions" aria-label="Expense categories to compare"></div>
+            </div>
+          </div>
+          <div class="card-panel-body">
+            <div id="trendInsight" class="text-muted small mb-2"></div>
+            <div style="height:260px;position:relative;">
+              <canvas id="chartTrend"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12">
+        <div class="card-panel">
+          <div class="card-panel-header">
             <h6 class="card-panel-title">Expenses vs Sales Trend</h6>
             <span class="text-muted small">Last 20 days</span>
           </div>
           <div class="card-panel-body">
             <div style="height:260px;position:relative;">
-              <canvas id="chartTrend"></canvas>
+              <canvas id="chartSalesExpense"></canvas>
             </div>
           </div>
         </div>

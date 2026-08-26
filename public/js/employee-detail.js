@@ -565,6 +565,15 @@ function setupModals() {
   document.getElementById('btnSavePayment').addEventListener('click', savePayment);
   document.getElementById('btnSaveEdit').addEventListener('click', saveEdit);
   document.getElementById('btnSavePetta').addEventListener('click', savePetta);
+  document.getElementById('leaveStartDate').addEventListener('change', syncLeaveDateFields);
+  document.getElementById('leaveHalfDay').addEventListener('change', syncLeaveDateFields);
+  document.getElementById('leaveModal').addEventListener('show.bs.modal', () => {
+    const now = new Date();
+    document.getElementById('leaveStartDate').value = dateKey(now);
+    document.getElementById('leaveEndDate').value = '';
+    document.getElementById('leaveHalfDay').checked = false;
+    syncLeaveDateFields();
+  });
   const expenseToggle = document.getElementById('payAddAsExpense');
   expenseToggle.addEventListener('change', togglePaymentExpenseType);
   populatePaymentExpenseTypes();
@@ -577,8 +586,9 @@ function setupModals() {
     document.getElementById('payDate').value = currentDate;
     document.getElementById('payDate').max = currentDate;
     document.getElementById('payDate').disabled = !isSuperUser();
-    expenseToggle.checked = !!empData.temporaryEmployee || expenseToggle.checked;
+    expenseToggle.checked = !!empData.temporaryEmployee;
     expenseToggle.disabled = !!empData.temporaryEmployee;
+    togglePaymentExpenseType();
     expenseToggle.closest('.form-check')?.querySelector('label span')?.replaceChildren(document.createTextNode(empData.temporaryEmployee
       ? ' — Temporary employee payments are always recorded as expenses for the selected shift'
       : ' — Record this payment as an expense entry'));
@@ -606,6 +616,15 @@ function togglePaymentExpenseType() {
   const enabled = !!toggle?.checked;
   wrapper.style.display = enabled ? '' : 'none';
   select.required = enabled;
+}
+
+function syncLeaveDateFields() {
+  const startDate = document.getElementById('leaveStartDate');
+  const endDate = document.getElementById('leaveEndDate');
+  const halfDay = document.getElementById('leaveHalfDay').checked;
+  endDate.min = startDate.value;
+  endDate.disabled = halfDay;
+  if (halfDay) endDate.value = '';
 }
 
 function openEdit() {
@@ -652,14 +671,21 @@ async function saveEdit() {
 async function saveLeave() {
   const form = document.getElementById('leaveForm');
   if (!form.checkValidity()) { form.reportValidity(); return; }
+  const startDate = document.getElementById('leaveStartDate').value;
+  const endDate = document.getElementById('leaveEndDate').value;
+  const halfDay = document.getElementById('leaveHalfDay').checked;
+  const leaveStart = `${startDate}T00:00`;
+  const leaveEnd = halfDay
+    ? `${startDate}T12:00`
+    : endDate ? `${dateKey(addDays(parseDateOnly(endDate), 1))}T00:00` : '';
   const btn = document.getElementById('btnSaveLeave');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
   try {
     await api('POST', '/leaves', {
       employeeId:    empId,
       employeeName:  empData.name,
-      startDateTime: document.getElementById('leaveStart').value,
-      endDateTime:   document.getElementById('leaveEnd').value,
+      startDateTime: leaveStart,
+      endDateTime:   leaveEnd,
       remarks:       document.getElementById('leaveRemarks').value.trim()
     });
     form.reset();

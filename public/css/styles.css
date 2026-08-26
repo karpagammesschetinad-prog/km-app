@@ -208,6 +208,41 @@ body {
 
 .card-panel-body { padding: 1.25rem; }
 
+.dashboard-category-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .45rem .75rem;
+  margin-top: .75rem;
+  font-size: .78rem;
+}
+
+.dashboard-category-legend-item {
+  display: grid;
+  grid-template-columns: .65rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .35rem;
+  min-width: 0;
+}
+
+.dashboard-category-legend-item i {
+  width: .6rem;
+  height: .6rem;
+  border-radius: 50%;
+}
+
+.dashboard-category-legend-item span {
+  overflow-wrap: anywhere;
+}
+
+.dashboard-category-legend-item strong {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+@media (max-width: 575.98px) {
+  .dashboard-category-legend { grid-template-columns: 1fr; }
+}
+
 /* ---- Tables ---- */
 .table { margin: 0; font-size: .855rem; }
 
