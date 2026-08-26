@@ -632,12 +632,15 @@ async function save(options = {}) {
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
 
   try {
-    await api('POST', '/expenses/bulk', { date, entries, remarks });
+    const saved = await api('POST', '/expenses/bulk', { date, entries, remarks });
     if (!silent) {
       const msg = 'Expense submitted for approval.';
       showNotification(msg);
     }
-    allExpenses = await api('GET', '/expenses');
+    const savedEntries = Array.isArray(saved) ? saved : (saved?.data || []);
+    allExpenses = allExpenses
+      .filter(expense => expense.date !== date || expense.employeeId || expense.mode === 'Occasional')
+      .concat(savedEntries);
     loadDateIntoForm(date);
   } catch (err) {
     if (silent) setAutoSaveStatus('Auto-save failed. Retry by editing again.', 'danger', 'bi-cloud-slash');

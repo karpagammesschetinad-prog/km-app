@@ -3,6 +3,9 @@ const { v4: uuidv4 } = require('uuid');
 const { environment, getSpreadsheetId } = require('../config/environment');
 
 const SPREADSHEET_ID = getSpreadsheetId();
+const ROW_CACHE_TTL_MS = 10000;
+let sheetsClientPromise = null;
+const rowCache = new Map();
 
 const SHEETS = {
   EXPENSES: 'Expenses',
@@ -47,8 +50,14 @@ async function getAuthClient() {
 }
 
 async function getSheetsClient() {
-  const auth = await getAuthClient();
-  return google.sheets({ version: 'v4', auth });
+  if (!sheetsClientPromise) {
+    sheetsClientPromise = getAuthClient().then(auth => google.sheets({ version: 'v4', auth }));
+  }
+  return sheetsClientPromise;
+}
+
+function invalidateRowCache(sheetName) {
+  rowCache.delete(sheetName);
 }
 
 async function initializeSheets() {
@@ -159,12 +168,18 @@ async function initializeSheets() {
 }
 
 async function getAllRows(sheetName) {
+  const cached = rowCache.get(sheetName);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.rows.map(row => [...row]);
+  }
   const sheets = await getSheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `${sheetName}!A2:Z`
   });
-  return (res.data.values || []).filter(row => row.length > 0 && row[0]);
+  const rows = (res.data.values || []).filter(row => row.length > 0 && row[0]);
+  rowCache.set(sheetName, { rows, expiresAt: Date.now() + ROW_CACHE_TTL_MS });
+  return rows.map(row => [...row]);
 }
 
 async function appendRow(sheetName, values) {
@@ -176,6 +191,7 @@ async function appendRow(sheetName, values) {
     insertDataOption: 'INSERT_ROWS',
     resource: { values: [values] }
   });
+  invalidateRowCache(sheetName);
 }
 
 async function updateRow(sheetName, rowIndex, values) {
@@ -186,6 +202,7 @@ async function updateRow(sheetName, rowIndex, values) {
     valueInputOption: 'RAW',
     resource: { values: [values] }
   });
+  invalidateRowCache(sheetName);
 }
 
 async function deleteRow(sheetName, rowIndex) {
@@ -209,6 +226,7 @@ async function deleteRow(sheetName, rowIndex) {
       }]
     }
   });
+  invalidateRowCache(sheetName);
 }
 
 async function findRowById(sheetName, id) {

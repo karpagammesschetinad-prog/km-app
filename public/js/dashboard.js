@@ -2,6 +2,11 @@
 
 let trendChart = null;
 let salesExpenseChart = null;
+let employeeStatusLoaded = false;
+let recentExpensesLoaded = false;
+let dashboardChartData = null;
+let categoryChartLoaded = false;
+let categoryTrendLoaded = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
@@ -11,20 +16,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.location.href = '/expenses.html';
     return;
   }
+  setupDemandLoadedSections();
   await loadDashboard();
 });
+
+function setupDemandLoadedSections() {
+  document.getElementById('categoryChartPanel')?.addEventListener('shown.bs.collapse', loadCategoryChartOnDemand);
+  document.getElementById('categoryTrendPanel')?.addEventListener('shown.bs.collapse', loadCategoryTrendOnDemand);
+  document.getElementById('recentExpensesPanel')?.addEventListener('shown.bs.collapse', loadRecentExpensesOnDemand);
+  document.getElementById('employeeStatusPanel')?.addEventListener('shown.bs.collapse', loadEmployeeStatusOnDemand);
+}
 
 async function loadDashboard() {
   try {
     const fetchNamed = (name, path) => api('GET', path).catch(error => {
       throw new Error(`${name}: ${error.message}`);
     });
-    const [expenses, employees, salaries, allLeaves, allPayments, config, salesHistory] = await Promise.all([
+    const [expenses, salaries, config, salesHistory] = await Promise.all([
       fetchNamed('Expenses', '/expenses'),
-      fetchNamed('Employees', '/employees'),
       fetchNamed('Salaries', '/salaries'),
-      fetchNamed('Leaves', '/leaves'),
-      fetchNamed('Payments', '/payments'),
       fetchNamed('Configuration', '/config'),
       fetchNamed('Sales', '/sales/history?days=20')
     ]);
@@ -45,58 +55,103 @@ async function loadDashboard() {
       return d >= expenseChartStart && d <= now;
     });
 
-    const activeEmp = employees.filter(e => e.status === 'Active' && !e.temporaryEmployee);
     const pendingExp = expenses.filter(e => e.status === 'Pending');
 
     const totalExp = monthExp.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
     const totalSal = monthSal.reduce((s, e) => s + (parseFloat(e.netSalary) || 0), 0);
 
-    // Employee salary summaries
-    const empStats = activeEmp.map(emp => {
-      const leaves  = allLeaves.filter(l => l.employeeId === emp.id);
-      const payments = allPayments.filter(p => p.employeeId === emp.id);
-      const start = new Date(Math.max(new Date(emp.startDate).getTime(), fyStart.getTime()));
-      const end = fyEnd;
-      const totalDays = Math.max(0, (end - start) / 86400000);
-      const leaveDays = leaves.reduce((sum, l) => {
-        const ls = new Date(l.startDateTime), le = l.endDateTime ? new Date(l.endDateTime) : now;
-        const s = Math.max(ls, start), e = Math.min(le, end);
-        return e > s ? sum + (e - s) / 86400000 : sum;
-      }, 0);
-      const earned = Math.max(0, totalDays - leaveDays) * (emp.perDaySalary - emp.dailyPetta);
-      const paid   = payments.reduce((s, p) => s + p.amount, 0);
-      let carriedBalance = 0;
-      for (let day = new Date(emp.startDate); day < fyStart; day.setDate(day.getDate() + 1)) {
-        const leave = leaves.some(l => new Date(l.startDateTime) <= day && (!l.endDateTime || day <= new Date(l.endDateTime)));
-        const dayKey = day.toISOString().slice(0, 10);
-        const dayPaid = payments.filter(p => p.paymentDate === dayKey).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-        carriedBalance += (leave ? 0 : (emp.perDaySalary - emp.dailyPetta)) - dayPaid;
-      }
-      const balance = carriedBalance + earned - paid;
-      const onLeave = leaves.some(l => new Date(l.startDateTime) <= now && (!l.endDateTime || now <= new Date(l.endDateTime)));
-      return { emp, balance, onLeave };
-    });
-
-    const onLeaveCount   = empStats.filter(x => x.onLeave).length;
-    const pendingSalCount = empStats.filter(x => !x.onLeave && x.balance > 0).length;
-    const advanceCount   = empStats.filter(x => x.balance < 0).length;
-
-    document.getElementById('stat-employees').textContent  = activeEmp.length;
-    document.getElementById('stat-onleave').textContent    = onLeaveCount;
-    document.getElementById('stat-pending-sal').textContent = pendingSalCount;
-    document.getElementById('stat-advance').textContent    = advanceCount;
+    document.getElementById('stat-employees').textContent  = '—';
+    document.getElementById('stat-onleave').textContent    = '—';
+    document.getElementById('stat-pending-sal').textContent = '—';
+    document.getElementById('stat-advance').textContent    = '—';
     document.getElementById('stat-expenses').textContent   = formatCurrency(totalExp);
     document.getElementById('stat-salaries').textContent   = formatCurrency(totalSal);
     document.getElementById('stat-pending').textContent    = pendingExp.length;
 
-    renderCategoryChart(recentChartExpenses);
-    renderTrendChart(recentChartExpenses, salesHistory, now);
+    dashboardChartData = { expenses: recentChartExpenses, salesHistory, referenceDate: now };
     renderSalesExpenseChart(recentChartExpenses, salesHistory, now);
-    renderRecentExpenses(expenses.slice(-6).reverse());
-    renderEmployeeStatus(empStats);
+    categoryChartLoaded = false;
+    categoryTrendLoaded = false;
+    recentExpensesLoaded = false;
+    employeeStatusLoaded = false;
+    if (document.getElementById('categoryChartPanel')?.classList.contains('show')) loadCategoryChartOnDemand();
+    if (document.getElementById('categoryTrendPanel')?.classList.contains('show')) loadCategoryTrendOnDemand();
+    if (document.getElementById('recentExpensesPanel')?.classList.contains('show')) loadRecentExpensesOnDemand();
+    if (document.getElementById('employeeStatusPanel')?.classList.contains('show')) loadEmployeeStatusOnDemand();
 
   } catch (err) {
     showNotification('Failed to load dashboard: ' + err.message, 'danger');
+  }
+}
+
+function loadCategoryChartOnDemand() {
+  if (categoryChartLoaded || !dashboardChartData) return;
+  renderCategoryChart(dashboardChartData.expenses);
+  categoryChartLoaded = true;
+}
+
+function loadCategoryTrendOnDemand() {
+  if (categoryTrendLoaded || !dashboardChartData) return;
+  renderTrendChart(dashboardChartData.expenses, dashboardChartData.salesHistory, dashboardChartData.referenceDate);
+  categoryTrendLoaded = true;
+}
+
+async function loadRecentExpensesOnDemand() {
+  if (recentExpensesLoaded) return;
+  const tbody = document.getElementById('recentExpBody');
+  if (!tbody) return;
+  try {
+    const expenses = await api('GET', '/expenses');
+    renderRecentExpenses(expenses.slice(-6).reverse());
+    recentExpensesLoaded = true;
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">Failed to load recent expenses.</td></tr>';
+  }
+}
+
+async function loadEmployeeStatusOnDemand() {
+  if (employeeStatusLoaded) return;
+  const tbody = document.getElementById('empStatusBody');
+  if (!tbody) return;
+  try {
+    const [employees, allLeaves, allPayments, config] = await Promise.all([
+      api('GET', '/employees'), api('GET', '/leaves'), api('GET', '/payments'), api('GET', '/config')
+    ]);
+    const now = new Date();
+    const fyStart = new Date(config.fiscalYear.start + 'T00:00:00');
+    const fyEnd = new Date(Math.min(now.getTime(), new Date(config.fiscalYear.end + 'T23:59:59').getTime()));
+    const activeEmp = employees.filter(emp => emp.status === 'Active' && !emp.temporaryEmployee);
+    const empStats = activeEmp.map(emp => {
+      const leaves = allLeaves.filter(leave => leave.employeeId === emp.id);
+      const payments = allPayments.filter(payment => payment.employeeId === emp.id);
+      const start = new Date(Math.max(new Date(emp.startDate).getTime(), fyStart.getTime()));
+      const totalDays = Math.max(0, (fyEnd - start) / 86400000);
+      const leaveDays = leaves.reduce((sum, leave) => {
+        const leaveStart = new Date(leave.startDateTime), leaveEnd = leave.endDateTime ? new Date(leave.endDateTime) : now;
+        const overlapStart = Math.max(leaveStart, start), overlapEnd = Math.min(leaveEnd, fyEnd);
+        return overlapEnd > overlapStart ? sum + (overlapEnd - overlapStart) / 86400000 : sum;
+      }, 0);
+      const earned = Math.max(0, totalDays - leaveDays) * (emp.perDaySalary - emp.dailyPetta);
+      const paid = payments.reduce((sum, payment) => sum + payment.amount, 0);
+      let carriedBalance = 0;
+      for (let day = new Date(emp.startDate); day < fyStart; day.setDate(day.getDate() + 1)) {
+        const leave = leaves.some(item => new Date(item.startDateTime) <= day && (!item.endDateTime || day <= new Date(item.endDateTime)));
+        const dayKey = day.toISOString().slice(0, 10);
+        const dayPaid = payments.filter(payment => payment.paymentDate === dayKey).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
+        carriedBalance += (leave ? 0 : (emp.perDaySalary - emp.dailyPetta)) - dayPaid;
+      }
+      const balance = carriedBalance + earned - paid;
+      const onLeave = leaves.some(leave => new Date(leave.startDateTime) <= now && (!leave.endDateTime || now <= new Date(leave.endDateTime)));
+      return { emp, balance, onLeave };
+    });
+    document.getElementById('stat-employees').textContent = activeEmp.length;
+    document.getElementById('stat-onleave').textContent = empStats.filter(item => item.onLeave).length;
+    document.getElementById('stat-pending-sal').textContent = empStats.filter(item => !item.onLeave && item.balance > 0).length;
+    document.getElementById('stat-advance').textContent = empStats.filter(item => item.balance < 0).length;
+    renderEmployeeStatus(empStats);
+    employeeStatusLoaded = true;
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">Failed to load employee status.</td></tr>';
   }
 }
 
