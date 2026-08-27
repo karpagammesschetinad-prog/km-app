@@ -1,0 +1,6 @@
+#!/bin/sh
+# Enable with: git config core.hooksPath .githooks
+npm test || {
+  echo "\nCommit aborted: tests failed."
+  exit 1
+}

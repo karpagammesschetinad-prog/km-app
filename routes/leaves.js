@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { SHEETS, getAllRows, appendRow, updateRow, deleteRow, findRowById } = require('../services/googleSheets');
+const { requireAuth } = require('../middleware/authMiddleware');
+
+router.use(requireAuth);
 
 const SHEET = SHEETS.LEAVES;
 const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, START: 3, END: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };

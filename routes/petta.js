@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { SHEETS, getAllRows, appendRow, deleteRow } = require('../services/googleSheets');
+const { requireAuth } = require('../middleware/authMiddleware');
+
+router.use(requireAuth);
 
 const SHEET = SHEETS.PETTA_HISTORY;
 const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, EFFECTIVE_DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
