@@ -75,6 +75,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
     if (target.matches('.cat-amount:not([readonly]):not([disabled]), .onspot-name:not([readonly]):not([disabled])')) {
+      if (isIncompleteOnSpotRow(target.closest('.onspot-row'))) return;
       scheduleAutoSave();
     }
   });
@@ -181,6 +182,49 @@ async function saveOccasionalExpense() {
   } finally {
     button.disabled = false;
   }
+}
+
+function isIncompleteOnSpotRow(row) {
+  if (!row) return false;
+  const name = row.querySelector('.onspot-name')?.value.trim() || '';
+  const amount = parseFloat(row.querySelector('.cat-amount')?.value);
+  return !name || !(amount > 0);
+}
+
+// Rows still being typed are not persisted yet, so they must survive the form rebuild after a save.
+function captureFormUiState() {
+  return {
+    expandedTypes: [...document.querySelectorAll('.expense-category-type-card:not(.is-collapsed)')]
+      .map(card => card.dataset.typeCard).filter(Boolean),
+    pendingOnSpot: [...document.querySelectorAll('.onspot-row')]
+      .filter(isIncompleteOnSpotRow)
+      .map(row => ({
+        type: row.querySelector('.onspot-name')?.dataset.type || '',
+        name: row.querySelector('.onspot-name')?.value || '',
+        amount: row.querySelector('.cat-amount')?.value || ''
+      }))
+  };
+}
+
+function restoreFormUiState(state) {
+  if (!state) return;
+  state.expandedTypes.forEach(typeId => {
+    const card = document.querySelector(`[data-type-card="${typeId}"]`);
+    if (!card) return;
+    card.classList.remove('is-collapsed');
+    card.querySelector('.expense-category-type-header')?.setAttribute('aria-expanded', 'true');
+  });
+  state.pendingOnSpot.forEach(item => {
+    const card = document.querySelector(`[data-type-card="${item.type}"]`);
+    const actions = card?.querySelector('.onspot-action-row');
+    if (!actions) return;
+    const row = document.createElement('div');
+    row.className = 'expense-category-row onspot-row d-flex align-items-center gap-3 py-2';
+    row.innerHTML = '<input type="text" class="form-control onspot-name flex-grow-1" data-type="' + item.type + '" placeholder="On-spot category" value="' + escapeHtml(item.name) + '">' +
+      '<div class="input-group expense-amount-input"><span class="input-group-text fw-semibold">&#8377;</span><input type="number" class="form-control cat-amount" data-category="" data-type="' + item.type + '" data-onspot="true" min="0" step="0.01" placeholder="0" value="' + escapeHtml(item.amount) + '" oninput="updateTotal()"></div>';
+    actions.parentNode.insertBefore(row, actions);
+  });
+  updateTotal();
 }
 
 function scheduleAutoSave() {
@@ -627,6 +671,7 @@ async function save(options = {}) {
   if (!entries.length) { if (!silent) showNotification('Enter at least one amount greater than 0.', 'warning'); return; }
 
   const remarks = document.getElementById('expRemarks').value.trim();
+  const uiState = captureFormUiState();
   const btn = document.getElementById('btnSaveExpense');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving...';
@@ -642,6 +687,7 @@ async function save(options = {}) {
       .filter(expense => expense.date !== date || expense.employeeId || expense.mode === 'Occasional')
       .concat(savedEntries);
     loadDateIntoForm(date);
+    restoreFormUiState(uiState);
   } catch (err) {
     if (silent) setAutoSaveStatus('Auto-save failed. Retry by editing again.', 'danger', 'bi-cloud-slash');
     if (!silent) showNotification('Save failed: ' + err.message, 'danger');
