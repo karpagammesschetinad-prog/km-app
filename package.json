@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node -e \"process.env.NODE_ENV='production'; require('dotenv').config({ path: '.env.production' }); require('./server');\"",
     "test": "node --test \"test/**/*.test.js\"",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude=\"test/**\" \"test/**/*.test.js\"",
     "dev": "nodemon server.js",
     "start:dev": "node server.js",
     "start:prod": "npm start",

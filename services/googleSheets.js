@@ -239,4 +239,4 @@ async function findRowById(sheetName, id) {
   return null;
 }
 
-module.exports = { SHEETS, initializeSheets, getAllRows, appendRow, updateRow, deleteRow, findRowById };
+module.exports = { SHEETS, HEADERS, initializeSheets, getAllRows, appendRow, updateRow, deleteRow, findRowById };
