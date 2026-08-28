@@ -72,10 +72,23 @@ async function addPaymentType() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
-  if (!user || user.role !== 'superuser') {
-    window.location.href = '/index.html';
-    return;
-  }
+  if (!user) return;
+  const autoSaveInput = document.getElementById('autoSaveEnabled');
+  try {
+    const setting = await api('GET', '/settings/autosave');
+    autoSaveInput.checked = setting.AUTO_SAVE_ENABLED === 'true';
+  } catch (err) { showNotification('Failed to load auto-save setting: ' + err.message, 'danger'); }
+  autoSaveInput.addEventListener('change', async () => {
+    autoSaveInput.disabled = true;
+    try {
+      await api('PUT', '/settings/autosave', { AUTO_SAVE_ENABLED: autoSaveInput.checked });
+      showNotification(`Auto-save ${autoSaveInput.checked ? 'enabled' : 'disabled'} for all users.`);
+    } catch (err) {
+      autoSaveInput.checked = !autoSaveInput.checked;
+      showNotification('Failed to save auto-save setting: ' + err.message, 'danger');
+    } finally { autoSaveInput.disabled = false; }
+  });
+  if (user.role !== 'superuser') return;
   document.getElementById('addPaymentTypeBtn').addEventListener('click', addPaymentType);
   try {
     const settings = await api('GET', '/settings');

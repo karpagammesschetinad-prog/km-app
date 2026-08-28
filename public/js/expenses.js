@@ -10,6 +10,7 @@ let expenseEmployees = [];
 let autoSaveTimer = null;
 let autoSaveInFlight = false;
 let autoSavePending = false;
+let expenseAutoSaveEnabled = true;
 
 function normalizeWorkflow(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -69,14 +70,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('btnSaveExpense').addEventListener('click', save);
   const saveButton = document.getElementById('btnSaveExpense');
-  if (saveButton) saveButton.style.display = 'none';
-  document.getElementById('expRemarks').addEventListener('blur', () => scheduleAutoSave());
+  await configReady;
+  expenseAutoSaveEnabled = autoSaveEnabled;
+  if (saveButton) saveButton.style.display = expenseAutoSaveEnabled ? 'none' : '';
+  setAutoSaveStatus(expenseAutoSaveEnabled ? 'Auto-save enabled' : 'Manual save enabled', expenseAutoSaveEnabled ? 'muted' : 'primary', expenseAutoSaveEnabled ? 'bi-cloud-check' : 'bi-save');
+  document.getElementById('expRemarks').addEventListener('blur', () => {
+    if (expenseAutoSaveEnabled) scheduleAutoSave();
+  });
   document.getElementById('categoryInputs').addEventListener('focusout', event => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
     if (target.matches('.cat-amount:not([readonly]):not([disabled]), .onspot-name:not([readonly]):not([disabled])')) {
       if (isIncompleteOnSpotRow(target.closest('.onspot-row'))) return;
-      scheduleAutoSave();
+      if (expenseAutoSaveEnabled) scheduleAutoSave();
     }
   });
 
@@ -228,6 +234,7 @@ function restoreFormUiState(state) {
 }
 
 function scheduleAutoSave() {
+  if (!expenseAutoSaveEnabled) return;
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(runAutoSave, 180);
 }

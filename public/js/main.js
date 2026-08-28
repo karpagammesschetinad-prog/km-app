@@ -8,6 +8,7 @@ let idleLogoutTimer = null;
 let idleWarningTimer = null;
 let idleLogoutInProgress = false;
 let idleTimeoutMinutes = null;
+let autoSaveEnabled = true;
 const IDLE_WARNING_SECONDS = 30;
 
 // Load config from server (currency and security settings)
@@ -18,6 +19,7 @@ const configReady = (async () => {
     const cfg = response.data || response;
     CURRENCY = cfg.currency || 'USD';
     idleTimeoutMinutes = Number(cfg.idleTimeoutMinutes) || null;
+    autoSaveEnabled = cfg.autoSaveEnabled !== false;
   } catch (_) {}
 })();
 
@@ -407,14 +409,12 @@ async function requireLogin() {
         <i class="bi bi-box-arrow-right"></i>
       </button>`;
     navbar.appendChild(div);
-    if (user.role === 'superuser') {
-      const settings = document.createElement('a');
-      settings.className = 'btn btn-sm btn-outline-secondary';
-      settings.href = '/settings.html';
-      settings.title = 'Settings';
-      settings.innerHTML = '<i class="bi bi-gear"></i>';
-      div.prepend(settings);
-    }
+    const settings = document.createElement('a');
+    settings.className = 'btn btn-sm btn-outline-secondary';
+    settings.href = '/settings.html';
+    settings.title = 'Settings';
+    settings.innerHTML = '<i class="bi bi-gear"></i>';
+    div.prepend(settings);
     document.getElementById('btnLogout').addEventListener('click', async () => {
       if (!confirm('Are you sure you want to logout?')) return;
       await fetch('/api/auth/logout', { method: 'POST' });

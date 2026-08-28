@@ -4,7 +4,7 @@ const session = require('express-session');
 const cors = require('cors');
 const path = require('path');
 const { initializeSheets } = require('./services/googleSheets');
-const { SHEETS, getAllRows } = require('./services/googleSheets');
+const { SHEETS, getAllRows, trackSheetUsage, getSheetUsage } = require('./services/googleSheets');
 const { requireSuperUser } = require('./middleware/authMiddleware');
 const { environment, getSpreadsheetId } = require('./config/environment');
 
@@ -24,6 +24,24 @@ app.use(session({
 // Keep API data network-only so cached assets never affect synchronization or writes.
 app.use('/api', (req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
 
+// Per-request Google Sheets call accounting. Enable with LOG_SHEET_CALLS=true.
+if (String(process.env.LOG_SHEET_CALLS || '').toLowerCase() === 'true') {
+  app.use('/api', (req, res, next) => {
+    const startedAt = Date.now();
+    trackSheetUsage(() => {
+      const usage = getSheetUsage();
+      res.on('finish', () => {
+        const detail = Object.entries(usage.sheets)
+          .map(([sheet, counts]) => `${sheet}:${counts.reads}r/${counts.writes}w`)
+          .join(' ');
+        console.log(`[sheets] ${req.method} ${req.originalUrl} — ${usage.reads} reads, ${usage.writes} writes, ` +
+          `${usage.cacheHits} cached, ${usage.coalesced} coalesced, ${Date.now() - startedAt}ms${detail ? ` | ${detail}` : ''}`);
+      });
+      next();
+    });
+  });
+}
+
 // Cache static assets briefly; ETag revalidation picks up deployed changes safely.
 const staticCacheHeaders = res => { res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate'); };
 app.use('/js', express.static(path.join(__dirname, 'public/js'), { setHeaders: staticCacheHeaders }));
@@ -40,8 +58,9 @@ app.get('/api/config', async (req, res) => {
   const idleTimeoutMinutes = Math.min(1440, Math.max(1, parseInt(getSetting('IDLE_TIMEOUT_MINUTES'), 10) || 15));
   const paymentTypes = String(getSetting('PAYMENT_TYPES') || 'Cash').split(',').map(value => value.trim()).filter(Boolean);
   const onlineVendors = String(getSetting('ONLINE_VENDORS') || '').split(',').map(value => value.trim()).filter(Boolean);
+  const autoSaveEnabled = String(getSetting('AUTO_SAVE_ENABLED') || 'true').toLowerCase() === 'true';
   if (configuredStart && configuredEnd) {
-    return res.json({ success: true, data: { currency: process.env.CURRENCY || 'USD', idleTimeoutMinutes, paymentTypes, onlineVendors, fiscalYear: { start: configuredStart, end: configuredEnd } } });
+    return res.json({ success: true, data: { currency: process.env.CURRENCY || 'USD', idleTimeoutMinutes, paymentTypes, onlineVendors, autoSaveEnabled, fiscalYear: { start: configuredStart, end: configuredEnd } } });
   }
   const startMonth = Math.min(12, Math.max(1, parseInt(getSetting('FY_START_MONTH'), 10) || 4));
   const startDay = Math.min(28, Math.max(1, parseInt(getSetting('FY_START_DAY'), 10) || 1));
@@ -52,7 +71,7 @@ app.get('/api/config', async (req, res) => {
     const nextYear = fyStartYear + 1;
     const fyEndDate = new Date(nextYear, startMonth - 1, startDay - 1);
     const fyEnd = `${fyEndDate.getFullYear()}-${pad(fyEndDate.getMonth() + 1)}-${pad(fyEndDate.getDate())}`;
-    res.json({ success: true, data: { currency: process.env.CURRENCY || 'USD', idleTimeoutMinutes, paymentTypes, onlineVendors, fiscalYear: { startMonth, startDay, start: fyStart, end: fyEnd } } });
+    res.json({ success: true, data: { currency: process.env.CURRENCY || 'USD', idleTimeoutMinutes, paymentTypes, onlineVendors, autoSaveEnabled, fiscalYear: { startMonth, startDay, start: fyStart, end: fyEnd } } });
 });
 
 // Auth routes (public)

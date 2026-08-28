@@ -3,20 +3,8 @@
 
 const sheetsModulePath = require.resolve('../../services/googleSheets');
 
-const SHEETS = {
-  EXPENSES: 'Expenses',
-  SALES: 'Sales',
-  SALES_ENTRIES: 'SalesEntries',
-  EMPLOYEES: 'Employees',
-  SALARIES: 'Salaries',
-  EXPENSE_CATEGORIES: 'ExpenseCategories',
-  EXPENSE_CATEGORY_TYPES: 'ExpenseCategoryTypes',
-  SETTINGS: 'Settings',
-  USERS: 'Users',
-  LEAVES: 'Leaves',
-  SALARY_PAYMENTS: 'SalaryPayments',
-  PETTA_HISTORY: 'PettaHistory'
-};
+// Taken from the real module so the stub can never drift from the sheet list.
+const { SHEETS } = require('../../services/googleSheets');
 
 function installSheetsStub() {
   const store = new Map();

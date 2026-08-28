@@ -1,9 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const { SHEETS, getAllRows, appendRow, updateRow } = require('../services/googleSheets');
-const { requireSuperUser } = require('../middleware/authMiddleware');
+const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware');
 
 const SETTINGS = ['FY_START_MONTH', 'FY_START_DAY', 'FY_START_DATE', 'FY_END_DATE', 'IDLE_TIMEOUT_MINUTES', 'PAYMENT_TYPES', 'ONLINE_VENDORS'];
+
+router.get('/autosave', requireAuth, async (req, res) => {
+  try {
+    const rows = await getAllRows(SHEETS.SETTINGS);
+    const value = rows.find(row => row[0] === 'AUTO_SAVE_ENABLED')?.[1];
+    res.json({ success: true, data: { AUTO_SAVE_ENABLED: value === '' || value === undefined ? 'true' : String(value).toLowerCase() === 'true' ? 'true' : 'false' } });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.put('/autosave', requireAuth, async (req, res) => {
+  try {
+    const enabled = req.body.AUTO_SAVE_ENABLED;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ success: false, message: 'AUTO_SAVE_ENABLED must be true or false.' });
+    const rows = await getAllRows(SHEETS.SETTINGS);
+    const index = rows.findIndex(row => row[0] === 'AUTO_SAVE_ENABLED');
+    const value = String(enabled);
+    if (index >= 0) await updateRow(SHEETS.SETTINGS, index + 2, ['AUTO_SAVE_ENABLED', value]);
+    else await appendRow(SHEETS.SETTINGS, ['AUTO_SAVE_ENABLED', value]);
+    res.json({ success: true, data: { AUTO_SAVE_ENABLED: value } });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
 
 router.get('/', requireSuperUser, async (req, res) => {
   try {

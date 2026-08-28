@@ -1,11 +1,33 @@
 const { google } = require('googleapis');
 const { v4: uuidv4 } = require('uuid');
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { environment, getSpreadsheetId } = require('../config/environment');
 
 const SPREADSHEET_ID = getSpreadsheetId();
 const ROW_CACHE_TTL_MS = 10000;
 let sheetsClientPromise = null;
 const rowCache = new Map();
+const inFlightReads = new Map();
+const cacheEpoch = new Map();
+
+// Counts real Sheets API calls for the current HTTP request.
+const metricsStore = new AsyncLocalStorage();
+
+function trackSheetUsage(handler) {
+  return metricsStore.run({ reads: 0, writes: 0, cacheHits: 0, coalesced: 0, sheets: {} }, handler);
+}
+
+function getSheetUsage() {
+  return metricsStore.getStore();
+}
+
+function countUsage(kind, sheetName) {
+  const usage = metricsStore.getStore();
+  if (!usage) return;
+  usage[kind]++;
+  usage.sheets[sheetName] = usage.sheets[sheetName] || { reads: 0, writes: 0, cacheHits: 0, coalesced: 0 };
+  usage.sheets[sheetName][kind]++;
+}
 
 const SHEETS = {
   EXPENSES: 'Expenses',
@@ -58,6 +80,9 @@ async function getSheetsClient() {
 
 function invalidateRowCache(sheetName) {
   rowCache.delete(sheetName);
+  // A read started before this write would return pre-write rows.
+  inFlightReads.delete(sheetName);
+  cacheEpoch.set(sheetName, (cacheEpoch.get(sheetName) || 0) + 1);
 }
 
 async function initializeSheets() {
@@ -160,7 +185,7 @@ async function initializeSheets() {
         await sheets.spreadsheets.values.append({
           spreadsheetId: SPREADSHEET_ID,
           range: `${name}!A1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-          resource: { values: [['FY_START_MONTH', '4'], ['FY_START_DAY', '1'], ['FY_START_DATE', ''], ['FY_END_DATE', ''], ['IDLE_TIMEOUT_MINUTES', '15']] }
+          resource: { values: [['FY_START_MONTH', '4'], ['FY_START_DAY', '1'], ['FY_START_DATE', ''], ['FY_END_DATE', ''], ['IDLE_TIMEOUT_MINUTES', '15'], ['AUTO_SAVE_ENABLED', 'true']] }
         });
       }
     }
@@ -170,19 +195,38 @@ async function initializeSheets() {
 async function getAllRows(sheetName) {
   const cached = rowCache.get(sheetName);
   if (cached && cached.expiresAt > Date.now()) {
+    countUsage('cacheHits', sheetName);
     return cached.rows.map(row => [...row]);
   }
+  // Concurrent reads of the same sheet share one API call instead of racing.
+  let pending = inFlightReads.get(sheetName);
+  if (!pending) {
+    countUsage('reads', sheetName);
+    pending = fetchRows(sheetName).finally(() => inFlightReads.delete(sheetName));
+    inFlightReads.set(sheetName, pending);
+  } else {
+    countUsage('coalesced', sheetName);
+  }
+  const rows = await pending;
+  return rows.map(row => [...row]);
+}
+
+async function fetchRows(sheetName) {
+  const epoch = cacheEpoch.get(sheetName) || 0;
   const sheets = await getSheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `${sheetName}!A2:Z`
   });
   const rows = (res.data.values || []).filter(row => row.length > 0 && row[0]);
-  rowCache.set(sheetName, { rows, expiresAt: Date.now() + ROW_CACHE_TTL_MS });
-  return rows.map(row => [...row]);
+  if ((cacheEpoch.get(sheetName) || 0) === epoch) {
+    rowCache.set(sheetName, { rows, expiresAt: Date.now() + ROW_CACHE_TTL_MS });
+  }
+  return rows;
 }
 
 async function appendRow(sheetName, values) {
+  countUsage('writes', sheetName);
   const sheets = await getSheetsClient();
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
@@ -195,6 +239,7 @@ async function appendRow(sheetName, values) {
 }
 
 async function updateRow(sheetName, rowIndex, values) {
+  countUsage('writes', sheetName);
   const sheets = await getSheetsClient();
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
@@ -206,6 +251,9 @@ async function updateRow(sheetName, rowIndex, values) {
 }
 
 async function deleteRow(sheetName, rowIndex) {
+  // Each delete costs two API calls: metadata lookup plus the batch update.
+  countUsage('writes', sheetName);
+  countUsage('writes', sheetName);
   const sheets = await getSheetsClient();
   const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
   const sheet = spreadsheet.data.sheets.find(s => s.properties.title === sheetName);
@@ -239,4 +287,4 @@ async function findRowById(sheetName, id) {
   return null;
 }
 
-module.exports = { SHEETS, HEADERS, initializeSheets, getAllRows, appendRow, updateRow, deleteRow, findRowById };
+module.exports = { SHEETS, HEADERS, initializeSheets, getAllRows, appendRow, updateRow, deleteRow, findRowById, trackSheetUsage, getSheetUsage };
