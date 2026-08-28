@@ -686,8 +686,17 @@ async function save(options = {}) {
     allExpenses = allExpenses
       .filter(expense => expense.date !== date || expense.employeeId || expense.mode === 'Occasional')
       .concat(savedEntries);
-    loadDateIntoForm(date);
-    restoreFormUiState(uiState);
+    // Rebuilding the form mid-typing would discard values entered while the save was in flight.
+    if (options.auto) {
+      if (document.getElementById('expDate').value === date) {
+        updateDateStatusColor(date);
+        renderExpenseDatePicker();
+        updateTotal();
+      }
+    } else {
+      loadDateIntoForm(date);
+      restoreFormUiState(uiState);
+    }
   } catch (err) {
     if (silent) setAutoSaveStatus('Auto-save failed. Retry by editing again.', 'danger', 'bi-cloud-slash');
     if (!silent) showNotification('Save failed: ' + err.message, 'danger');

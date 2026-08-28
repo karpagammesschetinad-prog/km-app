@@ -141,7 +141,29 @@ function usesNativeKeyboard() {
 
 function applyKeyboardMode(element) {
   if (!isTamilKeyboardTarget(element)) return;
-  element.setAttribute('inputmode', usesNativeKeyboard() ? 'text' : 'none');
+  const mode = usesNativeKeyboard() ? 'text' : 'none';
+  if (element.getAttribute('inputmode') !== mode) element.setAttribute('inputmode', mode);
+}
+
+function applyKeyboardModeToTree(node) {
+  if (!(node instanceof HTMLElement)) return;
+  applyKeyboardMode(node);
+  node.querySelectorAll('input, textarea').forEach(applyKeyboardMode);
+}
+
+// The device keyboard reads inputmode at focus time, so re-focus once to dismiss it.
+function dismissNativeKeyboard(element) {
+  if (element.dataset.keyboardModeFixed === 'true') return;
+  element.dataset.keyboardModeFixed = 'true';
+  const start = element.selectionStart;
+  const end = element.selectionEnd;
+  element.blur();
+  requestAnimationFrame(() => {
+    element.focus();
+    if (start !== null && start !== undefined && element.setSelectionRange) {
+      try { element.setSelectionRange(start, end); } catch (_) {}
+    }
+  });
 }
 
 function applyKeyboardModeToInputs() {
@@ -215,9 +237,14 @@ function setupTamilKeyboard() {
     }
   });
   applyKeyboardModeToInputs();
+  new MutationObserver(records => {
+    records.forEach(record => record.addedNodes.forEach(applyKeyboardModeToTree));
+  }).observe(document.body, { childList: true, subtree: true });
   document.addEventListener('focusin', event => {
     if (isTamilKeyboardTarget(event.target)) {
+      const wasUnset = event.target.getAttribute('inputmode') !== (usesNativeKeyboard() ? 'text' : 'none');
       applyKeyboardMode(event.target);
+      if (wasUnset && !usesNativeKeyboard()) dismissNativeKeyboard(event.target);
       tamilKeyboardTarget = event.target;
       document.body.classList.add('tamil-keyboard-ready');
       if (!usesNativeKeyboard()) {
