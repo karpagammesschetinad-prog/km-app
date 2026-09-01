@@ -116,6 +116,53 @@ const CASES = [
     }
   },
   { file: 'categories.js', constant: 'EXPENSE_C', sheet: 'EXPENSES', columns: EXPENSE_COLUMNS },
+  { file: 'reports.js', constant: 'C', sheet: 'EXPENSES', columns: EXPENSE_COLUMNS },
+  { file: 'reports.js', constant: 'TYPE_C', sheet: 'EXPENSE_CATEGORY_TYPES', columns: CATEGORY_TYPE_COLUMNS },
+  {
+    file: 'reports.js', constant: 'ENTRY_C', sheet: 'SALES_ENTRIES',
+    columns: {
+      ID: 'ID', DATE: 'Date', SHIFT: 'Shift', PAYMENT_TYPE: 'PaymentType', VENDOR: 'OnlineVendor',
+      AMOUNT: 'Amount', ENTERED_BY: 'EnteredBy', CREATED_AT: 'CreatedAt', UPDATED_AT: 'UpdatedAt'
+    }
+  },
+  {
+    file: 'reports.js', constant: 'SALES_C', sheet: 'SALES',
+    columns: {
+      ID: 'ID', DATE: 'Date', MORNING: 'Morning', AFTERNOON: 'Afternoon', DINNER: 'Dinner',
+      TOTAL: 'TotalSales', EXPENSES: 'ExpenseTotal', REMAINING: 'Remaining',
+      ENTERED_BY: 'EnteredBy', CREATED_AT: 'CreatedAt', MORNING_BY: 'MorningEnteredBy',
+      AFTERNOON_BY: 'AfternoonEnteredBy', DINNER_BY: 'DinnerEnteredBy'
+    }
+  },
+  {
+    file: 'reports.js', constant: 'PAYMENT_C', sheet: 'SALARY_PAYMENTS',
+    columns: {
+      ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', DATE: 'PaymentDate',
+      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt'
+    }
+  },
+  {
+    file: 'reports.js', constant: 'EMPLOYEE_C', sheet: 'EMPLOYEES',
+    columns: {
+      ID: 'ID', NAME: 'Name', ADDRESS: 'Address', PHONE: 'Phone', START: 'StartDate',
+      PER_DAY: 'PerDaySalary', PETTA: 'DailyPetta', STATUS: 'Status',
+      DAILY_PAY: 'DailySalaryEnabled', TEMPORARY: 'TemporaryEmployee'
+    }
+  },
+  {
+    file: 'reports.js', constant: 'LEAVE_C', sheet: 'LEAVES',
+    columns: {
+      ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', START: 'StartDateTime',
+      END: 'EndDateTime', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt'
+    }
+  },
+  {
+    file: 'reports.js', constant: 'PETTA_C', sheet: 'PETTA_HISTORY',
+    columns: {
+      ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', EFFECTIVE_DATE: 'EffectiveDate',
+      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt'
+    }
+  },
   { file: 'users.js', constant: 'C', sheet: 'USERS', columns: USER_COLUMNS },
   { file: 'auth.js', constant: 'C', sheet: 'USERS', columns: USER_COLUMNS }
 ];

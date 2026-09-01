@@ -211,7 +211,23 @@ function renderSalesShiftCards() {
     return `<div class="col-12 col-md-4"><section class="card-panel sales-shift-card"><div class="card-panel-header"><h6 class="card-panel-title">${shift} Sales</h6><span class="badge bg-warning-subtle text-warning">Expense: ${formatCurrency(expense)}</span></div><div class="card-panel-body"><label class="form-label">Total Cash Payment</label><input type="number" class="form-control sales-entry-value" data-shift="${shift}" data-payment-type="Cash" data-cash-expense="${expense}" min="0" step="0.01" placeholder="0" value="${cash.amount || ''}"><div class="sales-entry-after-expense text-muted small mt-1">After expenses: ${formatCurrency((Number(cash.amount) || 0) - expense)}</div><div class="mt-3 pt-2 border-top"><div class="small fw-semibold text-muted mb-2">Other Payment Types</div>${otherFields || '<div class="small text-muted">No other payment types configured.</div>'}</div><div class="sales-shift-total mt-3 pt-2 border-top" data-shift-total="${shift}"></div></div></section></div>`;
   }).join('');
   container.querySelectorAll('.sales-entry-value').forEach(input => input.addEventListener('input', updateCashierTotal));
+  renderOnlineVendorCard(container);
   refreshSalesShiftTotals();
+}
+
+// Online vendor sales are not tied to a shift; the API stores them against the "Day" shift.
+function renderOnlineVendorCard(container) {
+  if (!salesConfig.onlineVendors.length) return;
+  const fields = salesConfig.onlineVendors.map(vendor => {
+    const entry = salesEntries.find(item => item.paymentType === ONLINE_VENDOR_PAYMENT_TYPE && item.onlineVendor === vendor) || {};
+    return `<div class="col-12 col-md-4 sales-entry-vendor"><label class="form-label">${vendor}</label>
+      <input type="number" class="form-control sales-entry-value" data-shift="Day" data-payment-type="${ONLINE_VENDOR_PAYMENT_TYPE}" data-online-vendor="${vendor}" min="0" step="0.01" placeholder="0" value="${entry.amount || ''}"></div>`;
+  }).join('');
+  container.insertAdjacentHTML('beforeend', `<div class="col-12"><section class="card-panel sales-shift-card">
+    <div class="card-panel-header"><h6 class="card-panel-title">Online Vendor Sales</h6><span class="text-muted small">Whole day, not shift-wise</span></div>
+    <div class="card-panel-body"><div class="row g-3">${fields}</div>
+    <div class="sales-shift-total mt-3 pt-2 border-top" data-shift-total="Day"></div></div></section></div>`);
+  container.querySelectorAll('[data-online-vendor]').forEach(input => input.addEventListener('input', updateCashierTotal));
 }
 
 function refreshSalesShiftTotals() {

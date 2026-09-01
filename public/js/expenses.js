@@ -25,6 +25,11 @@ function getLocalDateKey(date = new Date()) {
 
 const today = getLocalDateKey();
 
+function getSelectedExpenseDate() {
+  const value = document.getElementById('expDate')?.value;
+  return value && value <= today ? value : today;
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   // Auth guard
   const user = await requireLogin();
@@ -110,6 +115,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!visible) renderSummary();
   });
 
+  document.getElementById('btnToggleDailyCash').addEventListener('click', () => {
+    const section = document.getElementById('dailyCashReportSection');
+    const btn = document.getElementById('btnToggleDailyCash');
+    const visible = section.style.display !== 'none';
+    section.style.display = visible ? 'none' : '';
+    btn.classList.toggle('btn-outline-secondary', visible);
+    btn.classList.toggle('btn-primary', !visible);
+    if (!visible) renderSummary();
+  });
+
+  document.getElementById('btnToggleOccasional').addEventListener('click', () => {
+    const section = document.getElementById('occasionalReportSection');
+    const btn = document.getElementById('btnToggleOccasional');
+    const visible = section.style.display !== 'none';
+    section.style.display = visible ? 'none' : '';
+    btn.classList.toggle('btn-outline-secondary', visible);
+    btn.classList.toggle('btn-primary', !visible);
+    buildCatFilterChips();
+    renderSummary();
+  });
+
   document.getElementById('btnConfirmReject').addEventListener('click', confirmReject);
 
   try {
@@ -147,7 +173,8 @@ function openEmployeeExpenseModal() {
 function openOccasionalExpenseModal() {
   const form = document.getElementById('occasionalExpenseForm');
   form.reset();
-  document.getElementById('occasionalExpenseDate').value = today;
+  const selectedDate = getSelectedExpenseDate();
+  document.getElementById('occasionalExpenseDate').value = selectedDate;
   document.getElementById('occasionalExpenseDate').max = today;
   const typeSelect = document.getElementById('occasionalExpenseType');
   typeSelect.innerHTML = '<option value="">— Select Expense Type —</option>' + allCategoryTypes
@@ -173,7 +200,7 @@ async function saveOccasionalExpense() {
   button.disabled = true;
   try {
     await api('POST', '/expenses/occasional', {
-      date: document.getElementById('occasionalExpenseDate').value,
+      date: getSelectedExpenseDate(),
       typeId: document.getElementById('occasionalExpenseType').value,
       category: document.getElementById('occasionalExpenseCategory').value,
       amount: parseFloat(document.getElementById('occasionalExpenseAmount').value),
@@ -269,15 +296,18 @@ async function runAutoSave() {
 function renderOccasionalExpenses() {
   const body = document.getElementById('occasionalExpenseBody');
   if (!body) return;
+  const selectedDate = getSelectedExpenseDate();
+  const dateLabel = document.getElementById('occasionalExpensesDateLabel');
+  if (dateLabel) dateLabel.textContent = `— ${formatDate(selectedDate)}`;
   const typeNames = new Map(allCategoryTypes.map(type => [type.id, type.displayText || type.name]));
-  const entries = allExpenses.filter(expense => expense.mode === 'Occasional').sort((first, second) => second.date.localeCompare(first.date));
+  const entries = allExpenses.filter(expense => expense.mode === 'Occasional' && expense.date === selectedDate);
   const occasionalTotal = entries.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
   const occasionalTotalEl = document.getElementById('occasionalExpensesTotal');
   if (occasionalTotalEl) occasionalTotalEl.textContent = formatCurrency(occasionalTotal);
   const canDelete = canAccess('expenses', 'add');
   body.innerHTML = entries.length ? entries.map(expense => `<tr>
     <td data-label="Date">${formatDate(expense.date)}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}</td><td data-label="Type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Remarks" class="text-muted">${escapeHtml(expense.description || '—')}</td><td data-label="Amount" class="text-end fw-semibold">${formatCurrency(expense.amount)}</td><td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}</td><td data-label="Actions" class="text-center">${canDelete && expense.approvalStatus !== 'Approved' && expense.approvalStatus !== 'AutoApproved' ? `<button type="button" class="btn btn-sm btn-outline-danger btn-action" title="Delete occasional expense" onclick="deleteOccasionalExpense('${expense.id}')"><i class="bi bi-trash"></i></button>` : ''}</td>
-  </tr>`).join('') : emptyRow(7, 'No occasional expenses recorded.');
+  </tr>`).join('') : emptyRow(7, 'No occasional expenses recorded for this date.');
 }
 
 async function deleteOccasionalExpense(id) {
@@ -403,6 +433,8 @@ function loadDateIntoForm(date) {
     badge.textContent = formatDate(date);
     badge.className = 'badge bg-secondary-subtle text-secondary border border-secondary-subtle';
   }
+
+  renderOccasionalExpenses();
 
   const remarkRow = allExpenses.find(e => e.mode !== 'Occasional' && e.date === date && e.description);
   document.getElementById('expRemarks').value = remarkRow ? remarkRow.description : '';
@@ -756,11 +788,33 @@ const CHART_COLORS = [
 
 function buildCatFilterChips() {
   const container = document.getElementById('catFilterChips');
-  const active = allCategories.filter(c => c.status === 'Active').sort((a,b) => a.sortOrder - b.sortOrder);
-  container.innerHTML = active.map(c =>
-    `<button type="button" class="btn btn-sm btn-outline-secondary cat-chip"
-      data-cat="${c.name}" onclick="toggleChip(this)">${c.name}</button>`
-  ).join('');
+  const selected = getSelectedCats();
+  const showOccasional = isReportSectionVisible('occasionalReportSection');
+  const types = allCategoryTypes
+    .filter(type => type.status === 'Active' && (showOccasional || normalizeWorkflow(type.workflow) !== 'Occasional'))
+    .sort((first, second) => (first.sortOrder || 0) - (second.sortOrder || 0));
+
+  const groups = types.map(type => {
+    const categories = allCategories
+      .filter(category => category.status === 'Active' && category.typeId === type.id)
+      .sort((first, second) => first.sortOrder - second.sortOrder);
+    if (!categories.length) return '';
+    return `<div class="d-flex align-items-center gap-1 flex-wrap w-100">
+      <span class="text-muted small fw-semibold me-1">${escapeHtml(type.displayText || type.name)}:</span>
+      ${categories.map(category => `<button type="button" class="btn btn-sm btn-outline-secondary cat-chip"
+        data-cat="${escapeHtml(category.name)}" onclick="toggleChip(this)">${escapeHtml(category.name)}</button>`).join('')}
+    </div>`;
+  }).join('');
+
+  container.innerHTML = groups || '<span class="text-muted small">No categories</span>';
+  container.querySelectorAll('.cat-chip').forEach(chip => {
+    if (selected.includes(chip.dataset.cat)) toggleChip(chip);
+  });
+}
+
+function isReportSectionVisible(id) {
+  const section = document.getElementById(id);
+  return !!section && section.style.display !== 'none';
 }
 
 function toggleChip(el) {
@@ -779,14 +833,27 @@ function renderSummary() {
   const from = document.getElementById('fDateFrom').value;
   const to   = document.getElementById('fDateTo').value;
   const selectedCats = getSelectedCats();
+  const dailyVisible = isReportSectionVisible('dailyCashReportSection');
+  const occasionalVisible = isReportSectionVisible('occasionalReportSection');
 
-  const filtered = allExpenses.filter(e => {
-    if (e.mode === 'Occasional') return false;
-    if (from && e.date < from) return false;
-    if (to   && e.date > to)   return false;
-    if (selectedCats.length > 0 && !selectedCats.includes(e.category)) return false;
+  const matchesFilters = expense => {
+    if (from && expense.date < from) return false;
+    if (to && expense.date > to) return false;
+    if (selectedCats.length > 0 && !selectedCats.includes(expense.category)) return false;
     return true;
-  });
+  };
+
+  const occasionalEntries = allExpenses.filter(e => e.mode === 'Occasional' && matchesFilters(e));
+  if (occasionalVisible) renderOccasionalSummary(occasionalEntries);
+
+  const filtered = allExpenses.filter(e => e.mode !== 'Occasional' && matchesFilters(e));
+
+  renderReportChart([
+    ...(dailyVisible ? filtered : []),
+    ...(occasionalVisible ? occasionalEntries : [])
+  ]);
+
+  if (!dailyVisible) return;
 
   const byDate = {};
   filtered.forEach(e => {
@@ -805,16 +872,7 @@ function renderSummary() {
   if (!dates.length) {
     tbody.innerHTML = emptyRow(5, 'No expenses found.');
     tfoot.innerHTML = '';
-    destroyChart();
     return;
-  }
-
-  const allCats = [...new Set(filtered.map(e => e.category || 'Other'))].sort();
-
-  if (document.getElementById('chartSection').style.display !== 'none') {
-    renderChart(dates, byDate, allCats);
-  } else {
-    destroyChart();
   }
 
   let grandTotal = 0;
@@ -855,6 +913,64 @@ function renderSummary() {
       <td colspan="3" class="fw-bold text-end text-primary">Grand Total</td>
       <td colspan="2" class="fw-bold text-end text-primary">${formatCurrency(grandTotal)}</td>
     </tr>`;
+}
+
+function renderReportChart(entries) {
+  if (document.getElementById('chartSection').style.display === 'none' || !entries.length) {
+    destroyChart();
+    return;
+  }
+  const byDate = {};
+  entries.forEach(expense => {
+    if (!byDate[expense.date]) byDate[expense.date] = { cats: {} };
+    const key = expense.category || 'Other';
+    byDate[expense.date].cats[key] = (byDate[expense.date].cats[key] || 0) + (parseFloat(expense.amount) || 0);
+  });
+  const dates = Object.keys(byDate).sort();
+  const allCats = [...new Set(entries.map(expense => expense.category || 'Other'))].sort();
+  renderChart(dates, byDate, allCats);
+}
+
+function renderOccasionalSummary(entries) {
+  const tbody = document.getElementById('occasionalReportBody');
+  const tfoot = document.getElementById('occasionalReportFoot');
+  if (!tbody) return;
+
+  const typeNames = new Map(allCategoryTypes.map(type => [type.id, type.displayText || type.name]));
+  const sorted = [...entries].sort((first, second) =>
+    second.date.localeCompare(first.date) || String(first.category).localeCompare(String(second.category)));
+
+  const totalByDate = new Map();
+  sorted.forEach(expense => {
+    totalByDate.set(expense.date, (totalByDate.get(expense.date) || 0) + (parseFloat(expense.amount) || 0));
+  });
+  const total = sorted.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+
+  document.getElementById('occasionalReportSummary').textContent =
+    `${formatCurrency(total)} · ${sorted.length} entr${sorted.length === 1 ? 'y' : 'ies'} · ${totalByDate.size} day${totalByDate.size === 1 ? '' : 's'}`;
+
+  let lastDate = null;
+  tbody.innerHTML = sorted.length ? sorted.map(expense => {
+    const header = expense.date === lastDate ? '' : `<tr class="table-light fw-semibold">
+      <td colspan="5">${formatDate(expense.date)}</td>
+      <td class="text-end">${formatCurrency(totalByDate.get(expense.date))}</td></tr>`;
+    lastDate = expense.date;
+    return header + `<tr>
+      <td data-label="Date" class="text-nowrap small">${formatDate(expense.date)}</td>
+      <td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}</td>
+      <td data-label="Type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td>
+      <td data-label="Remarks" class="text-muted">${escapeHtml(expense.description || '—')}</td>
+      <td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}</td>
+      <td data-label="Amount" class="text-end fw-semibold text-nowrap">${formatCurrency(expense.amount)}</td>
+    </tr>`;
+  }).join('') : emptyRow(6, 'No occasional expenses in this range.');
+
+  tfoot.innerHTML = sorted.length
+    ? `<tr style="background:#f0f9ff;border-top:2px solid #bae6fd;">
+        <td colspan="5" class="fw-bold text-end text-primary">Occasional Total</td>
+        <td class="fw-bold text-end text-primary">${formatCurrency(total)}</td>
+      </tr>`
+    : '';
 }
 
 function approvalStatusBadge(status) {

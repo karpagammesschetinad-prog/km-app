@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function setupDemandLoadedSections() {
+  document.getElementById('salesExpensePeriod')?.addEventListener('change', changeSalesExpensePeriod);
   document.getElementById('categoryChartPanel')?.addEventListener('shown.bs.collapse', loadCategoryChartOnDemand);
   document.getElementById('categoryTrendPanel')?.addEventListener('shown.bs.collapse', loadCategoryTrendOnDemand);
   document.getElementById('recentExpensesPanel')?.addEventListener('shown.bs.collapse', loadRecentExpensesOnDemand);
@@ -36,7 +37,7 @@ async function loadDashboard() {
       fetchNamed('Expenses', '/expenses'),
       fetchNamed('Salaries', '/salaries'),
       fetchNamed('Configuration', '/config'),
-      fetchNamed('Sales', '/sales/history?days=20')
+      fetchNamed('Sales', `/sales/history?days=${salesExpensePeriodDays()}`)
     ]);
 
     const now = new Date();
@@ -68,8 +69,8 @@ async function loadDashboard() {
     document.getElementById('stat-salaries').textContent   = formatCurrency(totalSal);
     document.getElementById('stat-pending').textContent    = pendingExp.length;
 
-    dashboardChartData = { expenses: recentChartExpenses, salesHistory, referenceDate: now };
-    renderSalesExpenseChart(recentChartExpenses, salesHistory, now);
+    dashboardChartData = { expenses: recentChartExpenses, allExpenses: expenses, salesHistory, referenceDate: now };
+    renderSalesExpenseChart(expenses, salesHistory, now, salesExpensePeriodDays());
     categoryChartLoaded = false;
     categoryTrendLoaded = false;
     recentExpensesLoaded = false;
@@ -377,18 +378,40 @@ function renderTrendChart(expenses, salesHistory = [], referenceDate = new Date(
   });
 }
 
-function renderSalesExpenseChart(expenses, salesHistory = [], referenceDate = new Date()) {
+function salesExpensePeriodDays() {
+  return parseInt(document.getElementById('salesExpensePeriod')?.value, 10) || 20;
+}
+
+async function changeSalesExpensePeriod() {
+  if (!dashboardChartData) return;
+  const days = salesExpensePeriodDays();
+  const select = document.getElementById('salesExpensePeriod');
+  select.disabled = true;
+  try {
+    const salesHistory = await api('GET', `/sales/history?days=${days}`);
+    dashboardChartData.salesHistory = salesHistory;
+    renderSalesExpenseChart(dashboardChartData.allExpenses, salesHistory, dashboardChartData.referenceDate, days);
+  } catch (err) {
+    showNotification('Failed to load sales history: ' + err.message, 'danger');
+  } finally {
+    select.disabled = false;
+  }
+}
+
+function renderSalesExpenseChart(expenses, salesHistory = [], referenceDate = new Date(), periodDays = 20) {
   const ctx = document.getElementById('chartSalesExpense');
   if (!ctx) return;
 
-  const days = Array.from({ length: 20 }, (_, index) => {
-    const date = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() - (19 - index));
+  const days = Array.from({ length: periodDays }, (_, index) => {
+    const date = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate() - (periodDays - 1 - index));
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     return { label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), key };
   });
-  const expenseData = days.map(day => expenses
-    .filter(expense => expense.date === day.key)
-    .reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0));
+  const sumFor = (dayKey, isOccasional) => expenses
+    .filter(expense => expense.date === dayKey && (expense.mode === 'Occasional') === isOccasional)
+    .reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+  const expenseData = days.map(day => sumFor(day.key, false));
+  const occasionalData = days.map(day => sumFor(day.key, true));
   const salesByDate = new Map((salesHistory || []).map(row => [row.date, Number(row.totalSales) || 0]));
   const salesData = days.map(day => salesByDate.get(day.key) || 0);
 
@@ -401,6 +424,12 @@ function renderSalesExpenseChart(expenses, salesHistory = [], referenceDate = ne
         label: 'Expenses',
         data: expenseData,
         backgroundColor: 'rgba(59,130,246,.8)',
+        borderRadius: 6,
+        borderSkipped: false
+      }, {
+        label: 'Occasional',
+        data: occasionalData,
+        backgroundColor: 'rgba(14,165,233,.55)',
         borderRadius: 6,
         borderSkipped: false
       }, {

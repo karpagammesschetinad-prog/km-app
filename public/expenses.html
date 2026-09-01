@@ -21,8 +21,8 @@
     <div class="sidebar-section-label">Main</div>
     <a href="/index.html"      class="nav-link su-only"><i class="bi bi-speedometer2"></i><span>Dashboard</span></a>
     <a href="/expenses.html"   class="nav-link" data-screen="expenses"><i class="bi bi-receipt"></i><span>Expenses</span></a>
-    <a href="/sales.html"       class="nav-link" data-screen="sales"><i class="bi bi-graph-up-arrow"></i><span>Sales Capture</span></a>
-    <a href="/categories.html" class="nav-link su-only" data-screen="categories"><i class="bi bi-tags"></i><span>Categories</span></a>
+    <a href="/sales.html"       class="nav-link" data-screen="sales"><i class="bi bi-graph-up-arrow"></i><span>Sales Capture</span></a><a href="/reports.html" class="nav-link su-only" data-screen="reports"><i class="bi bi-clipboard-data"></i><span>Profit &amp; Loss</span></a>
+      <a href="/categories.html" class="nav-link su-only" data-screen="categories"><i class="bi bi-tags"></i><span>Categories</span></a>
     <a href="/employees.html"  class="nav-link su-only" data-screen="employees"><i class="bi bi-people"></i><span>Employees</span></a>
     <a href="/salaries.html"   class="nav-link su-only" data-screen="salaries"><i class="bi bi-cash-stack"></i><span>Salaries</span></a>
     <a href="/users.html" class="nav-link su-only" data-screen="users"><i class="bi bi-person-lock"></i><span>Users</span></a>
@@ -105,7 +105,7 @@
     <div class="row justify-content-center mt-3">
       <div class="col-12 col-lg-10 col-xl-8">
         <div class="card-panel">
-          <div class="card-panel-header"><h6 class="card-panel-title">Occasional Expenses</h6><div class="d-flex align-items-center gap-2"><span class="text-muted small">Not deducted from daily cash sales</span><span class="badge bg-info-subtle text-info border border-info-subtle" id="occasionalExpensesTotal">₹0</span></div></div>
+          <div class="card-panel-header"><h6 class="card-panel-title">Occasional Expenses <span class="text-muted small fw-normal" id="occasionalExpensesDateLabel"></span></h6><div class="d-flex align-items-center gap-2"><span class="text-muted small">Not deducted from daily cash sales</span><span class="badge bg-info-subtle text-info border border-info-subtle" id="occasionalExpensesTotal">₹0</span></div></div>
           <div class="table-responsive"><table class="table mobile-grid-table mb-0"><thead><tr><th>Date</th><th>Category</th><th>Type</th><th>Remarks</th><th class="text-end">Amount</th><th>Status</th><th style="width:90px"></th></tr></thead><tbody id="occasionalExpenseBody"></tbody></table></div>
         </div>
       </div>
@@ -156,7 +156,7 @@
   <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><i class="bi bi-calendar-plus me-2"></i>Add Occasional Expenses</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body"><form id="occasionalExpenseForm" novalidate><div class="row g-3">
-      <div class="col-md-6"><label class="form-label">Date <span class="text-danger">*</span></label><input type="date" class="form-control" id="occasionalExpenseDate" required></div>
+      <div class="col-md-6"><label class="form-label">Date</label><input type="date" class="form-control" id="occasionalExpenseDate" readonly required><div class="form-text">Uses the date selected on the expenses screen.</div></div>
       <div class="col-md-6"><label class="form-label">Expense Type <span class="text-danger">*</span></label><select class="form-select" id="occasionalExpenseType" required></select></div>
       <div class="col-12"><label class="form-label">Category <span class="text-danger">*</span></label><select class="form-select" id="occasionalExpenseCategory" required></select></div>
       <div class="col-12"><label class="form-label">Amount <span class="text-danger">*</span></label><input type="number" class="form-control" id="occasionalExpenseAmount" min="0.01" step="0.01" required></div>
@@ -208,6 +208,12 @@
               <button class="btn btn-sm btn-outline-secondary" id="btnToggleChart" title="Toggle chart">
                 <i class="bi bi-graph-up me-1"></i>Chart
               </button>
+              <button class="btn btn-sm btn-primary" id="btnToggleDailyCash" title="Toggle daily cash expenses">
+                <i class="bi bi-cash-coin me-1"></i>Daily Cash
+              </button>
+              <button class="btn btn-sm btn-outline-secondary" id="btnToggleOccasional" title="Toggle occasional expenses">
+                <i class="bi bi-calendar-plus me-1"></i>Occasional
+              </button>
             </div>
           </div>
         </div>
@@ -218,7 +224,7 @@
         </div>
 
         <!-- Summary table -->
-        <div class="table-responsive">
+        <div class="table-responsive" id="dailyCashReportSection">
           <table class="table mobile-grid-table mb-0">
             <thead>
               <tr>
@@ -236,6 +242,24 @@
             </tbody>
             <tfoot id="expFoot"></tfoot>
           </table>
+        </div>
+
+        <!-- Occasional expenses, kept out of the daily cash totals above -->
+        <div class="p-3 border-top" id="occasionalReportSection" style="display:none">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+            <h6 class="mb-0"><i class="bi bi-calendar-plus me-2"></i>Occasional Expenses (date-wise)</h6>
+            <span class="badge bg-info-subtle text-info border border-info-subtle" id="occasionalReportSummary">₹0</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm mobile-grid-table mb-0">
+              <thead><tr>
+                <th style="width:120px">Date</th><th>Category</th><th>Type</th><th>Remarks</th>
+                <th style="width:90px">Status</th><th class="text-end" style="width:120px">Amount</th>
+              </tr></thead>
+              <tbody id="occasionalReportBody"></tbody>
+              <tfoot id="occasionalReportFoot"></tfoot>
+            </table>
+          </div>
         </div>
 
       </div>
