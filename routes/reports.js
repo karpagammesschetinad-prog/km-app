@@ -109,6 +109,11 @@ function amountForDate(date, baseAmount, history) {
 function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, salaryHistoryRows, paymentsByDateAndEmployee }) {
   const gross = new Map(dates.map(date => [date, 0]));
   const petta = new Map(dates.map(date => [date, 0]));
+  // Amount treated as received/settled on the day beyond recorded payments (daily-pay staff).
+  const received = new Map(dates.map(date => [date, 0]));
+  // Pending is clamped per employee (an advance to one person must not cancel another's dues),
+  // matching the day salary summary popup.
+  const pending = new Map(dates.map(date => [date, 0]));
   const leavesByEmployee = new Map();
   leaveRows.forEach(row => {
     const key = row[LEAVE_C.EMP_ID] || '';
@@ -145,6 +150,7 @@ function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, salary
     if ((row[EMPLOYEE_C.STATUS] || 'Active') !== 'Active') return;
     const perDay = amountOf(row, EMPLOYEE_C.PER_DAY);
     const basePetta = amountOf(row, EMPLOYEE_C.PETTA);
+    const dailyPay = isTrue(row[EMPLOYEE_C.DAILY_PAY]);
     const leaves = leavesByEmployee.get(id) || [];
     const history = pettaByEmployee.get(id) || [];
     const salaryRevisions = salaryByEmployee.get(id) || [];
@@ -152,12 +158,22 @@ function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, salary
       if (date < startDate) return;
       const worked = Math.max(0, 1 - leaveFractionForDay(date, leaves));
       if (!worked) return;
-      gross.set(date, gross.get(date) + worked * amountForDate(date, perDay, salaryRevisions));
-      petta.set(date, petta.get(date) + worked * amountForDate(date, basePetta, history));
+      const earned = worked * amountForDate(date, perDay, salaryRevisions);
+      const pettaDay = worked * amountForDate(date, basePetta, history);
+      const payment = paymentsByDateAndEmployee.get(`${date}|${id}`) || 0;
+      gross.set(date, gross.get(date) + earned);
+      petta.set(date, petta.get(date) + pettaDay);
+      // Daily-pay staff are settled the same evening: received is the payment if one was
+      // recorded, otherwise the day's net earning (per-day minus petta). Payments are already
+      // in salaryPaid, so only add the earning when no payment exists to avoid double counting.
+      if (dailyPay && !payment) received.set(date, received.get(date) + (earned - pettaDay));
+      // Pending is clamped per employee so an advance to one person does not cancel another's
+      // dues. Daily-pay staff are settled the same evening, so they carry no pending.
+      if (!dailyPay) pending.set(date, pending.get(date) + Math.max(0, earned - pettaDay - payment));
     });
   });
 
-  return { gross, petta };
+  return { gross, petta, received, pending };
 }
 
 function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows, salaryHistoryRows }) {
@@ -199,7 +215,7 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
     paymentsByDateAndEmployee.set(key, (paymentsByDateAndEmployee.get(key) || 0) + amount);
   });
 
-  const { gross: grossByDate, petta: pettaByDate } = salaryAccrualByDate({
+  const { gross: grossByDate, petta: pettaByDate, received: receivedByDate, pending: pendingByDate } = salaryAccrualByDate({
     dates, employeeRows: employeeRows || [], leaveRows: leaveRows || [], pettaRows: pettaRows || [], salaryHistoryRows: salaryHistoryRows || [], paymentsByDateAndEmployee
   });
 
@@ -219,8 +235,10 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
     const bucket = byDate.get(date);
     const salaryGross = grossByDate.get(date) || 0;
     const pettaTotal = pettaByDate.get(date) || 0;
-    // Pending is for this day only; paying arrears must not push the day's salary line negative.
-    const salaryPending = Math.max(0, salaryGross - pettaTotal - bucket.salaryPaid);
+    // Daily-pay staff are settled the same evening, so their day's earning counts as received.
+    const salaryReceived = bucket.salaryPaid + (receivedByDate.get(date) || 0);
+    // Pending is clamped per employee (see salaryAccrualByDate) so it matches the day popup.
+    const salaryPending = pendingByDate.get(date) || 0;
     const totalCost = bucket.dailyCash + bucket.occasional + salaryPending + bucket.market;
     return {
       date,
@@ -231,7 +249,7 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
       occasionalExpense: round(bucket.occasional),
       marketExpense: round(bucket.market),
       salaryGross: round(salaryGross),
-      salaryPaid: round(bucket.salaryPaid),
+      salaryPaid: round(salaryReceived),
       salaryInExpenses: round(bucket.salaryInExpenses),
       pettaTotal: round(pettaTotal),
       salaryPending: round(salaryPending),

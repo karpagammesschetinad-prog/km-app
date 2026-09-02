@@ -3,6 +3,7 @@
 let allEmployees = [];
 let employeeLeaves = [];
 let editingEmpId = null;
+let daySalaryData = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
@@ -11,6 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadEmployeesPage();
   setupSearch();
   setupModal();
+  setupDaySalaryModal();
   // Hide Add button if no add sub-permission
   if (!canAccess('employees', 'add')) {
     const btn = document.getElementById('btnAddEmployee');
@@ -83,6 +85,161 @@ function renderTable(list) {
     </tr>
   `;
   }).join('');
+}
+
+/* ---- Consolidated day salary summary ---- */
+
+function dayKeyOf(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+// Leave is counted by calendar date only: a half day is 0.5, any other covered date is a full day.
+function leaveSpanKeys(leave) {
+  const startKey = String(leave.startDateTime || '').slice(0, 10);
+  if (!startKey) return null;
+  const rawEnd = leave.endDateTime ? new Date(leave.endDateTime) : null;
+  if (!rawEnd || Number.isNaN(rawEnd.getTime())) return { startKey, endKey: dayKeyOf(new Date()), fraction: 1 };
+  const spanHours = (rawEnd - new Date(leave.startDateTime)) / 3600000;
+  const endKey = dayKeyOf(new Date(rawEnd.getTime() - 1));
+  if (spanHours > 0 && spanHours <= 12 && endKey === startKey) return { startKey, endKey: startKey, fraction: 0.5 };
+  return { startKey, endKey: endKey < startKey ? startKey : endKey, fraction: 1 };
+}
+
+// History endpoints return newest-first, so pick the latest entry in force rather than trusting order.
+function amountOnDate(dateKey, base, history) {
+  let bestDate = '';
+  let amount = base;
+  (history || []).forEach(entry => {
+    const effective = String(entry.effectiveDate || '');
+    if (!effective || effective > dateKey || effective < bestDate) return;
+    bestDate = effective;
+    amount = parseFloat(entry.amount) || 0;
+  });
+  return amount;
+}
+
+function setupDaySalaryModal() {
+  const button = document.getElementById('btnDaySalary');
+  if (!button) return;
+  if (!(canAccess('salaries') || canAccess('employees', 'add'))) { button.style.display = 'none'; return; }
+  const dateInput = document.getElementById('daySalaryDate');
+  button.addEventListener('click', async () => {
+    const today = dayKeyOf(new Date());
+    if (!dateInput.value) dateInput.value = today;
+    dateInput.max = today;
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('daySalaryModal')).show();
+    await renderDaySalary();
+  });
+  dateInput.addEventListener('change', renderDaySalary);
+}
+
+async function renderDaySalary() {
+  const body = document.getElementById('daySalaryBody');
+  const foot = document.getElementById('daySalaryFoot');
+  const dateKey = document.getElementById('daySalaryDate').value;
+  if (!body || !dateKey) return;
+  body.innerHTML = loadingRow(6);
+  foot.innerHTML = '';
+
+  try {
+    if (!daySalaryData) {
+      const [payments, petta, salaryHistory] = await Promise.all([
+        api('GET', '/payments'),
+        api('GET', '/petta'),
+        api('GET', '/salary-history')
+      ]);
+      daySalaryData = { payments, petta, salaryHistory };
+    }
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="7" class="text-danger text-center py-3">Failed to load salary data: ${err.message}</td></tr>`;
+    return;
+  }
+
+  const rows = allEmployees
+    .filter(employee => employee.status === 'Active' && String(employee.startDate || '') <= dateKey)
+    .map(employee => daySalaryRow(employee, dateKey))
+    .filter(row => row.working)
+    .sort((first, second) => first.name.localeCompare(second.name));
+
+  if (!rows.length) {
+    body.innerHTML = emptyRow(6, 'No employees working on this date.');
+    document.getElementById('daySalaryTotals').textContent = '';
+    return;
+  }
+
+  const totals = rows.reduce((sum, row) => ({
+    perDay: sum.perDay + (row.temporary ? row.received : row.perDay),
+    petta: sum.petta + (row.temporary ? 0 : row.petta),
+    received: sum.received + row.received,
+    pending: sum.pending + Math.max(0, row.pending)
+  }), { perDay: 0, petta: 0, received: 0, pending: 0 });
+
+  document.getElementById('daySalaryTotals').textContent = `${rows.length} employees working`;
+
+  body.innerHTML = rows.map(row => {
+    const advance = row.pending < 0;
+    const tone = advance ? 'warning' : (row.pending > 0 ? 'danger' : 'success');
+    const label = advance ? 'Advance' : (row.pending > 0 ? 'Pending' : 'Settled');
+    return `<tr>
+      <td data-label="Employee"><a href="/employee-detail.html?id=${row.id}" class="fw-semibold text-decoration-none">${row.name}</a>${row.halfDay ? ' <span class="badge bg-primary-subtle text-primary border border-primary-subtle">Half day</span>' : ''}</td>
+      <td data-label="Type" class="text-muted small">${row.type}</td>
+      <td data-label="Salary / day" class="text-end">${row.temporary ? formatCurrency(row.received) : formatCurrency(row.perDay)}</td>
+      <td data-label="Petta" class="text-end text-warning">${row.temporary ? '—' : formatCurrency(row.petta)}</td>
+      <td data-label="Salary received" class="text-end text-info fw-semibold">${formatCurrency(row.received)}</td>
+      <td data-label="Pending salary" class="text-end"><span class="badge bg-${tone}-subtle text-${tone} border border-${tone}-subtle">${formatCurrency(Math.abs(row.pending))} ${label}</span></td>
+    </tr>`;
+  }).join('');
+
+  foot.innerHTML = `<tr class="fw-bold" style="background:#f0f9ff">
+    <td colspan="2">Total</td>
+    <td class="text-end">${formatCurrency(totals.perDay)}</td>
+    <td class="text-end text-warning">${formatCurrency(totals.petta)}</td>
+    <td class="text-end text-info">${formatCurrency(totals.received)}</td>
+    <td class="text-end">${formatCurrency(totals.pending)}</td>
+  </tr>`;
+}
+
+// Only the selected day is settled here: what was due for that day minus what was paid on it.
+function daySalaryRow(employee, dateKey) {
+  const payments = daySalaryData.payments.filter(payment => payment.employeeId === employee.id);
+  const received = payments
+    .filter(payment => String(payment.paymentDate || '').slice(0, 10) === dateKey)
+    .reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
+
+  if (employee.temporaryEmployee) {
+    return {
+      id: employee.id, name: employee.name, type: 'Temporary', temporary: true,
+      working: received > 0, halfDay: false, perDay: 0, petta: 0, received, pending: 0
+    };
+  }
+
+  const leaveFraction = Math.min(1, employeeLeaves
+    .filter(leave => leave.employeeId === employee.id)
+    .map(leaveSpanKeys)
+    .filter(span => span && dateKey >= span.startKey && dateKey <= span.endKey)
+    .reduce((sum, span) => sum + span.fraction, 0));
+  const worked = Math.max(0, 1 - leaveFraction);
+
+  const perDay = amountOnDate(dateKey, parseFloat(employee.perDaySalary) || 0,
+    daySalaryData.salaryHistory.filter(entry => entry.employeeId === employee.id));
+  const petta = amountOnDate(dateKey, parseFloat(employee.dailyPetta) || 0,
+    daySalaryData.petta.filter(entry => entry.employeeId === employee.id));
+  const earned = worked * (perDay - petta);
+  // Daily-pay staff are settled the same evening, so the day's earning is treated as received.
+  const dailyPay = !!employee.dailySalaryEnabled;
+
+  return {
+    id: employee.id,
+    name: employee.name,
+    type: dailyPay ? 'Daily salary' : 'Regular',
+    temporary: false,
+    working: worked > 0,
+    halfDay: worked === 0.5,
+    perDay,
+    petta,
+    received: dailyPay ? (received || earned) : received,
+    pending: dailyPay ? 0 : earned - received
+  };
 }
 
 function setupModal() {

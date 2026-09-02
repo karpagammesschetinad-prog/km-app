@@ -5,3 +5,6 @@ node_modules/
 service-account*.json
 credentials.json
 seed.js
+
+backups/
+*.log

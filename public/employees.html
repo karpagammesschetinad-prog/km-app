@@ -35,9 +35,14 @@
       <button class="mobile-toggle" id="sidebarToggle"><i class="bi bi-list fs-4"></i></button>
       <h1 class="page-title">Employees</h1>
     </div>
-    <button class="btn btn-primary btn-sm su-only" data-screen="employees" data-sub="add" id="btnAddEmployee">
-      <i class="bi bi-person-plus me-1"></i>Add Employee
-    </button>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-primary btn-sm su-only" data-screen="employees" id="btnDaySalary">
+        <i class="bi bi-people me-1"></i>Day Salary Summary
+      </button>
+      <button class="btn btn-primary btn-sm su-only" data-screen="employees" data-sub="add" id="btnAddEmployee">
+        <i class="bi bi-person-plus me-1"></i>Add Employee
+      </button>
+    </div>
   </nav>
 
   <div class="content-wrapper">
@@ -146,6 +151,40 @@
         <button type="button" class="btn btn-primary" id="btnSaveEmployee">
           <i class="bi bi-check-lg me-1"></i>Save Employee
         </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Consolidated day salary modal -->
+<div class="modal fade" id="daySalaryModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-people me-2"></i>Day Salary Summary</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div class="p-3 border-bottom bg-light d-flex align-items-end gap-3 flex-wrap">
+          <div>
+            <label class="form-label mb-1 small fw-semibold">Date</label>
+            <input type="date" class="form-control form-control-sm" id="daySalaryDate" style="width:160px">
+          </div>
+          <div class="ms-auto text-muted small" id="daySalaryTotals"></div>
+        </div>
+        <div class="table-responsive">
+          <table class="table mobile-grid-table mb-0">
+            <thead><tr>
+              <th>Employee</th><th>Type</th><th class="text-end">Salary / Day</th><th class="text-end">Petta</th>
+              <th class="text-end">Salary Received</th><th class="text-end">Pending Salary</th>
+            </tr></thead>
+            <tbody id="daySalaryBody"></tbody>
+            <tfoot id="daySalaryFoot"></tfoot>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
   </div>

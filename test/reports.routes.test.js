@@ -138,6 +138,62 @@ test('salary accrues day-wise and reports paid, petta and pending', async () => 
   assert.equal(totals.salaryPending, 400, 'day one is 400 pending; day two is settled, not negative');
 });
 
+test('daily-pay staff are settled the same day and count as salary received', async () => {
+  sheets.setRows(SHEETS.EMPLOYEES, [
+    employeeRow({ id: 'emp-daily', name: 'Daily', dailyPay: 'true', perDay: 400, petta: 50 })
+  ]);
+  sheets.setRows(SHEETS.SALES_ENTRIES, [entryRow({ amount: 3000 })]);
+
+  const day = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.days[0];
+  assert.equal(day.salaryGross, 400);
+  assert.equal(day.salaryPaid, 350, 'no payment recorded, so the day earning (400 - 50 petta) is received');
+  assert.equal(day.salaryPending, 0, 'daily-pay staff are settled the same evening');
+  assert.equal(day.totalCost, 0, 'received salary is not a pending cost');
+  assert.equal(day.profit, 3000);
+});
+
+test('a recorded payment for a daily-pay employee is not double counted', async () => {
+  sheets.setRows(SHEETS.EMPLOYEES, [
+    employeeRow({ id: 'emp-daily', name: 'Daily', dailyPay: 'true', perDay: 400, petta: 50 })
+  ]);
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [
+    ['pay-1', 'emp-daily', 'Daily', '2026-02-02', 350, '', 'admin', '2026-02-02T12:00:00.000Z']
+  ]);
+
+  const day = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.days[0];
+  assert.equal(day.salaryPaid, 350, 'the recorded payment is the received amount, not payment + earning');
+  assert.equal(day.salaryPending, 0);
+});
+
+test('pending is clamped per employee so an advance does not cancel another dues', async () => {
+  sheets.setRows(SHEETS.EMPLOYEES, [
+    employeeRow({ id: 'emp-adv', name: 'Advance', perDay: 1100, petta: 0 }),
+    employeeRow({ id: 'emp-due', name: 'Due', perDay: 750, petta: 450 })
+  ]);
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [
+    ['pay-1', 'emp-adv', 'Advance', '2026-02-02', 2000, '', 'admin', '2026-02-02T12:00:00.000Z']
+  ]);
+
+  const day = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.days[0];
+  // Advance: 1100 - 2000 = -900 (clamped to 0). Due: 750 - 450 - 0 = 300.
+  assert.equal(day.salaryPending, 300, 'the advance must not offset the other employee dues');
+});
+
+test('an employee on full-day leave contributes no salary and no petta', async () => {
+  sheets.setRows(SHEETS.EMPLOYEES, [
+    employeeRow({ id: 'emp-off', name: 'Away', perDay: 500, petta: 150 }),
+    employeeRow({ id: 'emp-on', name: 'Present', perDay: 700, petta: 200 })
+  ]);
+  sheets.setRows(SHEETS.LEAVES, [
+    ['leave-1', 'emp-off', 'Away', '2026-02-02T00:00', '2026-02-03T00:00', '', 'admin', '']
+  ]);
+
+  const day = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.days[0];
+  assert.equal(day.salaryGross, 700, 'only the working employee accrues salary');
+  assert.equal(day.pettaTotal, 200, 'only the working employee accrues petta');
+  assert.equal(day.salaryPending, 500, '700 - 200 petta for the working employee');
+});
+
 test('profit follows sales - expenses - salary line - market', async () => {
   sheets.setRows(SHEETS.EMPLOYEES, [employeeRow()]);
   sheets.setRows(SHEETS.SALES_ENTRIES, [

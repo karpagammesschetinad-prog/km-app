@@ -11,7 +11,10 @@
     "start:dev": "node server.js",
     "start:prod": "npm start",
     "migrate:dev:safe": "node scripts/safe-sheet-migrate.js development",
-    "migrate:prod:safe": "node scripts/safe-sheet-migrate.js production"
+    "migrate:prod:safe": "node scripts/safe-sheet-migrate.js production",
+    "copy:prod-to-dev": "node scripts/copy-sheet-data.js --from=prod --to=dev",
+    "copy:dev-to-prod": "node scripts/copy-sheet-data.js --from=dev --to=prod",
+    "backup:now": "node scripts/copy-sheet-data.js --from=prod --to=dev --yes"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

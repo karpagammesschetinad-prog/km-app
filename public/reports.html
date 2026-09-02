@@ -71,11 +71,19 @@
         <span class="text-muted small">Profit = Sales − (Daily Cash + Occasional) − (Salary − Petta − Received) − Market</span>
       </div>
       <div class="table-responsive">
-        <table class="table mobile-grid-table mb-0">
+        <table class="table mobile-grid-table mb-0" id="plTable">
           <thead><tr>
-            <th>Date</th><th class="text-end">Sales</th><th class="text-end">Cash</th><th class="text-end">Online</th>
-            <th class="text-end">Daily Cash Exp</th><th class="text-end">Occasional</th>
-            <th class="text-end">Salary</th><th class="text-end">Received</th><th class="text-end">Petta</th><th class="text-end">Pending Salary</th>
+            <th>Date</th>
+            <th class="text-end" data-toggle-group="sales" role="button" title="Show cash and online split" style="cursor:pointer;white-space:nowrap">Sales <i class="bi bi-plus-square ms-1 small"></i></th>
+            <th class="text-end d-none" data-col-group="sales">Cash</th>
+            <th class="text-end d-none" data-col-group="sales">Online</th>
+            <th class="text-end" data-toggle-group="expenses" role="button" title="Show daily cash and occasional split" style="cursor:pointer;white-space:nowrap">Expenses <i class="bi bi-plus-square ms-1 small"></i></th>
+            <th class="text-end d-none" data-col-group="expenses">Daily Cash Exp</th>
+            <th class="text-end d-none" data-col-group="expenses">Occasional</th>
+            <th class="text-end" data-toggle-group="salary" role="button" title="Show salary, received and petta" style="cursor:pointer;white-space:nowrap">Pending Salary <i class="bi bi-plus-square ms-1 small"></i></th>
+            <th class="text-end d-none" data-col-group="salary">Salary</th>
+            <th class="text-end d-none" data-col-group="salary">Received</th>
+            <th class="text-end d-none" data-col-group="salary">Petta</th>
             <th class="text-end">Market (from this day's cash)</th>
             <th class="text-end">Total Cost</th><th class="text-end">Profit</th>
           </tr></thead>

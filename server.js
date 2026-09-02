@@ -116,6 +116,7 @@ async function startServer() {
       console.log(`Connecting to Google Sheets (${environment})...`);
       await initializeSheets();
       console.log('✔  Google Sheets initialized successfully.\n');
+      require('./services/dailyBackup').startDailyBackup();
     } catch (err) {
       console.error('✖  Google Sheets init failed:', err.message);
       console.error('   API calls will return errors until credentials are fixed.\n');

@@ -4,6 +4,27 @@ let reportData = null;
 let occasionalData = null;
 let plChart = null;
 
+// Sub-column counts per collapsible group in the daily breakdown table.
+const COLUMN_GROUPS = { sales: 2, expenses: 2, salary: 3 };
+const BASE_COLUMN_COUNT = 7;
+const expandedColumnGroups = new Set();
+
+function plColumnCount() {
+  return BASE_COLUMN_COUNT + [...expandedColumnGroups].reduce((sum, key) => sum + (COLUMN_GROUPS[key] || 0), 0);
+}
+
+function applyColumnGroups() {
+  document.querySelectorAll('#plTable [data-col-group]').forEach(cell => {
+    cell.classList.toggle('d-none', !expandedColumnGroups.has(cell.dataset.colGroup));
+  });
+  document.querySelectorAll('#plTable [data-toggle-group]').forEach(header => {
+    const icon = header.querySelector('i');
+    if (!icon) return;
+    const expanded = expandedColumnGroups.has(header.dataset.toggleGroup);
+    icon.className = `bi ${expanded ? 'bi-dash-square' : 'bi-plus-square'} ms-1 small`;
+  });
+}
+
 function localDateKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -34,6 +55,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  document.querySelectorAll('#plTable [data-toggle-group]').forEach(header => {
+    header.addEventListener('click', () => {
+      const group = header.dataset.toggleGroup;
+      if (expandedColumnGroups.has(group)) expandedColumnGroups.delete(group);
+      else expandedColumnGroups.add(group);
+      applyColumnGroups();
+    });
+  });
+
   await loadReport();
 });
 
@@ -43,7 +73,7 @@ async function loadReport() {
   if (!from || !to) return showNotification('Select both dates.', 'warning');
   if (from > to) return showNotification('From date must be on or before To date.', 'warning');
 
-  document.getElementById('plBody').innerHTML = loadingRow(13);
+  document.getElementById('plBody').innerHTML = loadingRow(plColumnCount());
   document.getElementById('occasionalBody').innerHTML = loadingRow(7);
   try {
     reportData = await api('GET', `/reports/profit-loss?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
@@ -52,7 +82,7 @@ async function loadReport() {
     renderTable(reportData.days, reportData.totals);
     renderAnalytics(reportData.analytics);
   } catch (err) {
-    document.getElementById('plBody').innerHTML = `<tr><td colspan="13" class="text-danger text-center py-3">${escapeHtml(err.message)}</td></tr>`;
+    document.getElementById('plBody').innerHTML = `<tr><td colspan="${plColumnCount()}" class="text-danger text-center py-3">${escapeHtml(err.message)}</td></tr>`;
     showNotification('Failed to load report: ' + err.message, 'danger');
   }
 
@@ -113,34 +143,38 @@ function renderTable(days, totals) {
   body.innerHTML = rows.length ? rows.map(day => `<tr>
     <td data-label="Date" class="text-nowrap">${formatDate(day.date)}</td>
     <td data-label="Sales" class="text-end fw-semibold">${formatCurrency(day.sales)}</td>
-    <td data-label="Cash" class="text-end">${formatCurrency(day.cashSales)}</td>
-    <td data-label="Online" class="text-end">${formatCurrency(day.onlineSales)}</td>
-    <td data-label="Daily Cash Exp" class="text-end">${formatCurrency(day.dailyCashExpense)}</td>
-    <td data-label="Occasional" class="text-end">${formatCurrency(day.occasionalExpense)}</td>
-    <td data-label="Salary" class="text-end">${formatCurrency(day.salaryGross)}</td>
-    <td data-label="Salary Paid" class="text-end">${formatCurrency(day.salaryPaid)}</td>
-    <td data-label="Petta" class="text-end">${formatCurrency(day.pettaTotal)}</td>
+    <td data-label="Cash" class="text-end" data-col-group="sales">${formatCurrency(day.cashSales)}</td>
+    <td data-label="Online" class="text-end" data-col-group="sales">${formatCurrency(day.onlineSales)}</td>
+    <td data-label="Expenses" class="text-end">${formatCurrency(day.dailyCashExpense + day.occasionalExpense)}</td>
+    <td data-label="Daily Cash Exp" class="text-end" data-col-group="expenses">${formatCurrency(day.dailyCashExpense)}</td>
+    <td data-label="Occasional" class="text-end" data-col-group="expenses">${formatCurrency(day.occasionalExpense)}</td>
     <td data-label="Pending Salary" class="text-end">${formatCurrency(day.salaryPending)}</td>
+    <td data-label="Salary" class="text-end" data-col-group="salary">${formatCurrency(day.salaryGross)}</td>
+    <td data-label="Received" class="text-end" data-col-group="salary">${formatCurrency(day.salaryPaid)}</td>
+    <td data-label="Petta" class="text-end" data-col-group="salary">${formatCurrency(day.pettaTotal)}</td>
     <td data-label="Market (from this day's cash)" class="text-end">${formatCurrency(day.marketExpense)}</td>
     <td data-label="Total Cost" class="text-end">${formatCurrency(day.totalCost)}</td>
     <td data-label="Profit" class="text-end fw-semibold ${day.profit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(day.profit)}</td>
-  </tr>`).join('') : emptyRow(13, 'No sales or costs in this range.');
+  </tr>`).join('') : emptyRow(plColumnCount(), 'No sales or costs in this range.');
 
   document.getElementById('plFoot').innerHTML = rows.length ? `<tr class="fw-bold" style="background:#f0f9ff">
     <td>Total</td>
     <td class="text-end">${formatCurrency(totals.sales)}</td>
-    <td class="text-end">${formatCurrency(totals.cashSales)}</td>
-    <td class="text-end">${formatCurrency(totals.onlineSales)}</td>
-    <td class="text-end">${formatCurrency(totals.dailyCashExpense)}</td>
-    <td class="text-end">${formatCurrency(totals.occasionalExpense)}</td>
-    <td class="text-end">${formatCurrency(totals.salaryGross)}</td>
-    <td class="text-end">${formatCurrency(totals.salaryPaid)}</td>
-    <td class="text-end">${formatCurrency(totals.pettaTotal)}</td>
+    <td class="text-end" data-col-group="sales">${formatCurrency(totals.cashSales)}</td>
+    <td class="text-end" data-col-group="sales">${formatCurrency(totals.onlineSales)}</td>
+    <td class="text-end">${formatCurrency(totals.dailyCashExpense + totals.occasionalExpense)}</td>
+    <td class="text-end" data-col-group="expenses">${formatCurrency(totals.dailyCashExpense)}</td>
+    <td class="text-end" data-col-group="expenses">${formatCurrency(totals.occasionalExpense)}</td>
     <td class="text-end">${formatCurrency(totals.salaryPending)}</td>
+    <td class="text-end" data-col-group="salary">${formatCurrency(totals.salaryGross)}</td>
+    <td class="text-end" data-col-group="salary">${formatCurrency(totals.salaryPaid)}</td>
+    <td class="text-end" data-col-group="salary">${formatCurrency(totals.pettaTotal)}</td>
     <td class="text-end">${formatCurrency(totals.marketExpense)}</td>
     <td class="text-end">${formatCurrency(totals.totalCost)}</td>
     <td class="text-end ${totals.profit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(totals.profit)}</td>
   </tr>` : '';
+
+  applyColumnGroups();
 }
 
 function statusBadge(status) {
