@@ -45,15 +45,26 @@ function getFiscalRange() {
   return { start: configuredStart || new Date(today.getFullYear(), 3, 1), end: today };
 }
 
+// Leave is counted by calendar date only: a half day is 0.5, any other covered date is a full day.
+function leaveSpan(leave) {
+  const start = parseDateOnly(leave.startDateTime);
+  if (!start) return null;
+  const rawEnd = leave.endDateTime ? new Date(leave.endDateTime) : null;
+  if (!rawEnd || Number.isNaN(rawEnd.getTime())) return { start, end: parseDateOnly(new Date()), fraction: 1 };
+  const spanHours = (rawEnd - new Date(leave.startDateTime)) / 3600000;
+  const end = parseDateOnly(new Date(rawEnd.getTime() - 1));
+  if (spanHours > 0 && spanHours <= 12 && dateKey(end) === dateKey(start)) return { start, end: start, fraction: 0.5 };
+  return { start, end: end < start ? start : end, fraction: 1 };
+}
+
 function getLeaveFractionForDay(dayStart, leaves) {
-  const dayEnd = addDays(dayStart, 1);
+  const key = dateKey(dayStart);
   let frac = 0;
-  leaves.forEach(l => {
-    const ls = new Date(l.startDateTime);
-    const le = l.endDateTime ? new Date(l.endDateTime) : new Date();
-    const s = new Date(Math.max(ls.getTime(), dayStart.getTime()));
-    const e = new Date(Math.min(le.getTime(), dayEnd.getTime()));
-    if (e > s) frac += (e - s) / 86400000;
+  (leaves || []).forEach(leave => {
+    const span = leaveSpan(leave);
+    if (!span) return;
+    if (key < dateKey(span.start) || key > dateKey(span.end)) return;
+    frac += span.fraction;
   });
   return Math.max(0, Math.min(1, frac));
 }
@@ -67,6 +78,15 @@ function buildPettaTimeline(emp, pettaHistory) {
   return { base, entries };
 }
 
+function buildSalaryTimeline(emp, salaryHistory) {
+  const base = parseFloat(emp.perDaySalary) || 0;
+  const entries = (salaryHistory || [])
+    .map(record => ({ date: parseDateOnly(record.effectiveDate), amount: parseFloat(record.amount) || 0 }))
+    .filter(item => item.date)
+    .sort((a, b) => a.date - b.date);
+  return { base, entries };
+}
+
 function getPettaForDate(day, timeline) {
   let amount = timeline.base;
   for (const p of timeline.entries) {
@@ -76,7 +96,7 @@ function getPettaForDate(day, timeline) {
   return amount;
 }
 
-function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
+function calcEmployeeSalary(emp, leaves, payments, pettaHistory, salaryHistory) {
   const employeeStart = parseDateOnly(emp.startDate);
   const fiscal = getFiscalRange();
   const start = employeeStart > fiscal.start ? employeeStart : fiscal.start;
@@ -89,8 +109,9 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
     return { workedDays: 0, earned: 0, totalPaid: 0, balance: 0, currentPetta: parseFloat(emp.dailyPetta) || 0 };
   }
 
-  const perDaySalary = parseFloat(emp.perDaySalary) || 0;
   const timeline = buildPettaTimeline(emp, pettaHistory);
+  const salaryTimeline = buildSalaryTimeline(emp, salaryHistory);
+  const rateFor = day => getPettaForDate(day, salaryTimeline);
 
   const paymentMap = new Map();
   (payments || []).forEach(p => {
@@ -105,6 +126,9 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
       .filter(p => p.date >= start && p.date <= today)
       .map(p => dateKey(p.date))
   );
+  salaryTimeline.entries
+    .filter(item => item.date >= start && item.date <= today)
+    .forEach(item => pettaChangeKeys.add(dateKey(item.date)));
 
   let totalPaid = 0;
   let workedDays = 0;
@@ -113,14 +137,14 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
 
   let segEarned = 0;
   let segPaid = 0;
-  let segOpening = 0;
+  let segOpening = parseFloat(emp.openingBalance) || 0;
   for (let day = new Date(employeeStart); day < start; day = addDays(day, 1)) {
     const leaveFrac = getLeaveFractionForDay(day, leaves);
     const paid = (payments || []).filter(p => {
       const paymentDate = parseDateOnly(p.paymentDate);
       return paymentDate && dateKey(paymentDate) === dateKey(day);
     }).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-    segOpening += Math.max(0, 1 - leaveFrac) * (perDaySalary - getPettaForDate(day, timeline)) - paid;
+    segOpening += Math.max(0, 1 - leaveFrac) * (rateFor(day) - getPettaForDate(day, timeline)) - paid;
   }
   runningBalance = segOpening;
 
@@ -128,7 +152,7 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
     const leaveFrac = getLeaveFractionForDay(day, leaves);
     const workedFrac = Math.max(0, 1 - leaveFrac);
     const petta = getPettaForDate(day, timeline);
-    const netPerDay = perDaySalary - petta;
+    const netPerDay = rateFor(day) - petta;
 
     const dayPaid = paymentMap.get(dateKey(day)) || 0;
 
@@ -158,18 +182,20 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory) {
     earned,
     totalPaid: emp.dailySalaryEnabled ? earned : totalPaid,
     balance: emp.dailySalaryEnabled ? 0 : runningBalance,
-    currentPetta: getPettaForDate(today, timeline)
+    currentPetta: getPettaForDate(today, timeline),
+    currentPerDay: rateFor(today)
   };
 }
 
 async function loadSalaryPage() {
   document.getElementById('salBody').innerHTML = loadingRow(8);
   try {
-    const [employees, allLeaves, allPayments, allPetta, config] = await Promise.all([
+    const [employees, allLeaves, allPayments, allPetta, allSalaryHistory, config] = await Promise.all([
       api('GET', '/employees'),
       api('GET', '/leaves'),
       api('GET', '/payments'),
       api('GET', '/petta'),
+      api('GET', '/salary-history'),
       api('GET', '/config')
     ]);
 
@@ -184,8 +210,9 @@ async function loadSalaryPage() {
       const leaves = allLeaves.filter(l => l.employeeId === emp.id);
       const payments = allPayments.filter(p => p.employeeId === emp.id);
       const pettaHistory = allPetta.filter(p => p.employeeId === emp.id);
+      const salaryHistory = allSalaryHistory.filter(record => record.employeeId === emp.id);
 
-      const sal = calcEmployeeSalary(emp, leaves, payments, pettaHistory);
+      const sal = calcEmployeeSalary(emp, leaves, payments, pettaHistory, salaryHistory);
       const onLeave = leaves.some(l => new Date(l.startDateTime) <= now && (!l.endDateTime || now <= new Date(l.endDateTime)));
 
       return {
@@ -195,6 +222,7 @@ async function loadSalaryPage() {
         totalPaid: sal.totalPaid,
         balance: sal.balance,
         currentPetta: sal.currentPetta,
+        currentPerDay: sal.currentPerDay,
         onLeave
       };
     });
@@ -223,7 +251,7 @@ function renderTable(stats) {
   const tbody = document.getElementById('salBody');
   if (!stats.length) { tbody.innerHTML = emptyRow(8, 'No active employees.'); return; }
 
-  tbody.innerHTML = stats.map(({ emp, workedDays, earned, totalPaid, balance, currentPetta, onLeave }) => {
+  tbody.innerHTML = stats.map(({ emp, workedDays, earned, totalPaid, balance, currentPetta, currentPerDay, onLeave }) => {
     const isAdv = balance < 0;
     const balAbs = Math.abs(balance);
     const balColor = isAdv ? 'warning' : (balance > 0 ? 'danger' : 'success');
@@ -236,7 +264,7 @@ function renderTable(stats) {
         ${emp.phone ? `<div class="text-muted small">${emp.phone}</div>` : ''}
       </td>
       <td data-label="Start date">${formatDate(emp.startDate)}</td>
-      <td data-label="Per day">${emp.temporaryEmployee ? '<span class="text-muted">Dynamic</span>' : `${formatCurrency(emp.perDaySalary)}<span class="text-muted small"> - ${formatCurrency(currentPetta)}</span>`}</td>
+      <td data-label="Per day">${emp.temporaryEmployee ? '<span class="text-muted">Dynamic</span>' : `${formatCurrency(currentPerDay ?? emp.perDaySalary)}<span class="text-muted small"> - ${formatCurrency(currentPetta)}</span>`}</td>
       <td data-label="Days worked">${workedDays.toFixed(1)} days</td>
       <td data-label="Earned" class="text-success fw-semibold">${formatCurrency(earned)}</td>
       <td data-label="Total paid" class="text-info fw-semibold">${formatCurrency(totalPaid)}</td>

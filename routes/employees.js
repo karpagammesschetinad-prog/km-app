@@ -7,7 +7,24 @@ const { requireAuth } = require('../middleware/authMiddleware');
 router.use(requireAuth);
 
 const SHEET = SHEETS.EMPLOYEES;
-const C = { ID: 0, NAME: 1, ADDRESS: 2, PHONE: 3, START: 4, PER_DAY: 5, PETTA: 6, STATUS: 7, DAILY_PAY: 8, TEMPORARY: 9 };
+const C = { ID: 0, NAME: 1, ADDRESS: 2, PHONE: 3, START: 4, PER_DAY: 5, PETTA: 6, STATUS: 7, DAILY_PAY: 8, TEMPORARY: 9, OPENING_BALANCE: 10 };
+const SALARY_HISTORY_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, EFFECTIVE_DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
+
+function todayKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+// A rate change must not rewrite earlier days, so the old rate is kept on the timeline before the new one starts.
+async function recordSalaryRevision(employee, previousRate, effectiveDate, remarks, createdBy) {
+  const rows = await getAllRows(SHEETS.SALARY_HISTORY);
+  const hasHistory = rows.some(row => String(row[SALARY_HISTORY_C.EMP_ID]) === String(employee.id));
+  const now = new Date().toISOString();
+  if (!hasHistory && employee.startDate) {
+    await appendRow(SHEETS.SALARY_HISTORY, [uuidv4(), employee.id, employee.name, employee.startDate, previousRate, 'Rate before first revision', createdBy, now]);
+  }
+  await appendRow(SHEETS.SALARY_HISTORY, [uuidv4(), employee.id, employee.name, effectiveDate, employee.perDaySalary, remarks, createdBy, now]);
+}
 
 function rowToObj(row) {
   return {
@@ -20,13 +37,16 @@ function rowToObj(row) {
     dailyPetta:         parseFloat(row[C.PETTA])   || 0,
     status:             row[C.STATUS]    || 'Active',
     dailySalaryEnabled: String(row[C.DAILY_PAY] || '').toLowerCase() === 'true' || row[C.DAILY_PAY] === true,
-    temporaryEmployee: String(row[C.TEMPORARY] || '').toLowerCase() === 'true' || row[C.TEMPORARY] === true
+    temporaryEmployee: String(row[C.TEMPORARY] || '').toLowerCase() === 'true' || row[C.TEMPORARY] === true,
+    // Salary owed (positive) or advanced (negative) before tracking started.
+    openingBalance:     parseFloat(row[C.OPENING_BALANCE]) || 0
   };
 }
 
 function objToRow(o) {
   return [o.id, o.name, o.address || '', o.phone || '', o.startDate || '',
-          o.perDaySalary, o.dailyPetta, o.status, o.dailySalaryEnabled ? 'true' : 'false', o.temporaryEmployee ? 'true' : 'false'];
+          o.perDaySalary, o.dailyPetta, o.status, o.dailySalaryEnabled ? 'true' : 'false', o.temporaryEmployee ? 'true' : 'false',
+          o.openingBalance || 0];
 }
 
 router.get('/', async (req, res) => {
@@ -50,7 +70,7 @@ router.get('/:id', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { name, phone, address, startDate, perDaySalary, dailyPetta = 0, status = 'Active', dailySalaryEnabled = false, temporaryEmployee = false } = req.body;
+    const { name, phone, address, startDate, perDaySalary, dailyPetta = 0, status = 'Active', dailySalaryEnabled = false, temporaryEmployee = false, openingBalance = 0 } = req.body;
     if (!name || !startDate) {
       return res.status(400).json({ success: false, message: 'name and startDate are required.' });
     }
@@ -67,7 +87,8 @@ router.post('/', async (req, res) => {
       dailyPetta: parseFloat(dailyPetta) || 0,
       status,
       dailySalaryEnabled: !!dailySalaryEnabled,
-      temporaryEmployee: !!temporaryEmployee
+      temporaryEmployee: !!temporaryEmployee,
+      openingBalance: parseFloat(openingBalance) || 0
     };
     await appendRow(SHEET, objToRow(obj));
     res.status(201).json({ success: true, data: obj });
@@ -84,9 +105,24 @@ router.put('/:id', async (req, res) => {
     const updated = { ...existing, ...req.body, id: existing.id };
     updated.perDaySalary       = parseFloat(updated.perDaySalary) || 0;
     updated.dailyPetta         = parseFloat(updated.dailyPetta)   || 0;
+    updated.openingBalance     = parseFloat(updated.openingBalance) || 0;
     updated.dailySalaryEnabled = updated.dailySalaryEnabled === true || updated.dailySalaryEnabled === 'true';
     updated.temporaryEmployee  = updated.temporaryEmployee === true || updated.temporaryEmployee === 'true';
     await updateRow(SHEET, found.index, objToRow(updated));
+
+    const rateChanged = !updated.temporaryEmployee && updated.perDaySalary !== existing.perDaySalary;
+    if (rateChanged) {
+      const requested = String(req.body.salaryEffectiveDate || '').trim();
+      const effectiveDate = /^\d{4}-\d{2}-\d{2}$/.test(requested) ? requested : todayKey();
+      await recordSalaryRevision(
+        updated,
+        existing.perDaySalary,
+        effectiveDate,
+        String(req.body.salaryRevisionRemarks || '').trim(),
+        req.session?.user?.displayName || ''
+      );
+    }
+
     res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

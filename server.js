@@ -88,6 +88,7 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/leaves', require('./routes/leaves'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/petta', require('./routes/petta'));
+app.use('/api/salary-history', require('./routes/salaryHistory'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/settings', require('./routes/settings'));
 

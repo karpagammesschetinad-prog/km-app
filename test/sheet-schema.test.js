@@ -75,7 +75,8 @@ const CASES = [
     columns: {
       ID: 'ID', NAME: 'Name', ADDRESS: 'Address', PHONE: 'Phone', START: 'StartDate',
       PER_DAY: 'PerDaySalary', PETTA: 'DailyPetta', STATUS: 'Status',
-      DAILY_PAY: 'DailySalaryEnabled', TEMPORARY: 'TemporaryEmployee'
+      DAILY_PAY: 'DailySalaryEnabled', TEMPORARY: 'TemporaryEmployee',
+      OPENING_BALANCE: 'OpeningBalance'
     }
   },
   {
@@ -87,6 +88,13 @@ const CASES = [
   },
   {
     file: 'petta.js', constant: 'C', sheet: 'PETTA_HISTORY',
+    columns: {
+      ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', EFFECTIVE_DATE: 'EffectiveDate',
+      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt'
+    }
+  },
+  {
+    file: 'salaryHistory.js', constant: 'C', sheet: 'SALARY_HISTORY',
     columns: {
       ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', EFFECTIVE_DATE: 'EffectiveDate',
       AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt'

@@ -62,6 +62,7 @@ test.beforeEach(() => {
   sheets.setRows(SHEETS.EMPLOYEES, []);
   sheets.setRows(SHEETS.LEAVES, []);
   sheets.setRows(SHEETS.PETTA_HISTORY, []);
+  sheets.setRows(SHEETS.SALARY_HISTORY, []);
   server.loginAs(SUPERUSER);
 });
 
@@ -296,6 +297,18 @@ test('analytics flags cash expenses exceeding cash sales', async () => {
   const analytics = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.analytics;
   assert.equal(analytics.dayIssues[0].issue, 'Cash expenses exceed cash sales');
   assert.equal(analytics.dayIssues[0].amount, -300);
+});
+
+test('a salary revision applies only from its effective date', async () => {
+  sheets.setRows(SHEETS.EMPLOYEES, [employeeRow({ petta: 0 })]);
+  sheets.setRows(SHEETS.SALARY_HISTORY, [
+    ['sal-1', 'emp-1', 'Ravi', '2026-01-01', 500, '', 'admin', ''],
+    ['sal-2', 'emp-1', 'Ravi', '2026-02-02', 700, 'Increment', 'admin', '']
+  ]);
+
+  const days = (await server.request('GET', url('2026-02-01', '2026-02-02'))).body.data.days;
+  assert.equal(days[0].salaryGross, 500, 'the day before the revision keeps the old rate');
+  assert.equal(days[1].salaryGross, 700);
 });
 
 test('the occasional report lists only occasional expenses grouped by date', async () => {

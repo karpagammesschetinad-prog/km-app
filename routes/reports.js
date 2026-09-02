@@ -14,6 +14,7 @@ const PAYMENT_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 
 const EMPLOYEE_C = { ID: 0, NAME: 1, ADDRESS: 2, PHONE: 3, START: 4, PER_DAY: 5, PETTA: 6, STATUS: 7, DAILY_PAY: 8, TEMPORARY: 9 };
 const LEAVE_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, START: 3, END: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
 const PETTA_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, EFFECTIVE_DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
+const SALARY_HISTORY_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, EFFECTIVE_DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
 const TYPE_C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, WORKFLOW: 7 };
 
 const MAX_RANGE_DAYS = 400;
@@ -68,29 +69,44 @@ function isTrue(value) {
   return String(value || '').trim().toLowerCase() === 'true';
 }
 
-// Mirrors the day-wise accrual used by the Salaries screen: (per day salary - petta) x worked fraction.
+// Leave is counted by calendar date only: a half day is 0.5, any other covered date is a full day.
+function leaveSpanFor(leave) {
+  const startKey = String(leave.start || '').slice(0, 10);
+  if (!isValidDate(startKey)) return null;
+  const rawEnd = leave.end ? new Date(leave.end) : null;
+  if (!rawEnd || Number.isNaN(rawEnd.getTime())) {
+    const pad = value => String(value).padStart(2, '0');
+    const now = new Date();
+    return { startKey, endKey: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`, fraction: 1 };
+  }
+  const spanHours = (rawEnd - new Date(leave.start)) / 3600000;
+  // Ends stored at midnight mean "up to the previous day".
+  const inclusiveEnd = new Date(rawEnd.getTime() - 1);
+  const pad = value => String(value).padStart(2, '0');
+  const endKey = `${inclusiveEnd.getFullYear()}-${pad(inclusiveEnd.getMonth() + 1)}-${pad(inclusiveEnd.getDate())}`;
+  if (spanHours > 0 && spanHours <= 12 && endKey === startKey) return { startKey, endKey: startKey, fraction: 0.5 };
+  return { startKey, endKey: endKey < startKey ? startKey : endKey, fraction: 1 };
+}
+
 function leaveFractionForDay(date, leaves) {
-  const dayStart = new Date(`${date}T00:00:00`).getTime();
-  const dayEnd = dayStart + 86400000;
   let fraction = 0;
   leaves.forEach(leave => {
-    const start = new Date(leave.start).getTime();
-    const end = leave.end ? new Date(leave.end).getTime() : Date.now();
-    if (Number.isNaN(start) || Number.isNaN(end)) return;
-    const overlapStart = Math.max(start, dayStart);
-    const overlapEnd = Math.min(end, dayEnd);
-    if (overlapEnd > overlapStart) fraction += (overlapEnd - overlapStart) / 86400000;
+    const span = leaveSpanFor(leave);
+    if (!span) return;
+    if (date < span.startKey || date > span.endKey) return;
+    fraction += span.fraction;
   });
   return Math.max(0, Math.min(1, fraction));
 }
 
-function pettaForDate(date, basePetta, history) {
-  let amount = basePetta;
+// Returns the amount in force on a date, given a base and dated overrides.
+function amountForDate(date, baseAmount, history) {
+  let amount = baseAmount;
   history.forEach(entry => { if (entry.date <= date) amount = entry.amount; });
   return amount;
 }
 
-function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, paymentsByDateAndEmployee }) {
+function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, salaryHistoryRows, paymentsByDateAndEmployee }) {
   const gross = new Map(dates.map(date => [date, 0]));
   const petta = new Map(dates.map(date => [date, 0]));
   const leavesByEmployee = new Map();
@@ -106,6 +122,14 @@ function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, paymen
     pettaByEmployee.get(key).push({ date: row[PETTA_C.EFFECTIVE_DATE] || '', amount: amountOf(row, PETTA_C.AMOUNT) });
   });
   pettaByEmployee.forEach(entries => entries.sort((a, b) => String(a.date).localeCompare(String(b.date))));
+
+  const salaryByEmployee = new Map();
+  (salaryHistoryRows || []).forEach(row => {
+    const key = row[SALARY_HISTORY_C.EMP_ID] || '';
+    if (!salaryByEmployee.has(key)) salaryByEmployee.set(key, []);
+    salaryByEmployee.get(key).push({ date: row[SALARY_HISTORY_C.EFFECTIVE_DATE] || '', amount: amountOf(row, SALARY_HISTORY_C.AMOUNT) });
+  });
+  salaryByEmployee.forEach(entries => entries.sort((a, b) => String(a.date).localeCompare(String(b.date))));
 
   employeeRows.forEach(row => {
     const id = row[EMPLOYEE_C.ID] || '';
@@ -123,19 +147,20 @@ function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, paymen
     const basePetta = amountOf(row, EMPLOYEE_C.PETTA);
     const leaves = leavesByEmployee.get(id) || [];
     const history = pettaByEmployee.get(id) || [];
+    const salaryRevisions = salaryByEmployee.get(id) || [];
     dates.forEach(date => {
       if (date < startDate) return;
       const worked = Math.max(0, 1 - leaveFractionForDay(date, leaves));
       if (!worked) return;
-      gross.set(date, gross.get(date) + worked * perDay);
-      petta.set(date, petta.get(date) + worked * pettaForDate(date, basePetta, history));
+      gross.set(date, gross.get(date) + worked * amountForDate(date, perDay, salaryRevisions));
+      petta.set(date, petta.get(date) + worked * amountForDate(date, basePetta, history));
     });
   });
 
   return { gross, petta };
 }
 
-function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows }) {
+function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows, salaryHistoryRows }) {
   const typeModes = new Map((typeRows || []).map(row => [row[TYPE_C.ID] || '', normalizeMode(row[TYPE_C.WORKFLOW])]));
   const dates = listDates(from, to);
   const blank = () => ({ sales: 0, cashSales: 0, onlineSales: 0, dailyCash: 0, market: 0, occasional: 0, salaryPaid: 0, salaryInExpenses: 0 });
@@ -175,7 +200,7 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
   });
 
   const { gross: grossByDate, petta: pettaByDate } = salaryAccrualByDate({
-    dates, employeeRows: employeeRows || [], leaveRows: leaveRows || [], pettaRows: pettaRows || [], paymentsByDateAndEmployee
+    dates, employeeRows: employeeRows || [], leaveRows: leaveRows || [], pettaRows: pettaRows || [], salaryHistoryRows: salaryHistoryRows || [], paymentsByDateAndEmployee
   });
 
   // Legacy Sales rows are only used for days with no SalesEntries data.
@@ -429,7 +454,7 @@ router.get('/profit-loss', requireSuperUser, async (req, res) => {
       return res.status(400).json({ success: false, message: `Date range cannot exceed ${MAX_RANGE_DAYS} days.` });
     }
 
-    const [expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows] = await Promise.all([
+    const [expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows, salaryHistoryRows] = await Promise.all([
       getAllRows(SHEETS.EXPENSES),
       getAllRows(SHEETS.SALES_ENTRIES),
       getAllRows(SHEETS.SALES),
@@ -437,10 +462,11 @@ router.get('/profit-loss', requireSuperUser, async (req, res) => {
       getAllRows(SHEETS.EXPENSE_CATEGORY_TYPES),
       getAllRows(SHEETS.EMPLOYEES),
       getAllRows(SHEETS.LEAVES),
-      getAllRows(SHEETS.PETTA_HISTORY)
+      getAllRows(SHEETS.PETTA_HISTORY),
+      getAllRows(SHEETS.SALARY_HISTORY)
     ]);
 
-    const { days, totals } = buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows });
+    const { days, totals } = buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows, salaryHistoryRows });
     const analytics = buildAnalytics({ from, to, days, expenseRows, entryRows, typeRows });
 
     res.json({ success: true, data: { range: { from, to }, days, totals, analytics } });

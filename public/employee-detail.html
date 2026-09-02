@@ -88,6 +88,11 @@
               <input type="number" class="form-control" id="editPetta" min="0" step="0.01" value="0">
             </div>
             <div class="col-md-6">
+              <label class="form-label">Previous Pending Salary (₹)</label>
+              <input type="number" class="form-control" id="editOpeningBalance" step="0.01" value="0">
+              <div class="form-text">Dues carried from earlier years. Use a negative value for an advance.</div>
+            </div>
+            <div class="col-md-6">
               <label class="form-label">Status</label>
               <select class="form-select" id="editStatus">
                 <option value="Active">Active</option>
@@ -249,6 +254,41 @@
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-primary" id="btnSavePetta">
           <i class="bi bi-check-lg me-1"></i>Save Petta
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Salary Revision Modal -->
+<div class="modal fade" id="salaryRevisionModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-graph-up-arrow me-2"></i>Revise Per Day Salary</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="salaryRevisionForm" novalidate>
+          <div class="mb-3">
+            <label class="form-label">Effective Date <span class="text-danger">*</span></label>
+            <input type="date" class="form-control" id="salaryRevisionDate" required>
+            <div class="form-text">Days before this date keep the earlier rate; the balance carries forward.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">New Salary Per Day (₹) <span class="text-danger">*</span></label>
+            <input type="number" class="form-control" id="salaryRevisionAmount" min="0" step="0.01" required>
+          </div>
+          <div class="mb-1">
+            <label class="form-label">Remarks</label>
+            <textarea class="form-control" id="salaryRevisionRemarks" rows="2" placeholder="Increment / decrement reason"></textarea>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btnSaveSalaryRevision">
+          <i class="bi bi-check-lg me-1"></i>Save Revision
         </button>
       </div>
     </div>

@@ -123,7 +123,8 @@ async function save() {
     dailyPetta:         parseFloat(document.getElementById('empPetta').value) || 0,
     status:             document.getElementById('empStatus').value,
     dailySalaryEnabled: document.getElementById('empDailyPay').checked,
-    temporaryEmployee:  document.getElementById('empTemporary').checked
+    temporaryEmployee:  document.getElementById('empTemporary').checked,
+    openingBalance:     parseFloat(document.getElementById('empOpeningBalance').value) || 0
   };
 
   const btn = document.getElementById('btnSaveEmployee');
@@ -158,6 +159,7 @@ async function openEdit(id) {
   document.getElementById('empPerDay').value    = e.perDaySalary;
   document.getElementById('empPetta').value     = e.dailyPetta;
   document.getElementById('empStatus').value    = e.status;
+  document.getElementById('empOpeningBalance').value = e.openingBalance || 0;
   document.getElementById('empDailyPay').checked = !!e.dailySalaryEnabled;
   document.getElementById('empTemporary').checked = !!e.temporaryEmployee;
   temporaryToggle.dispatchEvent(new Event('change'));

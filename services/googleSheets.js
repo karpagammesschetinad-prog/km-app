@@ -41,17 +41,19 @@ const SHEETS = {
   USERS: 'Users',
   LEAVES: 'Leaves',
   SALARY_PAYMENTS: 'SalaryPayments',
-  PETTA_HISTORY: 'PettaHistory'
+  PETTA_HISTORY: 'PettaHistory',
+  SALARY_HISTORY: 'SalaryHistory'
 };
 
 const HEADERS = {
   EXPENSES: ['ID', 'Date', 'Category', 'Description', 'Amount', 'EmployeeID', 'EmployeeName', 'SubmittedBy', 'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'RejectionReason', 'CreatedAt', 'CategoryTypeID', 'IsOnSpot', 'PaymentID', 'Shift', 'ExpenseMode'],
   SALES: ['ID', 'Date', 'Morning', 'Afternoon', 'Dinner', 'TotalSales', 'ExpenseTotal', 'Remaining', 'EnteredBy', 'CreatedAt', 'MorningEnteredBy', 'AfternoonEnteredBy', 'DinnerEnteredBy'],
   SALES_ENTRIES: ['ID', 'Date', 'Shift', 'PaymentType', 'OnlineVendor', 'Amount', 'EnteredBy', 'CreatedAt', 'UpdatedAt'],
-  EMPLOYEES: ['ID', 'Name', 'Address', 'Phone', 'StartDate', 'PerDaySalary', 'DailyPetta', 'Status', 'DailySalaryEnabled', 'TemporaryEmployee'],
+  EMPLOYEES: ['ID', 'Name', 'Address', 'Phone', 'StartDate', 'PerDaySalary', 'DailyPetta', 'Status', 'DailySalaryEnabled', 'TemporaryEmployee', 'OpeningBalance'],
   LEAVES: ['ID', 'EmployeeID', 'EmployeeName', 'StartDateTime', 'EndDateTime', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARY_PAYMENTS: ['ID', 'EmployeeID', 'EmployeeName', 'PaymentDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   PETTA_HISTORY:   ['ID', 'EmployeeID', 'EmployeeName', 'EffectiveDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
+  SALARY_HISTORY:  ['ID', 'EmployeeID', 'EmployeeName', 'EffectiveDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARIES: ['ID', 'EmployeeID', 'EmployeeName', 'Month', 'Year', 'BaseSalary', 'Allowances', 'Deductions', 'NetSalary', 'PaymentDate', 'Status'],
   EXPENSE_CATEGORIES: ['ID', 'Name', 'SortOrder', 'Status', 'CategoryTypeID', 'ExcludeDailyCashSales'],
   EXPENSE_CATEGORY_TYPES: ['ID', 'Name', 'SortOrder', 'Status', 'AccessMode', 'AllowedUserIDs', 'DisplayText', 'ExpenseWorkflow'],

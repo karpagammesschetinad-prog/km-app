@@ -5,6 +5,7 @@ let empData = null;
 let empLeaves = [];
 let empPayments = [];
 let empPettaHistory = [];
+let empSalaryHistory = [];
 let expenseCategoryTypes = [];
 let fiscalYearConfig = null;
 
@@ -28,14 +29,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function loadAll() {
   try {
-    [empData, empLeaves, empPayments, empPettaHistory, expenseCategoryTypes, fiscalYearConfig] = await Promise.all([
+    [empData, empLeaves, empPayments, empPettaHistory, empSalaryHistory, expenseCategoryTypes, fiscalYearConfig] = await Promise.all([
       api('GET', `/employees/${empId}`),
       api('GET', `/leaves?employeeId=${empId}`),
       api('GET', `/payments?employeeId=${empId}`),
       api('GET', `/petta?employeeId=${empId}`),
+      api('GET', `/salary-history?employeeId=${empId}`),
       api('GET', '/categories/types/all'),
       api('GET', '/config')
     ]);
+    sortHistoriesByDateAsc();
     render();
   } catch (err) {
     document.getElementById('detailContent').innerHTML =
@@ -44,6 +47,14 @@ async function loadAll() {
 }
 
 /* ── Salary calculation (date-wise petta + carry-forward) ── */
+function sortHistoriesByDateAsc() {
+  const byDateAsc = key => (first, second) => String(first[key] || '').localeCompare(String(second[key] || ''));
+  empLeaves.sort(byDateAsc('startDateTime'));
+  empPayments.sort(byDateAsc('paymentDate'));
+  empPettaHistory.sort(byDateAsc('effectiveDate'));
+  empSalaryHistory.sort(byDateAsc('effectiveDate'));
+}
+
 function parseDateOnly(value) {
   if (!value) return null;
   if (value instanceof Date) {
@@ -79,17 +90,33 @@ function getDefaultCalculationDates() {
   return { start: configuredStart || parseDateOnly(empData.startDate), end: configuredEnd && configuredEnd < today ? configuredEnd : today };
 }
 
-function getLeaveFractionForDay(dayStart) {
-  const dayEnd = addDays(dayStart, 1);
-  let frac = 0;
-  empLeaves.forEach(l => {
-    const ls = new Date(l.startDateTime);
-    const le = l.endDateTime ? new Date(l.endDateTime) : new Date();
-    const s = new Date(Math.max(ls.getTime(), dayStart.getTime()));
-    const e = new Date(Math.min(le.getTime(), dayEnd.getTime()));
-    if (e > s) frac += (e - s) / 86400000;
+// Leave is counted by calendar date only: a half day is 0.5, any other covered date is a full day.
+function leaveSpan(leave) {
+  const start = parseDateOnly(leave.startDateTime);
+  if (!start) return null;
+  const rawEnd = leave.endDateTime ? new Date(leave.endDateTime) : null;
+  if (!rawEnd || Number.isNaN(rawEnd.getTime())) return { start, end: parseDateOnly(new Date()), fraction: 1 };
+  const spanHours = (rawEnd - new Date(leave.startDateTime)) / 3600000;
+  // Ends stored at midnight mean "up to the previous day".
+  const end = parseDateOnly(new Date(rawEnd.getTime() - 1));
+  if (spanHours > 0 && spanHours <= 12 && dateKey(end) === dateKey(start)) return { start, end: start, fraction: 0.5 };
+  return { start, end: end < start ? start : end, fraction: 1 };
+}
+
+function leaveFractionOn(dayStart, leaves) {
+  const key = dateKey(dayStart);
+  let fraction = 0;
+  (leaves || []).forEach(leave => {
+    const span = leaveSpan(leave);
+    if (!span) return;
+    if (key < dateKey(span.start) || key > dateKey(span.end)) return;
+    fraction += span.fraction;
   });
-  return Math.max(0, Math.min(1, frac));
+  return Math.max(0, Math.min(1, fraction));
+}
+
+function getLeaveFractionForDay(dayStart) {
+  return leaveFractionOn(dayStart, empLeaves);
 }
 
 function buildPettaTimeline() {
@@ -100,6 +127,18 @@ function buildPettaTimeline() {
       amount: parseFloat(p.amount) || 0
     }))
     .filter(x => x.date)
+    .sort((a, b) => a.date - b.date);
+  return { base, entries };
+}
+
+function buildSalaryTimeline() {
+  const base = parseFloat(empData.perDaySalary) || 0;
+  const entries = (empSalaryHistory || [])
+    .map(record => ({
+      date: parseDateOnly(record.effectiveDate),
+      amount: parseFloat(record.amount) || 0
+    }))
+    .filter(item => item.date)
     .sort((a, b) => a.date - b.date);
   return { base, entries };
 }
@@ -144,6 +183,8 @@ function calcSalary(fiscalStart = null, fiscalEnd = null) {
 
   const perDaySalary = parseFloat(empData.perDaySalary) || 0;
   const timeline = buildPettaTimeline();
+  const salaryTimeline = buildSalaryTimeline();
+  const rateFor = day => getPettaForDate(day, salaryTimeline);
 
   const paymentMap = new Map();
   (empPayments || []).forEach(p => {
@@ -158,6 +199,9 @@ function calcSalary(fiscalStart = null, fiscalEnd = null) {
       .filter(p => p.date >= calculationStart && p.date <= today)
       .map(p => dateKey(p.date))
   );
+  salaryTimeline.entries
+    .filter(item => item.date >= calculationStart && item.date <= today)
+    .forEach(item => pettaChangeKeys.add(dateKey(item.date)));
 
   let totalDays = 0;
   let leaveDays = 0;
@@ -171,14 +215,14 @@ function calcSalary(fiscalStart = null, fiscalEnd = null) {
   let segWorkedDays = 0;
   let segEarned = 0;
   let segPaid = 0;
-  let segOpening = 0;
+  let segOpening = parseFloat(empData.openingBalance) || 0;
   for (let day = new Date(employeeStart); day < calculationStart; day = addDays(day, 1)) {
     const leaveFrac = getLeaveFractionForDay(day);
     const paid = (empPayments || []).filter(p => {
       const paymentDate = parseDateOnly(p.paymentDate);
       return paymentDate && dateKey(paymentDate) === dateKey(day);
     }).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-    segOpening += Math.max(0, 1 - leaveFrac) * (perDaySalary - getPettaForDate(day, timeline)) - paid;
+    segOpening += Math.max(0, 1 - leaveFrac) * (rateFor(day) - getPettaForDate(day, timeline)) - paid;
   }
   let runningBalance = segOpening;
   const periods = [];
@@ -187,7 +231,7 @@ function calcSalary(fiscalStart = null, fiscalEnd = null) {
     const leaveFrac = getLeaveFractionForDay(day);
     const workedFrac = Math.max(0, 1 - leaveFrac);
     const petta = getPettaForDate(day, timeline);
-    const netPerDay = perDaySalary - petta;
+    const netPerDay = rateFor(day) - petta;
 
     const key = dateKey(day);
     const dayPaid = paymentMap.get(key) || 0;
@@ -215,6 +259,7 @@ function calcSalary(fiscalStart = null, fiscalEnd = null) {
         start: new Date(segStart),
         end: new Date(day),
         petta: getPettaForDate(segStart, timeline),
+        perDay: rateFor(segStart),
         totalDays: segTotalDays,
         leaveDays: segLeaveDays,
         workedDays: segWorkedDays,
@@ -247,6 +292,7 @@ function calcSalary(fiscalStart = null, fiscalEnd = null) {
     totalPaid: dailyPayTotal,
     balance: empData.dailySalaryEnabled ? 0 : runningBalance,
     currentPetta: getPettaForDate(today, timeline),
+    currentPerDay: rateFor(today),
     periods: dailyPayPeriods
   };
 }
@@ -283,11 +329,11 @@ function render() {
     ? '<span class="badge bg-info-subtle text-info border border-info-subtle ms-1"><i class="bi bi-calendar-day me-1"></i>Daily Pay</span>'
     : '';
   const dailyPayLabel = empData.temporaryEmployee ? 'Dynamic Daily Pay' : 'Per Day Salary';
-  const dailyPayValue = empData.temporaryEmployee ? 'Based on recorded payments' : formatCurrency(empData.perDaySalary);
+  const dailyPayValue = empData.temporaryEmployee ? 'Based on recorded payments' : formatCurrency(sal.currentPerDay ?? empData.perDaySalary);
   const dailyPettaLabel = empData.temporaryEmployee ? 'Total Paid' : 'Current Petta';
   const dailyPettaValue = empData.temporaryEmployee ? formatCurrency(sal.totalPaid) : formatCurrency(sal.currentPetta);
   const dailyNetLabel = empData.temporaryEmployee ? 'Salary Status' : 'Current Net Per Day';
-  const dailyNetValue = empData.temporaryEmployee ? 'Paid amount is final' : formatCurrency((parseFloat(empData.perDaySalary) || 0) - sal.currentPetta);
+  const dailyNetValue = empData.temporaryEmployee ? 'Paid amount is final' : formatCurrency((sal.currentPerDay ?? (parseFloat(empData.perDaySalary) || 0)) - sal.currentPetta);
 
   document.getElementById('detailContent').innerHTML = `
 
@@ -399,7 +445,7 @@ function render() {
         <table class="table mobile-grid-table">
           <thead>
             <tr>
-              <th>Period</th><th>Petta / Day</th><th>Days Worked</th><th>Earned</th><th>Paid</th><th>Opening</th><th>Closing</th>
+              <th>Period</th><th>Salary / Day</th><th>Petta / Day</th><th>Days Worked</th><th>Earned</th><th>Paid</th><th>Opening</th><th>Closing</th>
             </tr>
           </thead>
           <tbody>${renderPeriodRows(sal.periods)}</tbody>
@@ -421,6 +467,22 @@ function render() {
         </table>
       </div>
     </div>
+
+    <!-- Salary Revisions -->
+    ${showSalary && !empData.temporaryEmployee ? `
+    <div class="card-panel mb-3">
+      <div class="card-panel-header">
+        <h6 class="card-panel-title"><i class="bi bi-graph-up-arrow me-2"></i>Salary Revisions</h6>
+        ${canAccess('employees','add') ? `<button class="btn btn-sm btn-outline-primary" id="btnAddSalaryRevision"><i class="bi bi-plus-lg me-1"></i>Add Revision</button>` : ''}
+      </div>
+      <div class="table-responsive">
+        <table class="table mobile-grid-table">
+          <thead><tr><th>Effective Date</th><th>Salary / Day</th><th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
+          <tbody id="salaryHistoryBody">${renderSalaryHistoryRows(empSalaryHistory)}</tbody>
+        </table>
+      </div>
+    </div>
+    ` : ''}
 
     <!-- Petta History -->
     <div class="card-panel mb-3">
@@ -469,6 +531,12 @@ function render() {
     document.getElementById('pettaDate').value = new Date().toISOString().split('T')[0];
     bootstrap.Modal.getOrCreateInstance(document.getElementById('pettaModal')).show();
   });
+  const btnSalaryRevision = document.getElementById('btnAddSalaryRevision');
+  if (btnSalaryRevision) btnSalaryRevision.addEventListener('click', () => {
+    document.getElementById('salaryRevisionForm').reset();
+    document.getElementById('salaryRevisionDate').value = new Date().toISOString().split('T')[0];
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('salaryRevisionModal')).show();
+  });
 
   const pettaBody = document.getElementById('pettaBody');
   if (pettaBody) pettaBody.innerHTML = renderPettaRows(visiblePetta);
@@ -478,9 +546,9 @@ function renderLeaveRows() {
   if (!empLeaves.length) return `<tr><td colspan="5" class="text-center text-muted py-3">No leave records</td></tr>`;
   const now = new Date();
   return empLeaves.map(l => {
-    const s = new Date(l.startDateTime), e = l.endDateTime ? new Date(l.endDateTime) : new Date();
-    const days = ((e - s) / 86400000).toFixed(1);
-    const active = s <= now && (!l.endDateTime || now <= e);
+    const span = leaveSpan(l);
+    const days = (span.fraction === 0.5 ? 0.5 : ((span.end - span.start) / 86400000) + 1).toFixed(1);
+    const active = new Date(l.startDateTime) <= now && (!l.endDateTime || now <= new Date(l.endDateTime));
     return `<tr class="${active ? 'table-info' : ''}">
       <td data-label="From">${formatDateTime(l.startDateTime)}</td>
       <td data-label="To">${l.endDateTime ? formatDateTime(l.endDateTime) : '<span class="badge bg-warning-subtle text-warning border border-warning-subtle">Ongoing</span>'}</td>
@@ -520,9 +588,22 @@ function renderPettaRows(records) {
   }).join('');
 }
 
+function renderSalaryHistoryRows(records) {
+  if (!records || !records.length) return `<tr><td colspan="5" class="text-center text-muted py-3">No revisions; the recorded per day salary applies from the start date</td></tr>`;
+  return records.map(record => `
+    <tr>
+      <td data-label="Effective date">${formatDate(record.effectiveDate)}</td>
+      <td data-label="Salary / day" class="fw-semibold text-success">${formatCurrency(record.amount)}</td>
+      <td data-label="Remarks">${record.remarks || '—'}</td>
+      <td data-label="Recorded by" class="text-muted small">${record.createdBy || '—'}</td>
+      <td data-label="Actions">${isSuperUser() ? `<button class="btn btn-sm btn-outline-danger btn-action" onclick="deleteSalaryRevision('${record.id}')"><i class="bi bi-trash"></i></button>` : ''}</td>
+    </tr>
+  `).join('');
+}
+
 function renderPeriodRows(periods) {
   if (!periods || !periods.length) {
-    return `<tr><td colspan="7" class="text-center text-muted py-3">No calculated periods yet</td></tr>`;
+    return `<tr><td colspan="8" class="text-center text-muted py-3">No calculated periods yet</td></tr>`;
   }
 
   return periods.map((p) => {
@@ -532,6 +613,7 @@ function renderPeriodRows(periods) {
     return `
       <tr>
         <td data-label="Period">${formatDate(dateKey(p.start))} - ${formatDate(dateKey(p.end))}</td>
+        <td data-label="Salary / day" class="fw-semibold">${formatCurrency(p.perDay ?? empData.perDaySalary)}</td>
         <td data-label="Petta / day" class="text-warning fw-semibold">${formatCurrency(p.petta)}</td>
         <td data-label="Days worked">${p.workedDays.toFixed(1)} / ${p.totalDays.toFixed(1)}</td>
         <td data-label="Earned" class="text-success fw-semibold">${formatCurrency(p.earned)}</td>
@@ -565,6 +647,7 @@ function setupModals() {
   document.getElementById('btnSavePayment').addEventListener('click', savePayment);
   document.getElementById('btnSaveEdit').addEventListener('click', saveEdit);
   document.getElementById('btnSavePetta').addEventListener('click', savePetta);
+  document.getElementById('btnSaveSalaryRevision').addEventListener('click', saveSalaryRevision);
   document.getElementById('leaveStartDate').addEventListener('change', syncLeaveDateFields);
   document.getElementById('leaveHalfDay').addEventListener('change', syncLeaveDateFields);
   document.getElementById('leaveModal').addEventListener('show.bs.modal', () => {
@@ -635,6 +718,7 @@ function openEdit() {
   document.getElementById('editPerDay').value      = empData.perDaySalary;
   document.getElementById('editPetta').value       = empData.dailyPetta;
   document.getElementById('editStatus').value      = empData.status;
+  document.getElementById('editOpeningBalance').value = empData.openingBalance || 0;
   document.getElementById('editDailyPay').checked  = !!empData.dailySalaryEnabled;
   document.getElementById('editTemporary').checked  = !!empData.temporaryEmployee;
   document.getElementById('editTemporary').dispatchEvent(new Event('change'));
@@ -656,7 +740,8 @@ async function saveEdit() {
       dailyPetta:         parseFloat(document.getElementById('editPetta').value) || 0,
       status:             document.getElementById('editStatus').value,
       dailySalaryEnabled: document.getElementById('editDailyPay').checked,
-      temporaryEmployee:  document.getElementById('editTemporary').checked
+      temporaryEmployee:  document.getElementById('editTemporary').checked,
+      openingBalance:     parseFloat(document.getElementById('editOpeningBalance').value) || 0
     });
     bootstrap.Modal.getInstance(document.getElementById('editEmpModal')).hide();
     showNotification('Employee updated.');
@@ -746,6 +831,43 @@ async function savePetta() {
     showNotification('Save failed: ' + err.message, 'danger');
   } finally {
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Petta';
+  }
+}
+
+async function saveSalaryRevision() {
+  const form = document.getElementById('salaryRevisionForm');
+  if (!form.checkValidity()) { form.reportValidity(); return; }
+  const btn = document.getElementById('btnSaveSalaryRevision');
+  const amount = parseFloat(document.getElementById('salaryRevisionAmount').value);
+  const effectiveDate = document.getElementById('salaryRevisionDate').value;
+  const remarks = document.getElementById('salaryRevisionRemarks').value.trim();
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+  try {
+    // The employee record keeps the current rate; the PUT seeds the earlier rate on the timeline.
+    await api('PUT', `/employees/${empId}`, {
+      perDaySalary: amount,
+      salaryEffectiveDate: effectiveDate,
+      salaryRevisionRemarks: remarks
+    });
+    form.reset();
+    bootstrap.Modal.getInstance(document.getElementById('salaryRevisionModal')).hide();
+    showNotification('Salary revision saved.');
+    await loadAll();
+  } catch (err) {
+    showNotification('Save failed: ' + err.message, 'danger');
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Revision';
+  }
+}
+
+async function deleteSalaryRevision(id) {
+  if (!confirm('Delete this salary revision? Earlier days will fall back to the previous rate.')) return;
+  try {
+    await api('DELETE', `/salary-history/${id}`);
+    showNotification('Salary revision deleted.');
+    await loadAll();
+  } catch (err) {
+    showNotification('Delete failed: ' + err.message, 'danger');
   }
 }
 
