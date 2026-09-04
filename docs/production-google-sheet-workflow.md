@@ -37,12 +37,11 @@ Optional extra backup:
 
 ## 3. Dry Run Against Non-Production First
 
-Run migration logic on development sheet before touching production:
+Run the safe migration on the development sheet before touching production. It creates a backup, expands sheet headers, and adds any newly introduced default Settings keys without changing existing configured values:
 
 PowerShell:
 
-$env:NODE_ENV = "development"
-node -e "require('dotenv').config(); const { initializeSheets } = require('./services/googleSheets'); initializeSheets().then(() => console.log('Development migration ok')).catch(err => { console.error(err); process.exit(1); });"
+npm run migrate:dev:safe
 
 Verify tab headers and app behavior on development.
 
@@ -52,14 +51,13 @@ From repository root:
 
 PowerShell:
 
-$env:NODE_ENV = "production"
-node -e "require('dotenv').config({ path: '.env.production' }); const { initializeSheets } = require('./services/googleSheets'); initializeSheets().then(() => console.log('Production migration ok')).catch(err => { console.error(err); process.exit(1); });"
+npm run migrate:prod:safe
 
 What this does:
 - Creates missing tabs
 - Writes headers for newly created tabs
 - Expands headers for known schema-growth cases
-- Seeds defaults for first-time tabs where applicable
+- Adds missing default Settings keys while preserving existing values
 
 ## 5. Start App in Production Mode and Smoke Test
 

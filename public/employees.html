@@ -37,7 +37,7 @@
     </div>
     <div class="d-flex gap-2">
       <button class="btn btn-outline-primary btn-sm su-only" data-screen="employees" id="btnDaySalary">
-        <i class="bi bi-people me-1"></i>Day Salary Summary
+        <i class="bi bi-people me-1"></i>Salary Summary
       </button>
       <button class="btn btn-primary btn-sm su-only" data-screen="employees" data-sub="add" id="btnAddEmployee">
         <i class="bi bi-person-plus me-1"></i>Add Employee
@@ -156,26 +156,42 @@
   </div>
 </div>
 
-<!-- Consolidated day salary modal -->
+<!-- Consolidated salary summary modal -->
 <div class="modal fade" id="daySalaryModal" tabindex="-1">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-people me-2"></i>Day Salary Summary</h5>
+        <h5 class="modal-title"><i class="bi bi-people me-2"></i>Salary Summary</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body p-0">
         <div class="p-3 border-bottom bg-light d-flex align-items-end gap-3 flex-wrap">
           <div>
-            <label class="form-label mb-1 small fw-semibold">Date</label>
-            <input type="date" class="form-control form-control-sm" id="daySalaryDate" style="width:160px">
+            <label class="form-label mb-1 small fw-semibold">Start date</label>
+            <input type="date" class="form-control form-control-sm" id="daySalaryStartDate" style="width:160px">
+          </div>
+          <div>
+            <label class="form-label mb-1 small fw-semibold">End date</label>
+            <input type="date" class="form-control form-control-sm" id="daySalaryEndDate" style="width:160px">
+          </div>
+          <div class="dropdown" data-bs-auto-close="outside">
+            <label class="form-label mb-1 small fw-semibold">Employees</label>
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle d-block" type="button" id="daySalaryEmployeeButton" data-bs-toggle="dropdown" aria-expanded="false">All employees</button>
+            <div class="dropdown-menu p-2" style="width:260px" aria-labelledby="daySalaryEmployeeButton">
+              <input type="search" class="form-control form-control-sm mb-2" id="daySalaryEmployeeSearch" placeholder="Search employees">
+              <div class="d-flex justify-content-between mb-2">
+                <button class="btn btn-link btn-sm p-0" type="button" id="daySalarySelectAll">Select all</button>
+                <button class="btn btn-link btn-sm p-0" type="button" id="daySalaryClearAll">Clear</button>
+              </div>
+              <div id="daySalaryEmployeeOptions" style="max-height:180px;overflow-y:auto"></div>
+            </div>
           </div>
           <div class="ms-auto text-muted small" id="daySalaryTotals"></div>
         </div>
         <div class="table-responsive">
           <table class="table mobile-grid-table mb-0">
             <thead><tr>
-              <th>Employee</th><th>Type</th><th class="text-end">Salary / Day</th><th class="text-end">Petta</th>
+              <th>Employee</th><th>Type</th><th class="text-end">Salary Earned</th><th class="text-end">Petta</th>
               <th class="text-end">Salary Received</th><th class="text-end">Pending Salary</th>
             </tr></thead>
             <tbody id="daySalaryBody"></tbody>

@@ -46,7 +46,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  EXPENSES: ['ID', 'Date', 'Category', 'Description', 'Amount', 'EmployeeID', 'EmployeeName', 'SubmittedBy', 'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'RejectionReason', 'CreatedAt', 'CategoryTypeID', 'IsOnSpot', 'PaymentID', 'Shift', 'ExpenseMode'],
+  EXPENSES: ['ID', 'Date', 'Category', 'Description', 'Amount', 'EmployeeID', 'EmployeeName', 'SubmittedBy', 'ApprovalStatus', 'ApprovedBy', 'ApprovedAt', 'RejectionReason', 'CreatedAt', 'CategoryTypeID', 'IsOnSpot', 'PaymentID', 'Shift', 'ExpenseMode', 'UpdatedBy', 'UpdatedAt'],
   SALES: ['ID', 'Date', 'Morning', 'Afternoon', 'Dinner', 'TotalSales', 'ExpenseTotal', 'Remaining', 'EnteredBy', 'CreatedAt', 'MorningEnteredBy', 'AfternoonEnteredBy', 'DinnerEnteredBy'],
   SALES_ENTRIES: ['ID', 'Date', 'Shift', 'PaymentType', 'OnlineVendor', 'Amount', 'EnteredBy', 'CreatedAt', 'UpdatedAt'],
   EMPLOYEES: ['ID', 'Name', 'Address', 'Phone', 'StartDate', 'PerDaySalary', 'DailyPetta', 'Status', 'DailySalaryEnabled', 'TemporaryEmployee', 'OpeningBalance'],
@@ -60,6 +60,19 @@ const HEADERS = {
   SETTINGS: ['Key', 'Value'],
   USERS: ['ID', 'Username', 'DisplayName', 'Role', 'PasswordHash', 'Status', 'CreatedAt', 'Permissions']
 };
+
+const DEFAULT_SETTINGS = [
+  ['FY_START_MONTH', '4'],
+  ['FY_START_DAY', '1'],
+  ['FY_START_DATE', ''],
+  ['FY_END_DATE', ''],
+  ['IDLE_TIMEOUT_MINUTES', '15'],
+  ['AUTO_SAVE_ENABLED', 'true'],
+  ['AUTO_APPROVAL_ENABLED', 'true'],
+  ['AUTO_APPROVAL_DAYS', '2'],
+  ['PAYMENT_TYPES', 'Cash'],
+  ['ONLINE_VENDORS', '']
+];
 
 async function getAuthClient() {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
@@ -187,7 +200,20 @@ async function initializeSheets() {
         await sheets.spreadsheets.values.append({
           spreadsheetId: SPREADSHEET_ID,
           range: `${name}!A1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
-          resource: { values: [['FY_START_MONTH', '4'], ['FY_START_DAY', '1'], ['FY_START_DATE', ''], ['FY_END_DATE', ''], ['IDLE_TIMEOUT_MINUTES', '15'], ['AUTO_SAVE_ENABLED', 'true']] }
+          resource: { values: DEFAULT_SETTINGS }
+        });
+      }
+    }
+
+    if (key === 'SETTINGS') {
+      const settings = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${name}!A2:B` });
+      const existingKeys = new Set((settings.data.values || []).map(row => row[0]));
+      const missingDefaults = DEFAULT_SETTINGS.filter(([settingKey]) => !existingKeys.has(settingKey));
+      if (missingDefaults.length) {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${name}!A1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS',
+          resource: { values: missingDefaults }
         });
       }
     }

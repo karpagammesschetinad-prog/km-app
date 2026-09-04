@@ -33,7 +33,8 @@ const EXPENSE_COLUMNS = {
   EMP_ID: 'EmployeeID', EMPLOYEE_ID: 'EmployeeID', EMP_NAME: 'EmployeeName',
   SUBMITTED_BY: 'SubmittedBy', APPROVAL_STATUS: 'ApprovalStatus', APPROVED_BY: 'ApprovedBy',
   APPROVED_AT: 'ApprovedAt', REJECTION_REASON: 'RejectionReason', CREATED_AT: 'CreatedAt',
-  TYPE_ID: 'CategoryTypeID', ON_SPOT: 'IsOnSpot', PAYMENT_ID: 'PaymentID', SHIFT: 'Shift', MODE: 'ExpenseMode'
+  TYPE_ID: 'CategoryTypeID', ON_SPOT: 'IsOnSpot', PAYMENT_ID: 'PaymentID', SHIFT: 'Shift', MODE: 'ExpenseMode',
+  UPDATED_BY: 'UpdatedBy', UPDATED_AT: 'UpdatedAt'
 };
 
 const CATEGORY_TYPE_COLUMNS = {

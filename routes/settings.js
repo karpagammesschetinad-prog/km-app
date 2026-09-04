@@ -3,7 +3,7 @@ const router = express.Router();
 const { SHEETS, getAllRows, appendRow, updateRow } = require('../services/googleSheets');
 const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware');
 
-const SETTINGS = ['FY_START_MONTH', 'FY_START_DAY', 'FY_START_DATE', 'FY_END_DATE', 'IDLE_TIMEOUT_MINUTES', 'PAYMENT_TYPES', 'ONLINE_VENDORS'];
+const SETTINGS = ['FY_START_MONTH', 'FY_START_DAY', 'FY_START_DATE', 'FY_END_DATE', 'IDLE_TIMEOUT_MINUTES', 'AUTO_APPROVAL_ENABLED', 'AUTO_APPROVAL_DAYS', 'PAYMENT_TYPES', 'ONLINE_VENDORS'];
 
 router.get('/autosave', requireAuth, async (req, res) => {
   try {
@@ -31,6 +31,8 @@ router.get('/', requireSuperUser, async (req, res) => {
     const rows = await getAllRows(SHEETS.SETTINGS);
     const data = Object.fromEntries(SETTINGS.map(key => [key, rows.find(row => row[0] === key)?.[1] || '']));
     data.IDLE_TIMEOUT_MINUTES = data.IDLE_TIMEOUT_MINUTES || '15';
+    data.AUTO_APPROVAL_ENABLED = data.AUTO_APPROVAL_ENABLED === '' ? 'true' : String(data.AUTO_APPROVAL_ENABLED).toLowerCase() === 'true' ? 'true' : 'false';
+    data.AUTO_APPROVAL_DAYS = data.AUTO_APPROVAL_DAYS || '2';
     data.PAYMENT_TYPES = data.PAYMENT_TYPES || 'Cash';
     data.ONLINE_VENDORS = data.ONLINE_VENDORS || '';
     if (!data.FY_START_DATE || !data.FY_END_DATE) {
@@ -52,12 +54,20 @@ router.put('/', requireSuperUser, async (req, res) => {
     const startDate = String(req.body.FY_START_DATE || '').trim();
     const endDate = String(req.body.FY_END_DATE || '').trim();
     const idleTimeout = parseInt(req.body.IDLE_TIMEOUT_MINUTES, 10);
+    const autoApprovalEnabled = req.body.AUTO_APPROVAL_ENABLED ?? true;
+    const autoApprovalDays = parseInt(req.body.AUTO_APPROVAL_DAYS ?? '2', 10);
     const paymentTypes = Array.isArray(req.body.PAYMENT_TYPES)
       ? req.body.PAYMENT_TYPES.map(value => String(value).trim()).filter(Boolean)
       : String(req.body.PAYMENT_TYPES || 'Cash').split(',').map(value => value.trim()).filter(Boolean);
     const onlineVendors = String(req.body.ONLINE_VENDORS || '').split(',').map(value => value.trim()).filter(Boolean);
     if (!Number.isInteger(idleTimeout) || idleTimeout < 1 || idleTimeout > 1440) {
       return res.status(400).json({ success: false, message: 'Auto logout must be between 1 and 1440 minutes.' });
+    }
+    if (typeof autoApprovalEnabled !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'Auto approval must be enabled or disabled.' });
+    }
+    if (!Number.isInteger(autoApprovalDays) || autoApprovalDays < 1 || autoApprovalDays > 365) {
+      return res.status(400).json({ success: false, message: 'Auto approval delay must be between 1 and 365 days.' });
     }
     if (!paymentTypes.length) return res.status(400).json({ success: false, message: 'At least one payment type is required.' });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate >= endDate) {
@@ -67,12 +77,12 @@ router.put('/', requireSuperUser, async (req, res) => {
     const month = start.getMonth() + 1;
     const day = start.getDate();
     const rows = await getAllRows(SHEETS.SETTINGS);
-    for (const [key, value] of [['FY_START_MONTH', String(month)], ['FY_START_DAY', String(day)], ['FY_START_DATE', startDate], ['FY_END_DATE', endDate], ['IDLE_TIMEOUT_MINUTES', String(idleTimeout)], ['PAYMENT_TYPES', paymentTypes.join(',')], ['ONLINE_VENDORS', onlineVendors.join(',')]]) {
+    for (const [key, value] of [['FY_START_MONTH', String(month)], ['FY_START_DAY', String(day)], ['FY_START_DATE', startDate], ['FY_END_DATE', endDate], ['IDLE_TIMEOUT_MINUTES', String(idleTimeout)], ['AUTO_APPROVAL_ENABLED', String(autoApprovalEnabled)], ['AUTO_APPROVAL_DAYS', String(autoApprovalDays)], ['PAYMENT_TYPES', paymentTypes.join(',')], ['ONLINE_VENDORS', onlineVendors.join(',')]]) {
       const index = rows.findIndex(row => row[0] === key);
       if (index >= 0) await updateRow(SHEETS.SETTINGS, index + 2, [key, value]);
       else await appendRow(SHEETS.SETTINGS, [key, value]);
     }
-    res.json({ success: true, data: { FY_START_MONTH: String(month), FY_START_DAY: String(day), FY_START_DATE: startDate, FY_END_DATE: endDate, IDLE_TIMEOUT_MINUTES: String(idleTimeout), PAYMENT_TYPES: paymentTypes.join(','), ONLINE_VENDORS: onlineVendors.join(',') } });
+    res.json({ success: true, data: { FY_START_MONTH: String(month), FY_START_DAY: String(day), FY_START_DATE: startDate, FY_END_DATE: endDate, IDLE_TIMEOUT_MINUTES: String(idleTimeout), AUTO_APPROVAL_ENABLED: String(autoApprovalEnabled), AUTO_APPROVAL_DAYS: String(autoApprovalDays), PAYMENT_TYPES: paymentTypes.join(','), ONLINE_VENDORS: onlineVendors.join(',') } });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 

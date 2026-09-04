@@ -378,6 +378,7 @@ body.tamil-keyboard-ready .tamil-keyboard-panel.show { display: block; }
 .expense-date-picker-weekdays { color: var(--text-muted); font-size: .62rem; text-align: center; margin-bottom: .25rem; }
 .expense-date-picker-day { min-height: 2rem; border: 1px solid #cbd5e1; border-radius: 5px; background: #f1f5f9; color: var(--text-main); font-size: .75rem; cursor: pointer; }
 .expense-date-picker-day.approved { background: #dcfce7; border-color: #86efac; color: #166534; }
+.expense-date-picker-day.pending { background: #fffbeb; border-color: #fcd34d; color: #92400e; }
 .expense-date-picker-day.rejected { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
 .expense-date-picker-day.selected { box-shadow: 0 0 0 2px var(--primary); font-weight: 700; }
 .expense-date-picker-day:disabled { opacity: .35; cursor: not-allowed; }
@@ -386,6 +387,7 @@ body.tamil-keyboard-ready .tamil-keyboard-panel.show { display: block; }
 .expense-date-picker-legend span { display: inline-flex; align-items: center; gap: .25rem; }
 .expense-date-picker-legend i { width: .55rem; height: .55rem; border-radius: 2px; display: inline-block; }
 .expense-date-picker-legend i.approved { background: #86efac; }
+.expense-date-picker-legend i.pending { background: #fcd34d; }
 .expense-date-picker-legend i.rejected { background: #fca5a5; }
 .expense-date-picker-legend i.neutral { background: #cbd5e1; }
 .sales-shift-input { margin-bottom: .75rem; }

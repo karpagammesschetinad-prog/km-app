@@ -154,7 +154,7 @@
 <!-- Occasional expense modal -->
 <div class="modal fade" id="occasionalExpenseModal" tabindex="-1">
   <div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title"><i class="bi bi-calendar-plus me-2"></i>Add Occasional Expenses</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-header"><h5 class="modal-title" id="occasionalExpenseModalTitle"><i class="bi bi-calendar-plus me-2"></i>Add Occasional Expense</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body"><form id="occasionalExpenseForm" novalidate><div class="row g-3">
       <div class="col-md-6"><label class="form-label">Date</label><input type="date" class="form-control" id="occasionalExpenseDate" readonly required><div class="form-text">Uses the date selected on the expenses screen.</div></div>
       <div class="col-md-6"><label class="form-label">Expense Type <span class="text-danger">*</span></label><select class="form-select" id="occasionalExpenseType" required></select></div>
@@ -187,7 +187,20 @@
               <label class="form-label mb-1 small fw-semibold">To</label>
               <input type="date" class="form-control form-control-sm" id="fDateTo" style="width:145px">
             </div>
-            <div class="col-12 col-md">
+            <div class="col-auto d-flex gap-2">
+              <button class="btn btn-sm btn-primary" id="btnToggleDailyCash" title="Toggle daily cash expenses">
+                <i class="bi bi-cash-coin me-1"></i>Daily
+              </button>
+              <button class="btn btn-sm btn-outline-secondary" id="btnToggleOccasional" title="Toggle occasional expenses">
+                <i class="bi bi-calendar-plus me-1"></i>Occasional
+              </button>
+            </div>
+            <div class="w-100"></div>
+            <div class="col-12 col-md-auto">
+              <label class="form-label mb-1 small fw-semibold">Category types</label>
+              <div id="typeFilterChips" class="d-flex flex-wrap gap-1"></div>
+            </div>
+            <div class="col-12 col-md-auto">
               <label class="form-label mb-1 small fw-semibold">Categories</label>
               <div id="catFilterChips" class="d-flex flex-wrap gap-1"></div>
             </div>
@@ -208,13 +221,21 @@
               <button class="btn btn-sm btn-outline-secondary" id="btnToggleChart" title="Toggle chart">
                 <i class="bi bi-graph-up me-1"></i>Chart
               </button>
-              <button class="btn btn-sm btn-primary" id="btnToggleDailyCash" title="Toggle daily cash expenses">
-                <i class="bi bi-cash-coin me-1"></i>Daily Cash
-              </button>
-              <button class="btn btn-sm btn-outline-secondary" id="btnToggleOccasional" title="Toggle occasional expenses">
-                <i class="bi bi-calendar-plus me-1"></i>Occasional
-              </button>
             </div>
+          </div>
+        </div>
+
+        <div class="p-3 border-bottom" id="categoryTypeReportSection">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+            <h6 class="mb-0"><i class="bi bi-tags me-2"></i>Expenses by Category Type</h6>
+            <span class="badge bg-info-subtle text-info border border-info-subtle" id="categoryTypeReportSummary">₹0</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm mobile-grid-table mb-0">
+              <thead><tr><th>Category Type</th><th class="text-end">Entries</th><th class="text-end">Categories</th><th class="text-end">Amount</th></tr></thead>
+              <tbody id="categoryTypeReportBody"></tbody>
+              <tfoot id="categoryTypeReportFoot"></tfoot>
+            </table>
           </div>
         </div>
 
@@ -285,6 +306,7 @@
       </div>
       <div class="modal-body">
         <p class="small text-muted mb-2">Provide a reason so the cashier can correct the entry.</p>
+        <div class="mb-3" id="rejectTargets"></div>
         <textarea class="form-control" id="rejectReason" rows="3" placeholder="Reason for rejection�"></textarea>
       </div>
       <div class="modal-footer py-2">

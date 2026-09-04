@@ -5,6 +5,8 @@ function getSettingsPayload() {
     FY_START_DATE: document.getElementById('fyStartDate').value,
     FY_END_DATE: document.getElementById('fyEndDate').value,
     IDLE_TIMEOUT_MINUTES: document.getElementById('idleTimeoutMinutes').value,
+    AUTO_APPROVAL_ENABLED: document.getElementById('autoApprovalEnabled').checked,
+    AUTO_APPROVAL_DAYS: document.getElementById('autoApprovalDays').value,
     PAYMENT_TYPES: paymentTypes,
     ONLINE_VENDORS: document.getElementById('onlineVendors').value
   };
@@ -89,12 +91,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     } finally { autoSaveInput.disabled = false; }
   });
   if (user.role !== 'superuser') return;
+  document.getElementById('idleTimeoutMinutes').closest('.col-md-6').insertAdjacentHTML('afterend', `
+    <div class="col-md-6"><div class="form-check form-switch mt-4">
+      <input class="form-check-input" type="checkbox" role="switch" id="autoApprovalEnabled">
+      <label class="form-check-label" for="autoApprovalEnabled">Auto-approve pending expenses</label>
+    </div></div>
+    <div class="col-md-6"><label class="form-label">Auto-approve After (days)</label>
+      <input type="number" class="form-control" id="autoApprovalDays" min="1" max="365" required>
+      <div class="form-text">Pending expenses are approved after this many days.</div>
+    </div>`);
   document.getElementById('addPaymentTypeBtn').addEventListener('click', addPaymentType);
   try {
     const settings = await api('GET', '/settings');
     document.getElementById('fyStartDate').value = settings.FY_START_DATE;
     document.getElementById('fyEndDate').value = settings.FY_END_DATE;
     document.getElementById('idleTimeoutMinutes').value = settings.IDLE_TIMEOUT_MINUTES;
+    document.getElementById('autoApprovalEnabled').checked = settings.AUTO_APPROVAL_ENABLED === 'true';
+    document.getElementById('autoApprovalDays').value = settings.AUTO_APPROVAL_DAYS;
     paymentTypes = parsePaymentTypes(settings.PAYMENT_TYPES);
     document.getElementById('onlineVendors').value = settings.ONLINE_VENDORS;
     renderPaymentTypes();
