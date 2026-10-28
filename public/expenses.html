@@ -110,9 +110,7 @@
                 </div>
               </div>
               <div class="tab-pane fade" id="expenseQuantitiesPane" role="tabpanel">
-                <div class="d-flex justify-content-end mb-2">
-                  <button type="button" class="btn btn-sm btn-outline-primary" id="btnAddUnpaidDaily" title="Record goods received without a payment yet"><i class="bi bi-plus-lg me-1"></i>Received without payment</button>
-                </div>
+                <p class="text-muted small">Quantity, unit price and quantity total are optional. Enter any two to calculate the blank third field. The expense payment amount is separate from the value of goods received.</p>
                 <div class="table-responsive">
                   <table class="table mobile-grid-table mb-0" id="quantityInputsTable">
                     <thead><tr><th>Category Type</th><th>Category</th><th>Quantities</th></tr></thead>
@@ -155,11 +153,32 @@
         <div class="card-panel">
           <div class="card-panel-header"><h6 class="card-panel-title">Occasional Expenses <span class="text-muted small fw-normal" id="occasionalExpensesDateLabel"></span></h6><div class="d-flex align-items-center gap-2"><span class="text-muted small">Not deducted from daily cash sales</span><span class="badge bg-info-subtle text-info border border-info-subtle" id="occasionalExpensesTotal">₹0</span></div></div>
           <ul class="nav nav-tabs px-3 pt-3" role="tablist"><li class="nav-item" role="presentation"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#occasionalExpensesPane" type="button" role="tab"><i class="bi bi-receipt me-1"></i>Expenses</button></li><li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#occasionalQuantitiesPane" type="button" role="tab"><i class="bi bi-box-seam me-1"></i>Quantities</button></li></ul>
-          <div class="tab-content"><div class="tab-pane fade show active" id="occasionalExpensesPane" role="tabpanel"><div class="table-responsive"><table class="table mobile-grid-table mb-0"><thead><tr><th>Date</th><th>Category</th><th>Type</th><th>Remarks</th><th class="text-end">Amount</th><th>Status</th><th style="width:90px"></th></tr></thead><tbody id="occasionalExpenseBody"></tbody></table></div></div><div class="tab-pane fade" id="occasionalQuantitiesPane" role="tabpanel"><div class="d-flex justify-content-end p-3 pb-0"><button type="button" class="btn btn-sm btn-outline-primary" id="btnAddUnpaidOccasional" title="Record goods received without a payment yet"><i class="bi bi-plus-lg me-1"></i>Received without payment</button></div><div class="table-responsive"><table class="table mobile-grid-table mb-0"><thead><tr><th>Category Type</th><th>Category</th><th>Quantities</th><th style="width:80px"></th></tr></thead><tbody id="occasionalQuantityBody"></tbody></table></div><div id="receiptsOnDateOccasional" class="px-3 pb-3"></div></div></div>
+          <div class="tab-content"><div class="tab-pane fade show active" id="occasionalExpensesPane" role="tabpanel"><div class="table-responsive"><table class="table mobile-grid-table mb-0"><thead><tr><th>Date</th><th>Category</th><th>Type</th><th>Remarks</th><th class="text-end">Amount</th><th>Status</th><th style="width:90px"></th></tr></thead><tbody id="occasionalExpenseBody"></tbody></table></div></div><div class="tab-pane fade" id="occasionalQuantitiesPane" role="tabpanel"><div class="table-responsive"><table class="table mobile-grid-table mb-0"><thead><tr><th>Category Type</th><th>Category</th><th>Quantities</th><th style="width:80px"></th></tr></thead><tbody id="occasionalQuantityBody"></tbody></table></div><div id="receiptsOnDateOccasional" class="px-3 pb-3"></div></div></div>
         </div>
       </div>
     </div>
   </div>
+</div>
+
+<div class="modal fade" id="quantityPickerModal" tabindex="-1" aria-labelledby="quantityPickerTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title" id="quantityPickerTitle">Choose quantities</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+    </div>
+    <div class="modal-body">
+      <p class="text-muted small" id="quantityPickerCategory"></p>
+      <label class="visually-hidden" for="quantityPickerSearch">Search quantities</label>
+      <input type="search" class="form-control mb-3" id="quantityPickerSearch" placeholder="Search quantities">
+      <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="btnClearQuantityPicker">Clear selection</button>
+      <div id="quantityPickerOptions"></div>
+      <div class="form-text mt-2">Only checked quantities will appear for this expense. Unchecking a quantity removes it from the next save.</div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+      <button type="button" class="btn btn-primary" id="btnApplyQuantityPicker">Use selected quantities</button>
+    </div>
+  </div></div>
 </div>
 
 <!-- Employee expense payment modal -->
@@ -200,27 +219,6 @@
   </div>
 </div>
 
-<!-- Unpaid quantity modal -->
-<div class="modal fade" id="unpaidQuantityModal" tabindex="-1">
-  <div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title" id="unpaidQuantityModalTitle"><i class="bi bi-box-seam me-2"></i>Received without payment</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body"><form id="unpaidQuantityForm" novalidate><div class="row g-3">
-      <div class="col-md-6"><label class="form-label">Received date <span class="text-danger">*</span></label><input type="date" class="form-control" id="unpaidReceivedDate" required></div>
-      <div class="col-md-6"><label class="form-label">Category type <span class="text-danger">*</span></label><select class="form-select" id="unpaidTypeId" required></select></div>
-      <div class="col-md-8"><label class="form-label">Category <span class="text-danger">*</span></label><input list="unpaidCategoryOptions" class="form-control" id="unpaidCategory" placeholder="Configured or on-spot category" required><datalist id="unpaidCategoryOptions"></datalist></div>
-      <div class="col-md-4"><label class="form-label">Total payable (₹) <span class="text-danger">*</span></label><input type="number" class="form-control" id="unpaidTotalAmount" min="0.01" step="0.01" required></div>
-      <div class="col-12">
-        <div class="d-flex justify-content-between align-items-center mb-1">
-          <label class="form-label mb-0">Items received <span class="text-danger">*</span></label>
-          <button type="button" class="btn btn-sm btn-outline-secondary" id="btnAddUnpaidItem"><i class="bi bi-plus-lg me-1"></i>Add item</button>
-        </div>
-        <div id="unpaidItemsContainer" class="d-flex flex-column gap-2"></div>
-      </div>
-      <div class="col-12"><label class="form-label">Remarks</label><input type="text" class="form-control" id="unpaidRemarks" placeholder="Optional (vendor, invoice, etc.)"></div>
-    </div></form></div>
-    <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button><button type="button" class="btn btn-primary" id="btnSaveUnpaidQuantity"><i class="bi bi-check-lg me-1"></i>Save</button></div>
-  </div></div>
-</div>
 
 <!-- Occasional expense modal -->
 <div class="modal fade" id="occasionalExpenseModal" tabindex="-1">

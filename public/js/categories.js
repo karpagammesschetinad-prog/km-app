@@ -92,6 +92,11 @@ function setupModal() {
     bootstrap.Modal.getOrCreateInstance(document.getElementById('catModal')).show();
   });
   document.getElementById('btnSaveCategory').addEventListener('click', save);
+  document.getElementById('btnAddBulkQuantities').addEventListener('click', addBulkCategoryQuantities);
+  document.getElementById('catModal').addEventListener('show.bs.modal', () => {
+    document.getElementById('bulkCategoryQuantities').value = '';
+    document.getElementById('bulkCategoryQuantitiesStatus').textContent = '';
+  });
   document.getElementById('btnAddQuantityField').addEventListener('click', () => {
     syncQuantityFields();
     categoryQuantities.push({ id: '', name: '', unit: 'Count', autoConsume: false });
@@ -99,13 +104,45 @@ function setupModal() {
   });
 }
 
+function parseBulkCategoryQuantities(text, existingNames = []) {
+  const names = new Set(existingNames.map(name => name.trim().toLowerCase()));
+  const units = { kg: 'KG', g: 'Grams', gm: 'Grams', gram: 'Grams', grams: 'Grams', litre: 'Litre', liter: 'Litre', ltr: 'Litre', count: 'Count' };
+  return String(text).split(/\r?\n/).map(line => line.trim()).filter(Boolean).map((line, index) => {
+    const parts = line.split(',').map(part => part.trim());
+    const name = parts[0];
+    const unit = units[(parts[1] || '').toLowerCase()];
+    if (parts.length !== 2 || !name || !unit) throw new Error(`Entry ${index + 1}: enter a quantity name and KG, Grams, Litre or Count, separated by a comma.`);
+    if (names.has(name.toLowerCase())) throw new Error(`Entry ${index + 1}: quantity "${name}" already exists.`);
+    names.add(name.toLowerCase());
+    return { id: '', name, unit, autoConsume: false };
+  });
+}
+
+function addBulkCategoryQuantities() {
+  const input = document.getElementById('bulkCategoryQuantities');
+  const status = document.getElementById('bulkCategoryQuantitiesStatus');
+  syncQuantityFields();
+  try {
+    const quantities = parseBulkCategoryQuantities(input.value, categoryQuantities.map(quantity => quantity.name).filter(Boolean));
+    if (!quantities.length) throw new Error('Enter at least one quantity name and unit.');
+    categoryQuantities = categoryQuantities.filter(quantity => quantity.id || quantity.name);
+    categoryQuantities.push(...quantities);
+    renderQuantityFields();
+    input.value = '';
+    status.textContent = `${quantities.length} quantity fields added. Click Save Category to save them.`;
+  } catch (err) {
+    status.textContent = err.message;
+  }
+}
+
 function renderQuantityFields() {
   const container = document.getElementById('quantityFields');
   container.innerHTML = categoryQuantities.map((quantity, index) => `<div class="row g-2 align-items-center mb-2">
     <div class="col"><input class="form-control form-control-sm quantity-name" data-index="${index}" value="${escapeHtml(quantity.name)}" placeholder="e.g. Weight"></div>
     <div class="col-3"><select class="form-select form-select-sm quantity-unit" data-index="${index}">
-      ${['KG', 'Litre', 'Count'].map(unit => `<option${quantity.unit === unit ? ' selected' : ''}>${unit}</option>`).join('')}
+      ${['KG', 'Grams', 'Litre', 'Count'].map(unit => `<option${quantity.unit === unit ? ' selected' : ''}>${unit}</option>`).join('')}
     </select></div>
+    <div class="col-auto" style="width:140px"><input type="number" class="form-control form-control-sm quantity-default" data-index="${index}" min="0" step="0.01" value="${escapeHtml(quantity.defaultQuantity ?? '')}" placeholder="Default qty" aria-label="Default quantity" title="Optional quantity to prefill in new expense entries"></div>
     <div class="col-auto">
       <div class="form-check m-0" title="Any incoming for this quantity is counted as fully consumed the same day.">
         <input class="form-check-input quantity-auto-consume" type="checkbox" id="qAuto-${index}" data-index="${index}"${quantity.autoConsume ? ' checked' : ''}>
@@ -127,7 +164,8 @@ function syncQuantityFields() {
     id: quantity.id,
     name: document.querySelector(`.quantity-name[data-index="${index}"]`)?.value.trim() || '',
     unit: document.querySelector(`.quantity-unit[data-index="${index}"]`)?.value || '',
-    autoConsume: !!document.querySelector(`.quantity-auto-consume[data-index="${index}"]`)?.checked
+    autoConsume: !!document.querySelector(`.quantity-auto-consume[data-index="${index}"]`)?.checked,
+    defaultQuantity: document.querySelector(`.quantity-default[data-index="${index}"]`)?.value ?? ''
   }));
 }
 
@@ -236,7 +274,8 @@ async function save() {
     name: document.getElementById('catName').value.trim(),
     sortOrder: parseInt(document.getElementById('catOrder').value) || 1,
     status: document.getElementById('catStatus').value,
-    typeId: document.getElementById('catType').value
+    typeId: document.getElementById('catType').value,
+    handpickQuantities: document.getElementById('catHandpickQuantities').checked
   };
 
   const btn = document.getElementById('btnSaveCategory');
@@ -273,6 +312,7 @@ async function openEdit(id) {
   document.getElementById('catName').value = c.name;
   document.getElementById('catOrder').value = c.sortOrder;
   document.getElementById('catStatus').value = c.status;
+  document.getElementById('catHandpickQuantities').checked = !!c.handpickQuantities;
   populateTypeSelect();
   document.getElementById('catType').value = c.typeId || '';
   categoryQuantities = await api('GET', `/categories/${id}/quantities`);

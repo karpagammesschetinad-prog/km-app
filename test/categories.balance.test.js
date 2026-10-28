@@ -60,3 +60,40 @@ test('ordinary category edits preserve the opening balance and audit fields', as
   assert.equal(updated.body.data.openingBalance, 700);
   assert.equal(updated.body.data.balanceUpdatedBy, 'cashier');
 });
+
+test('handpick quantity setting can be enabled, read and disabled without changing balances', async () => {
+  server.loginAs(owner);
+  let updated = await server.request('PUT', `/api/categories/${id}`, { handpickQuantities: true });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.data.handpickQuantities, true);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_CATEGORIES)[0][9], 'TRUE');
+  await server.request('PUT', `/api/categories/${id}/opening-balance`, { openingBalance: 500 });
+  const read = await server.request('GET', '/api/categories');
+  assert.equal(read.body.data[0].handpickQuantities, true);
+  updated = await server.request('PUT', `/api/categories/${id}`, { handpickQuantities: false });
+  assert.equal(updated.body.data.handpickQuantities, false);
+  assert.equal(updated.body.data.openingBalance, 500);
+});
+
+test('category quantity defaults persist and remain optional', async () => {
+  server.loginAs(owner);
+  const result = await server.request('PUT', `/api/categories/${id}/quantities`, { quantities: [
+    { name: 'Milk', unit: 'Litre', defaultQuantity: '5.25' },
+    { name: 'Spices', unit: 'Grams' },
+    { name: 'Pieces', unit: 'Count', defaultQuantity: 0 }
+  ] });
+  assert.equal(result.status, 200);
+  const read = await server.request('GET', `/api/categories/${id}/quantities`);
+  assert.deepEqual(read.body.data.map(quantity => quantity.defaultQuantity), [5.25, '', 0]);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITY_CATEGORIES)[0][7], 5.25);
+});
+
+test('invalid category quantity defaults do not replace saved definitions', async () => {
+  server.loginAs(owner);
+  sheets.setRows(SHEETS.EXPENSE_QUANTITY_CATEGORIES, [['q1', id, 'Milk', 'Litre', 1, 'Active', '', 5]]);
+  for (const defaultQuantity of [-1, 'abc', 'Infinity', 1.001]) {
+    const result = await server.request('PUT', `/api/categories/${id}/quantities`, { quantities: [{ name: 'Milk', unit: 'Litre', defaultQuantity }] });
+    assert.equal(result.status, 400);
+    assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITY_CATEGORIES)[0][7], 5);
+  }
+});

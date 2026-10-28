@@ -7,11 +7,11 @@ const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware'
 const SHEET = SHEETS.EXPENSE_CATEGORIES;
 const TYPE_SHEET = SHEETS.EXPENSE_CATEGORY_TYPES;
 const QUANTITY_SHEET = SHEETS.EXPENSE_QUANTITY_CATEGORIES;
-const C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, TYPE_ID: 4, EXCLUDE_CASH: 5, OPENING_BALANCE: 6, BALANCE_UPDATED_BY: 7, BALANCE_UPDATED_AT: 8 };
+const C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, TYPE_ID: 4, EXCLUDE_CASH: 5, OPENING_BALANCE: 6, BALANCE_UPDATED_BY: 7, BALANCE_UPDATED_AT: 8, HANDPICK_QUANTITIES: 9 };
 const T = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, DISPLAY_TEXT: 6, WORKFLOW: 7 };
-const Q = { ID: 0, CATEGORY_ID: 1, NAME: 2, UNIT: 3, ORDER: 4, STATUS: 5, AUTO_CONSUME: 6 };
+const Q = { ID: 0, CATEGORY_ID: 1, NAME: 2, UNIT: 3, ORDER: 4, STATUS: 5, AUTO_CONSUME: 6, DEFAULT_QUANTITY: 7 };
 const EXPENSE_C = { CATEGORY: 2, EMPLOYEE_ID: 5, TYPE_ID: 13, ON_SPOT: 14 };
-const QUANTITY_UNITS = new Set(['KG', 'Litre', 'Count']);
+const QUANTITY_UNITS = new Set(['KG', 'Grams', 'Litre', 'Count']);
 
 function normalizeWorkflow(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -57,25 +57,27 @@ function rowToObj(row) {
     excludeDailyCashSales: String(row[C.EXCLUDE_CASH] || '').toLowerCase() === 'true',
     openingBalance: parseFloat(row[C.OPENING_BALANCE]) || 0,
     balanceUpdatedBy: row[C.BALANCE_UPDATED_BY] || '',
-    balanceUpdatedAt: row[C.BALANCE_UPDATED_AT] || ''
+    balanceUpdatedAt: row[C.BALANCE_UPDATED_AT] || '',
+    handpickQuantities: String(row[C.HANDPICK_QUANTITIES] || '').toLowerCase() === 'true'
   };
 }
 
 function objToRow(o) {
-  return [o.id, o.name, o.sortOrder, o.status, o.typeId || '', o.excludeDailyCashSales ? 'TRUE' : '', o.openingBalance || 0, o.balanceUpdatedBy || '', o.balanceUpdatedAt || ''];
+  return [o.id, o.name, o.sortOrder, o.status, o.typeId || '', o.excludeDailyCashSales ? 'TRUE' : '', o.openingBalance || 0, o.balanceUpdatedBy || '', o.balanceUpdatedAt || '', o.handpickQuantities ? 'TRUE' : ''];
 }
 
 function quantityRowToObj(row) {
   return {
     id: row[Q.ID] || '', categoryId: row[Q.CATEGORY_ID] || '', name: row[Q.NAME] || '',
     unit: row[Q.UNIT] || 'Count', sortOrder: parseInt(row[Q.ORDER]) || 0, status: row[Q.STATUS] || 'Active',
-    autoConsume: String(row[Q.AUTO_CONSUME] || '').toLowerCase() === 'true'
+    autoConsume: String(row[Q.AUTO_CONSUME] || '').toLowerCase() === 'true',
+    defaultQuantity: row[Q.DEFAULT_QUANTITY] === undefined || row[Q.DEFAULT_QUANTITY] === '' ? '' : Number(row[Q.DEFAULT_QUANTITY])
   };
 }
 
 function quantityObjToRow(quantity) {
   return [quantity.id, quantity.categoryId, quantity.name, quantity.unit, quantity.sortOrder, quantity.status,
-    quantity.autoConsume ? 'TRUE' : ''];
+    quantity.autoConsume ? 'TRUE' : '', quantity.defaultQuantity ?? ''];
 }
 
 // GET all (sorted by order)
@@ -124,7 +126,8 @@ router.post('/', requireSuperUser, async (req, res) => {
       name: String(name).trim(),
       sortOrder: parseInt(sortOrder) || maxOrder + 1,
       status, typeId,
-      excludeDailyCashSales: !!excludeDailyCashSales
+      excludeDailyCashSales: !!excludeDailyCashSales,
+      handpickQuantities: req.body.handpickQuantities === true
     };
     await appendRow(SHEET, objToRow(obj));
     res.status(201).json({ success: true, data: obj });
@@ -236,11 +239,16 @@ router.put('/:id([0-9a-fA-F-]{36})/quantities', requireSuperUser, async (req, re
       const unit = String(quantity.unit || '');
       if (!name || !QUANTITY_UNITS.has(unit) || names.has(name.toLowerCase())) throw new Error('Each quantity needs a unique name and a valid unit.');
       names.add(name.toLowerCase());
+      const defaultQuantity = quantity.defaultQuantity === undefined || quantity.defaultQuantity === null || quantity.defaultQuantity === '' ? '' : Number(quantity.defaultQuantity);
+      if (defaultQuantity !== '' && (!Number.isFinite(defaultQuantity) || defaultQuantity < 0 || Math.abs(defaultQuantity * 100 - Math.round(defaultQuantity * 100)) > 1e-6)) {
+        return null;
+      }
       return {
         id: String(quantity.id || uuidv4()), categoryId: req.params.id, name, unit,
-        sortOrder: index + 1, status: 'Active', autoConsume: !!quantity.autoConsume
+        sortOrder: index + 1, status: 'Active', autoConsume: !!quantity.autoConsume, defaultQuantity
       };
     });
+    if (normalized.some(quantity => !quantity)) return res.status(400).json({ success: false, message: 'Default quantity must be non-negative with up to two decimals.' });
     const existing = await getAllRows(QUANTITY_SHEET);
     const oldRows = existing.map((row, index) => ({ row: quantityRowToObj(row), index: index + 2 }))
       .filter(item => item.row.categoryId === req.params.id);

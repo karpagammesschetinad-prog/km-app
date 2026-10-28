@@ -54,7 +54,7 @@ const CASES = [
     file: 'expenses.js', constant: 'QUANTITY_C', sheet: 'EXPENSE_QUANTITIES',
     columns: {
       ID: 'ID', EXPENSE_ID: 'ExpenseID', CATEGORY_ID: 'QuantityCategoryID', NAME: 'QuantityName', UNIT: 'Unit',
-      AMOUNT: 'Amount', CREATED_AT: 'CreatedAt', UPDATED_AT: 'UpdatedAt', SOURCE_RECEIPT_ID: 'SourceReceiptID', UNIT_PRICE: 'UnitPrice'
+      AMOUNT: 'Amount', CREATED_AT: 'CreatedAt', UPDATED_AT: 'UpdatedAt', SOURCE_RECEIPT_ID: 'SourceReceiptID', UNIT_PRICE: 'UnitPrice', TOTAL_AMOUNT: 'TotalAmount'
     }
   },
   { file: 'payments.js', constant: 'EXPENSE_C', sheet: 'EXPENSES', columns: EXPENSE_COLUMNS },
@@ -130,7 +130,7 @@ const CASES = [
     columns: {
       ID: 'ID', NAME: 'Name', ORDER: 'SortOrder', STATUS: 'Status',
       TYPE_ID: 'CategoryTypeID', EXCLUDE_CASH: 'ExcludeDailyCashSales', OPENING_BALANCE: 'OpeningBalance',
-      BALANCE_UPDATED_BY: 'BalanceUpdatedBy', BALANCE_UPDATED_AT: 'BalanceUpdatedAt'
+      BALANCE_UPDATED_BY: 'BalanceUpdatedBy', BALANCE_UPDATED_AT: 'BalanceUpdatedAt', HANDPICK_QUANTITIES: 'HandpickQuantities'
     }
   },
   { file: 'categories.js', constant: 'EXPENSE_C', sheet: 'EXPENSES', columns: EXPENSE_COLUMNS },

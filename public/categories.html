@@ -130,7 +130,20 @@
                 <button class="btn btn-sm btn-outline-primary" type="button" id="btnAddQuantityField"><i class="bi bi-plus-lg me-1"></i>Add Quantity</button>
               </div>
               <div id="quantityFields" class="mt-2"></div>
-              <div class="form-text">Optional. Add fields such as Weight (KG), Volume (Litre), or Pieces (Count).</div>
+              <div class="form-check form-switch mt-2">
+                <input class="form-check-input" type="checkbox" role="switch" id="catHandpickQuantities">
+                <label class="form-check-label" for="catHandpickQuantities">Handpick quantities in Expenses</label>
+                <div class="form-text">Show a checkbox picker instead of displaying every quantity field.</div>
+              </div>
+              <div class="form-text">Optional. Add fields such as Weight (KG), Spices (Grams), Volume (Litre), or Pieces (Count). Set Default qty to prefill new expense entries; leave blank for no default.</div>
+              <details class="mt-3">
+                <summary>Add multiple quantities at once</summary>
+                <label class="form-label mt-2" for="bulkCategoryQuantities">Quantity name, unit — one per line</label>
+                <textarea class="form-control" id="bulkCategoryQuantities" rows="4" placeholder="Weight, KG&#10;Volume, Litre&#10;Pieces, Count" aria-describedby="bulkCategoryQuantitiesHelp"></textarea>
+                <div class="form-text" id="bulkCategoryQuantitiesHelp">Units: KG, Grams, Litre or Count. Each line becomes a separate quantity field for this category.</div>
+                <button class="btn btn-sm btn-outline-primary mt-2" type="button" id="btnAddBulkQuantities">Add all quantities</button>
+                <div class="small mt-2" id="bulkCategoryQuantitiesStatus" role="status"></div>
+              </details>
             </div>
           </div>
         </form>

@@ -1,3 +1,6 @@
+.configured-quantity-field[hidden] {
+  display: none !important;
+}
 /* ============================================================
    BizTracker – Global Styles
    ============================================================ */

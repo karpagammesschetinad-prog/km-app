@@ -193,6 +193,33 @@ test('each quantity shows its value from quantity and entered unit price', () =>
   assert.equal(blank.target.textContent, '');
 });
 
+test('quantity inputs calculate the blank field from the other two values', () => {
+  const { context } = createPage();
+  for (const [amount, price, total, key, expected] of [
+    ['10', '50', '', 'totalAmount', '500'],
+    ['10', '', '500', 'unitPrice', '50'],
+    ['', '50', '500', 'amount', '10'],
+    ['0', '', '500', 'unitPrice', ''],
+    ['', '0', '500', 'amount', '']
+  ]) {
+    const fields = { amount: { value: amount }, unitPrice: { value: price }, totalAmount: { value: total } };
+    const group = { dataset: {}, querySelector: selector => ({
+      '.expense-quantity, .occasional-tab-quantity, .occasional-onspot-quantity': fields.amount,
+      '.expense-quantity-price': fields.unitPrice, '.expense-quantity-total': fields.totalAmount
+    })[selector] };
+    context.updateQuantityValue(group);
+    assert.equal(fields[key].value, expected);
+    if (key === 'totalAmount') {
+      fields.amount.value = '12';
+      context.updateQuantityValue(group, fields.amount);
+      assert.equal(fields.totalAmount.value, '600');
+      fields.totalAmount.value = '700';
+      context.updateQuantityValue(group, fields.totalAmount);
+      assert.equal(fields.totalAmount.value, '700');
+    }
+  }
+});
+
 test('the row summary compares received value with the expense amount without deriving a price', () => {
   const { context } = createPage();
   const first = fakeGroup({ quantity: '10', price: '50' });
@@ -215,6 +242,12 @@ test('the price input is labelled for assistive technology and lockable', () => 
   const { context } = createPage();
   assert.match(context.quantityPriceInputHtml(52.5, false), /aria-label="Price per unit"[^>]*value="52.5"/);
   assert.match(context.quantityPriceInputHtml(0, true), /value=""[^>]* readonly disabled/);
+});
+
+test('on-spot quantity offers and retains the selected Grams unit', () => {
+  const { context } = createPage();
+  const html = context.onSpotQuantityInput({ name: 'Spices', unit: 'Grams', amount: 100, unitPrice: 2 });
+  assert.match(html, /<option selected>Grams<\/option>/);
 });
 
 test('saving collects the unit price entered beside each quantity', () => {
@@ -286,6 +319,15 @@ test('occasional report rows show the category balance', () => {
 test('the quantity report has a matching average price column', () => {
   const html = fs.readFileSync(path.join(__dirname, '../public/expenses.html'), 'utf8');
   assert.match(html, /<th class="text-end">Total<\/th><th class="text-end">Avg Price \/ Unit<\/th>/);
+});
+
+test('received-without-payment creation workflow is removed without removing historical balance support', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/expenses.html'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/expenses.js'), 'utf8');
+  assert.doesNotMatch(html, /btnAddUnpaidDaily|btnAddUnpaidOccasional|unpaidQuantityModal|Received without payment/);
+  assert.doesNotMatch(source, /openUnpaidQuantityModal|saveUnpaidQuantityFromModal|editingUnpaidQuantityId/);
+  assert.match(source, /function categoryLedger/);
+  assert.match(source, /function renderUnpaidQuantities/);
 });
 
 test('category pending payments are inside the existing report without a separate popup', () => {

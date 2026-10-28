@@ -74,6 +74,30 @@ test.beforeEach(() => {
 
 test.after(() => server.close());
 
+test('deleted expense quantities no longer contribute to consumption incoming stock', async () => {
+  sheets.setRows(SHEETS.EXPENSES, [expenseRow('exp-2', '2020-01-01')]);
+  const res = await server.request('GET', '/api/consumption/stock');
+  const chicken = res.body.data.find(row => row.quantityCategoryId === 'qcat-chicken');
+  assert.equal(chicken.incoming, 3);
+  assert.equal(chicken.incomingPaid, 0);
+});
+
+test('removing selected quantities updates consumption stock on the next read', async () => {
+  sheets.setRows(SHEETS.EXPENSE_QUANTITIES, [paidRow('eq-2', 'exp-2', 'qcat-milk', 'Milk', 'Litre', 20)]);
+  const res = await server.request('GET', '/api/consumption/stock');
+  const chicken = res.body.data.find(row => row.quantityCategoryId === 'qcat-chicken');
+  assert.equal(chicken.incoming, 3);
+  assert.equal(chicken.incomingPaid, 0);
+});
+
+test('deleted receipt items no longer contribute to incoming stock', async () => {
+  sheets.setRows(SHEETS.UNPAID_RECEIPTS, []);
+  const res = await server.request('GET', '/api/consumption/stock');
+  const chicken = res.body.data.find(row => row.quantityCategoryId === 'qcat-chicken');
+  assert.equal(chicken.incoming, 5);
+  assert.equal(chicken.incomingUnpaid, 0);
+});
+
 test('rejects unauthenticated requests', async () => {
   server.logout();
   assert.equal((await server.request('GET', '/api/consumption')).status, 401);

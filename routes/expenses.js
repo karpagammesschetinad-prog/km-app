@@ -21,7 +21,7 @@ const C = {
 };
 
 const TYPE_C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, WORKFLOW: 7 };
-const QUANTITY_C = { ID: 0, EXPENSE_ID: 1, CATEGORY_ID: 2, NAME: 3, UNIT: 4, AMOUNT: 5, CREATED_AT: 6, UPDATED_AT: 7, SOURCE_RECEIPT_ID: 8, UNIT_PRICE: 9 };
+const QUANTITY_C = { ID: 0, EXPENSE_ID: 1, CATEGORY_ID: 2, NAME: 3, UNIT: 4, AMOUNT: 5, CREATED_AT: 6, UPDATED_AT: 7, SOURCE_RECEIPT_ID: 8, UNIT_PRICE: 9, TOTAL_AMOUNT: 10 };
 const RECEIPT_C = { ID: 0, RECEIVED_DATE: 1, TYPE_ID: 2, CATEGORY: 3, REMARKS: 4, SUBMITTED_BY: 5, TOTAL_AMOUNT: 6, CREATED_AT: 7, UPDATED_AT: 8, PAID_AMOUNT: 9 };
 const RECEIPT_ITEM_C = { ID: 0, RECEIPT_ID: 1, CATEGORY_ID: 2, NAME: 3, UNIT: 4, AMOUNT: 5, CREATED_AT: 6, UPDATED_AT: 7 };
 const RECEIPT_PAYMENT_C = { ID: 0, RECEIPT_ID: 1, EXPENSE_ID: 2, AMOUNT: 3, CREATED_AT: 4, CREATED_BY: 5 };
@@ -73,25 +73,26 @@ function quantityRowToObj(row) {
     name: row[QUANTITY_C.NAME] || '', unit: row[QUANTITY_C.UNIT] || '', amount: parseFloat(row[QUANTITY_C.AMOUNT]) || 0,
     createdAt: row[QUANTITY_C.CREATED_AT] || '', updatedAt: row[QUANTITY_C.UPDATED_AT] || '',
     sourceReceiptId: row[QUANTITY_C.SOURCE_RECEIPT_ID] || '',
-    unitPrice: parseFloat(row[QUANTITY_C.UNIT_PRICE]) || 0
+    unitPrice: parseFloat(row[QUANTITY_C.UNIT_PRICE]) || 0,
+    totalAmount: row[QUANTITY_C.TOTAL_AMOUNT] === undefined || row[QUANTITY_C.TOTAL_AMOUNT] === '' ? '' : Number(row[QUANTITY_C.TOTAL_AMOUNT])
   };
 }
 
 function quantityObjToRow(quantity) {
-  return [quantity.id, quantity.expenseId, quantity.quantityCategoryId, quantity.name, quantity.unit, quantity.amount, quantity.createdAt, quantity.updatedAt, quantity.sourceReceiptId || '', quantity.unitPrice || ''];
+  return [quantity.id, quantity.expenseId, quantity.quantityCategoryId, quantity.name, quantity.unit, quantity.amount, quantity.createdAt, quantity.updatedAt, quantity.sourceReceiptId || '', quantity.unitPrice || '', quantity.totalAmount ?? ''];
 }
 
 function parseUnitPrice(value) {
   if (value === undefined || value === null || value === '') return 0;
   const price = typeof value === 'number' ? value : Number(String(value).trim());
-  if (!Number.isFinite(price) || price < 0 || Math.abs(price * 100 - Math.round(price * 100)) > 1e-6) return NaN;
-  return price;
+  if (!Number.isFinite(price) || price < 0 || !Number.isFinite(price * 100)) return NaN;
+  return Math.round((price + Number.EPSILON) * 100) / 100;
 }
 
 // Called before any write so a bad price cannot leave an expense half saved.
 function quantityPriceError(quantityLists) {
-  const invalid = quantityLists.some(list => Array.isArray(list) && list.some(quantity => Number.isNaN(parseUnitPrice(quantity?.unitPrice))));
-  return invalid ? 'Unit price must be zero or more, with at most two decimal places.' : '';
+  const invalid = quantityLists.some(list => Array.isArray(list) && list.some(quantity => Number.isNaN(parseUnitPrice(quantity?.unitPrice)) || Number.isNaN(parseUnitPrice(quantity?.totalAmount))));
+  return invalid ? 'Unit price and total must be valid non-negative numbers. Leave unknown values blank.' : '';
 }
 
 async function replaceExpenseQuantities(expenseId, quantities) {
@@ -106,7 +107,8 @@ async function replaceExpenseQuantities(expenseId, quantities) {
     if (!(amount > 0) || !quantity.name || !quantity.unit) continue;
     await appendRow(QUANTITY_SHEET, quantityObjToRow({
       id: uuidv4(), expenseId, quantityCategoryId: String(quantity.quantityCategoryId), name: String(quantity.name),
-      unit: String(quantity.unit), amount, unitPrice: parseUnitPrice(quantity.unitPrice), createdAt: now, updatedAt: now
+      unit: String(quantity.unit), amount, unitPrice: parseUnitPrice(quantity.unitPrice),
+      totalAmount: quantity.totalAmount === undefined || quantity.totalAmount === '' || quantity.totalAmount === null ? '' : parseUnitPrice(quantity.totalAmount), createdAt: now, updatedAt: now
     }));
   }
 }
@@ -622,7 +624,7 @@ router.post('/bulk', requireAuth, async (req, res) => {
         && entry.quantities.some(quantity => parseFloat(quantity.amount) > 0);
       const hasLinks = Array.isArray(entry.linkedUnpaid) && entry.linkedUnpaid.length > 0;
       // Skip an entry only when there is nothing to store — a quantity- or link-only row is still meaningful.
-      if (!entry.category || (!(amount > 0) && !hasQuantities && !hasLinks)) continue;
+      if (!entry.category || (!(amount > 0) && !hasQuantities && !hasLinks && !entry.id)) continue;
       const existing = entry.id ? writableById.get(String(entry.id))?.row : null;
       const obj = {
         id: existing?.id || uuidv4(), date,
@@ -657,6 +659,7 @@ router.post('/bulk', requireAuth, async (req, res) => {
       saved.push(obj);
     }
     for (let i = toDelete.length - 1; i >= 0; i--) {
+      await replaceExpenseQuantities(rows[toDelete[i] - 2][C.ID], []);
       await deleteRow(SHEET, toDelete[i]);
     }
     res.json({ success: true, data: saved });
@@ -854,6 +857,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     if (expense.typeId ? !access.allowedTypes.has(expense.typeId) : !access.allowedCategories.has(expense.category)) {
       return res.status(403).json({ success: false, message: 'Access denied for this expense category.' });
     }
+    await replaceExpenseQuantities(expense.id, []);
     await deleteRow(SHEET, found.index);
     res.json({ success: true, message: 'Expense deleted.' });
   } catch (err) {

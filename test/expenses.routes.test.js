@@ -122,6 +122,33 @@ test('bulk save records configured quantity values against its expense row', asy
   assert.deepEqual(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0].slice(1, 6), [expenseId, 'quantity-1', 'Volume', 'Litre', 5]);
 });
 
+test('all quantities can be cleared from a saved zero-payment expense', async () => {
+  const created = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05', entries: [{ category: 'Milk', typeId: 'type-cash', amount: 0,
+      quantities: [{ quantityCategoryId: 'milk', name: 'Milk', unit: 'Litre', amount: 5 }] }]
+  });
+  assert.equal(created.status, 200);
+  const id = created.body.data[0].id;
+  const cleared = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05', entries: [{ id, category: 'Milk', typeId: 'type-cash', amount: 0, quantities: [] }]
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES).length, 0);
+});
+
+test('expense quantity and price are optional independently', async () => {
+  for (const quantities of [undefined, [], [{ quantityCategoryId: 'milk', name: 'Milk', unit: 'Litre', amount: 5, unitPrice: '' }]]) {
+    sheets.setRows(SHEETS.EXPENSES, []);
+    sheets.setRows(SHEETS.EXPENSE_QUANTITIES, []);
+    const res = await server.request('POST', '/api/expenses/bulk', {
+      date: '2026-01-05', entries: [{ category: 'Milk', typeId: 'type-cash', amount: 100, quantities }]
+    });
+    assert.equal(res.status, 200);
+    assert.equal(sheets.getRows(SHEETS.EXPENSES)[0][4], 100);
+    assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES).length, quantities?.length || 0);
+  }
+});
+
 test('bulk save records custom on-spot quantity values', async () => {
   const res = await server.request('POST', '/api/expenses/bulk', {
     date: '2026-01-05',
@@ -163,8 +190,44 @@ test('resaving quantities replaces the stored unit price', async () => {
   assert.equal(rows[0][9], 48.25);
 });
 
+test('quantity totals persist independently of rounded unit prices and payment amounts', async () => {
+  const result = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05', entries: [{ category: 'Milk', typeId: 'type-cash', amount: 20,
+      quantities: [{ quantityCategoryId: 'milk', name: 'Milk', unit: 'Litre', amount: 3, unitPrice: 33.33, totalAmount: 100 }] }]
+  });
+  assert.equal(result.status, 200);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0][10], 100);
+  const read = await server.request('GET', '/api/expenses/quantities');
+  assert.equal(read.body.data[0].totalAmount, 100);
+  assert.equal(read.body.data[0].unitPrice, 33.33);
+});
+
+test('occasional quantity updates round extra decimal precision instead of failing', async () => {
+  sheets.setRows(SHEETS.EXPENSES, [expenseRow({ id: 'occ-precision', category: 'Repair', typeId: 'type-occasional', mode: 'Occasional', amount: 100 })]);
+  const res = await server.request('PUT', '/api/expenses/occasional/occ-precision', {
+    date: '2026-01-05', category: 'Repair', typeId: 'type-occasional', amount: 100,
+    quantities: [{ quantityCategoryId: 'parts', name: 'Parts', unit: 'Count', amount: 3,
+      unitPrice: '33.3333333333', totalAmount: '100.00000000001' }]
+  });
+  assert.equal(res.status, 200);
+  const stored = sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0];
+  assert.equal(stored[9], 33.33);
+  assert.equal(stored[10], 100);
+});
+
+test('bulk quantities accept floating point totals and half-cent rates', async () => {
+  const res = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05', entries: [{ category: 'Milk', typeId: 'type-cash', amount: 10,
+      quantities: [{ quantityCategoryId: 'milk', name: 'Milk', unit: 'Litre', amount: 3, unitPrice: 1.005, totalAmount: 0.1 + 0.2 }] }]
+  });
+  assert.equal(res.status, 200);
+  const stored = sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0];
+  assert.equal(stored[9], 1.01);
+  assert.equal(stored[10], 0.3);
+});
+
 test('invalid unit prices are rejected before anything is saved', async () => {
-  for (const unitPrice of [-1, 'abc', 1.005, '1e400']) {
+  for (const unitPrice of [-1, 'abc', '1e400']) {
     const res = await server.request('POST', '/api/expenses/bulk', {
       date: '2026-01-05',
       entries: [{ category: 'Milk', amount: 120, typeId: 'type-cash', quantities: [

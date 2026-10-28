@@ -6,7 +6,6 @@ let allCategoryTypes = [];
 let allQuantityCategories = [];
 let allExpenseQuantities = [];
 let allUnpaidQuantities = [];
-let editingUnpaidQuantityId = null;
 let pendingUnpaidLinks = new Map();
 let pendingRejectDate = null;
 let pendingRejectMode = 'Daily';
@@ -19,6 +18,65 @@ let autoSaveInFlight = false;
 let autoSavePending = false;
 let expenseAutoSaveEnabled = true;
 let nextOnSpotQuantityKey = 0;
+const handpickedQuantityIds = new Map();
+let quantityPickerRow = null;
+
+function handpickKey(category, expenseId = '', rowKey = '') {
+  return JSON.stringify([getSelectedExpenseDate(), category.id, expenseId || rowKey]);
+}
+
+function selectedQuantityFields(category, key, saved) {
+  if (!category?.handpickQuantities) return null;
+  if (!handpickedQuantityIds.has(key)) {
+    handpickedQuantityIds.set(key, new Set(saved.filter(quantity => !quantity.sourceReceiptId && quantity.amount > 0).map(quantity => quantity.quantityCategoryId)));
+  }
+  return handpickedQuantityIds.get(key);
+}
+
+function quantityPickerButton(category, readOnly) {
+  if (!category?.handpickQuantities) return '';
+  return `<button type="button" class="btn btn-sm btn-outline-primary mb-2 choose-category-quantities"${readOnly ? ' disabled' : ''}>Choose quantities</button>`;
+}
+
+function openQuantityPicker(row) {
+  if (!canAccess('expenses', 'add')) return;
+  const groups = [...row.querySelectorAll('.configured-quantity-field')];
+  quantityPickerRow = row;
+  document.getElementById('quantityPickerCategory').textContent = row.dataset.pickerCategory || '';
+  document.getElementById('quantityPickerSearch').value = '';
+  document.getElementById('quantityPickerOptions').innerHTML = groups.map(group => {
+    const input = group.querySelector('.expense-quantity, .occasional-tab-quantity');
+    return `<label class="form-check py-2"><input type="checkbox" class="form-check-input quantity-picker-check" value="${escapeHtml(input.dataset.quantityCategoryId)}"${group.hidden ? '' : ' checked'}><span>${escapeHtml(input.dataset.name)} (${escapeHtml(input.dataset.unit)})</span></label>`;
+  }).join('') || '<div class="text-muted">No quantities configured for this category.</div>';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('quantityPickerModal')).show();
+}
+
+function clearQuantityPickerSelection() {
+  document.querySelectorAll('.quantity-picker-check').forEach(input => { input.checked = false; });
+}
+
+function applyQuantityPicker() {
+  const row = quantityPickerRow;
+  if (!row?.isConnected || !canAccess('expenses', 'add')) return;
+  const selected = new Set([...document.querySelectorAll('.quantity-picker-check:checked')].map(input => input.value));
+  handpickedQuantityIds.set(row.dataset.pickerKey, selected);
+  row.querySelectorAll('.configured-quantity-field').forEach(group => {
+    const input = group.querySelector('.expense-quantity, .occasional-tab-quantity');
+    group.hidden = !selected.has(input.dataset.quantityCategoryId);
+    if (group.hidden) {
+      group.querySelectorAll?.('input[type="number"]').forEach(field => { field.value = ''; });
+      if (group.dataset) delete group.dataset.calculatedField;
+    }
+  });
+  refreshQuantityValues(row);
+  updateQuantityRowSummary(row);
+  bootstrap.Modal.getInstance(document.getElementById('quantityPickerModal')).hide();
+  quantityPickerRow = null;
+  if (row.dataset.occasionalExpenseId) {
+    const button = row.querySelector('button[title="Save quantities"]');
+    if (button) saveOccasionalQuantities(row.dataset.occasionalExpenseId, button);
+  } else if (expenseAutoSaveEnabled) scheduleAutoSave();
+}
 
 function normalizeWorkflow(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -83,7 +141,7 @@ function categoryLedger(typeId, category, includeDraftLinks = true, reportFilter
   });
   const entries = matchingExpenses.map(expense => {
     const own = ownQuantities.get(expense.id) || [];
-    const value = own.reduce((sum, quantity) => sum + (quantity.unitPrice > 0 ? quantity.amount * quantity.unitPrice : 0), 0);
+    const value = own.reduce((sum, quantity) => sum + (quantity.totalAmount !== '' && quantity.totalAmount != null ? Number(quantity.totalAmount) : quantity.unitPrice > 0 ? quantity.amount * quantity.unitPrice : 0), 0);
     return {
       date: expense.date, value, priced: value > 0, hasQuantities: own.length > 0,
       payment: Math.max(0, (parseFloat(expense.amount) || 0) - (appliedToReceipts.get(expense.id) || 0))
@@ -333,11 +391,31 @@ function refreshCategoryPendingBadges() {
   });
 }
 
-function quantityPriceInputHtml(unitPrice, readOnly) {
-  return `<span class="input-group-text">&#8377;/unit</span><input type="number" class="form-control expense-quantity-price" style="max-width:90px" min="0" step="0.01" placeholder="Price" aria-label="Price per unit" value="${unitPrice > 0 ? unitPrice : ''}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text quantity-value" style="min-width:80px"></span>`;
+function quantityPriceInputHtml(unitPrice, readOnly, totalAmount = '') {
+  return `<span class="input-group-text">&#8377;/unit</span><input type="number" class="form-control expense-quantity-price" style="max-width:110px" min="0" step="0.01" placeholder="Optional price" aria-label="Price per unit" title="Enter any two values to calculate the blank field" value="${unitPrice > 0 ? unitPrice : ''}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">Total ₹</span><input type="number" class="form-control expense-quantity-total" style="min-width:100px" min="0" step="0.01" placeholder="Total amount" aria-label="Total amount for quantity" value="${escapeHtml(totalAmount ?? '')}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text quantity-value" style="min-width:80px"></span>`;
 }
 
-function updateQuantityValue(group) {
+function updateQuantityValue(group, changedInput = null) {
+  const fields = {
+    amount: group.querySelector('.expense-quantity, .occasional-tab-quantity, .occasional-onspot-quantity'),
+    unitPrice: group.querySelector('.expense-quantity-price'),
+    totalAmount: group.querySelector('.expense-quantity-total')
+  };
+  if (fields.totalAmount) {
+    const changed = Object.keys(fields).find(key => fields[key] === changedInput);
+    if (changed && group.dataset?.calculatedField === changed) delete group.dataset.calculatedField;
+    const blank = Object.keys(fields).filter(key => fields[key]?.value === '');
+    const missing = blank.length === 1 ? blank[0] : (!blank.length ? group.dataset?.calculatedField : null);
+    const value = key => Number(fields[key]?.value);
+    let calculated;
+    if (missing === 'totalAmount') calculated = value('amount') * value('unitPrice');
+    if (missing === 'unitPrice' && value('amount') > 0) calculated = value('totalAmount') / value('amount');
+    if (missing === 'amount' && value('unitPrice') > 0) calculated = value('totalAmount') / value('unitPrice');
+    if (Number.isFinite(calculated) && calculated >= 0) {
+      fields[missing].value = String(Math.round((calculated + Number.EPSILON) * 100) / 100);
+      if (group.dataset) group.dataset.calculatedField = missing;
+    }
+  }
   const quantity = parseFloat(group.querySelector('.expense-quantity, .occasional-tab-quantity, .occasional-onspot-quantity')?.value) || 0;
   const price = parseFloat(group.querySelector('.expense-quantity-price')?.value) || 0;
   const target = group.querySelector('.quantity-value');
@@ -348,8 +426,10 @@ function updateQuantityRowSummary(row) {
   const target = row.querySelector('.quantity-row-summary');
   if (!target) return;
   const value = [...row.querySelectorAll('.quantity-price-group')].reduce((sum, group) => {
+    if (group.hidden) return sum;
     const quantity = parseFloat(group.querySelector('.expense-quantity, .occasional-tab-quantity, .occasional-onspot-quantity')?.value) || 0;
-    return sum + quantity * (parseFloat(group.querySelector('.expense-quantity-price')?.value) || 0);
+    const total = group.querySelector('.expense-quantity-total')?.value;
+    return sum + (total !== undefined && total !== '' ? Number(total) : quantity * (parseFloat(group.querySelector('.expense-quantity-price')?.value) || 0));
   }, 0);
   target.textContent = value > 0 ? `Received value ${formatCurrency(value)} · This expense ${formatCurrency(parseFloat(row.dataset.expenseAmount) || 0)}` : '';
 }
@@ -375,6 +455,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
   if (!canAccess('expenses')) { window.location.href = '/index.html'; return; }
+  document.addEventListener('click', event => {
+    const button = event.target.closest('.choose-category-quantities');
+    if (button && !button.disabled) openQuantityPicker(button.closest('tr'));
+  });
+  document.getElementById('btnApplyQuantityPicker')?.addEventListener('click', applyQuantityPicker);
+  document.getElementById('btnClearQuantityPicker')?.addEventListener('click', clearQuantityPickerSelection);
+  document.getElementById('quantityPickerSearch')?.addEventListener('input', event => {
+    const query = event.target.value.trim().toLowerCase();
+    document.querySelectorAll('#quantityPickerOptions label').forEach(label => {
+      label.hidden = !label.textContent.toLowerCase().includes(query);
+    });
+  });
   document.getElementById('btnToggleCategoryBalances')?.addEventListener('click', toggleCategoryBalances);
   document.addEventListener('click', event => {
     const slot = event.target.closest('.category-pending-slot');
@@ -466,7 +558,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ['quantityInputsBody', 'occasionalQuantityBody'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', event => {
       const group = event.target.closest?.('.quantity-price-group');
-      if (group) updateQuantityValue(group);
+      if (group) updateQuantityValue(group, event.target);
       const row = event.target.closest?.('tr[data-expense-amount]');
       if (row) updateQuantityRowSummary(row);
     });
@@ -515,11 +607,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   document.getElementById('btnConfirmReject').addEventListener('click', confirmReject);
-  document.getElementById('btnAddUnpaidDaily')?.addEventListener('click', () => openUnpaidQuantityModal(null, 'Daily'));
-  document.getElementById('btnAddUnpaidOccasional')?.addEventListener('click', () => openUnpaidQuantityModal(null, 'Occasional'));
-  document.getElementById('btnSaveUnpaidQuantity')?.addEventListener('click', saveUnpaidQuantityFromModal);
-  document.getElementById('btnAddUnpaidItem')?.addEventListener('click', () => addUnpaidItemRow());
-  document.getElementById('unpaidTypeId')?.addEventListener('change', populateUnpaidCategoryOptions);
 
   try {
     [allCategories, allCategoryTypes, allExpenses, expenseEmployees, allQuantityCategories, allExpenseQuantities, allUnpaidQuantities] = await Promise.all([
@@ -712,11 +799,14 @@ function renderOccasionalQuantityInputs(entries, typeNames, canEdit) {
     const category = allCategories.find(item => item.id && item.typeId === expense.typeId && item.name === expense.category);
     const definitions = category ? allQuantityCategories.filter(item => item.categoryId === category.id) : [];
     const saved = allExpenseQuantities.filter(item => item.expenseId === expense.id);
+    const pickerKey = category ? handpickKey(category, expense.id) : '';
+    const selected = selectedQuantityFields(category, pickerKey, saved);
     const readOnly = !canEdit || expense.approvalStatus === 'Approved' || expense.approvalStatus === 'AutoApproved';
     const fields = definitions.length ? definitions.map(quantity => {
-      const amount = saved.find(item => item.quantityCategoryId === quantity.id)?.amount ?? '';
+      const amount = saved.find(item => item.quantityCategoryId === quantity.id)?.amount ?? (quantity.defaultQuantity ?? '');
       const unitPrice = saved.find(item => item.quantityCategoryId === quantity.id)?.unitPrice || 0;
-      return `<div class="input-group input-group-sm mb-2 quantity-price-group" style="max-width:560px"><span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span><input type="number" class="form-control occasional-tab-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${amount}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">${escapeHtml(quantity.unit)}</span>${quantityPriceInputHtml(unitPrice, readOnly)}</div>`;
+      const totalAmount = saved.find(item => item.quantityCategoryId === quantity.id)?.totalAmount ?? '';
+      return `<div class="input-group input-group-sm mb-2 quantity-price-group configured-quantity-field"${selected && !selected.has(quantity.id) ? ' hidden' : ''} style="max-width:760px"><span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span><input type="number" class="form-control occasional-tab-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${amount}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">${escapeHtml(quantity.unit)}</span>${quantityPriceInputHtml(unitPrice, readOnly, totalAmount)}</div>`;
     }).join('') : '';
     const custom = saved.filter(quantity => !definitions.some(item => item.id === quantity.quantityCategoryId) && !quantity.sourceReceiptId);
     const linked = saved.filter(quantity => quantity.sourceReceiptId);
@@ -733,7 +823,7 @@ function renderOccasionalQuantityInputs(entries, typeNames, canEdit) {
     }).join('');
     const addButton = readOnly ? '' : '<button type="button" class="btn btn-sm btn-outline-primary" onclick="addOccasionalOnSpotQuantity(this)"><i class="bi bi-plus-lg me-1"></i>Add Quantity</button>';
     const action = !readOnly ? `<button type="button" class="btn btn-sm btn-primary" title="Save quantities" onclick="saveOccasionalQuantities('${expense.id}', this)"><i class="bi bi-check-lg"></i></button>` : '';
-    return `<tr data-occasional-expense-id="${expense.id}" data-expense-amount="${parseFloat(expense.amount) || 0}"><td data-label="Category type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}<div class="text-muted small">${formatCurrency(expense.amount)}</div></td><td data-label="Quantities">${fields}${customFields}${addButton}${linkedFields}<div class="quantity-row-summary small text-muted mt-1"></div></td><td data-label="Actions" class="text-center">${action}</td></tr>`;
+    return `<tr data-occasional-expense-id="${expense.id}" data-picker-key="${escapeHtml(pickerKey)}" data-picker-category="${escapeHtml(expense.category)}" data-expense-amount="${parseFloat(expense.amount) || 0}"><td data-label="Category type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}<div class="text-muted small">${formatCurrency(expense.amount)}</div></td><td data-label="Quantities">${quantityPickerButton(category, readOnly)}${fields}${customFields}${addButton}${linkedFields}<div class="quantity-row-summary small text-muted mt-1"></div></td><td data-label="Actions" class="text-center">${action}</td></tr>`;
   }).join('') : emptyRow(4, 'No occasional expenses recorded for this date.');
   refreshQuantityValues(body);
 }
@@ -744,14 +834,15 @@ async function saveOccasionalQuantities(id, button) {
   if (!expense || !row) return;
   button.disabled = true;
   try {
-    const quantities = [...row.querySelectorAll('.occasional-tab-quantity, .occasional-onspot-quantity')].map(input => {
+    const quantities = [...row.querySelectorAll('.occasional-tab-quantity, .occasional-onspot-quantity')].filter(input => !input.closest('.configured-quantity-field')?.hidden).map(input => {
       const custom = input.closest('.onspot-quantity');
       return {
         quantityCategoryId: input.dataset.quantityCategoryId || `onspot:${expense.typeId}:${custom?.querySelector('.expense-quantity-name').value.trim() || ''}`,
         name: custom ? custom.querySelector('.expense-quantity-name').value.trim() : input.dataset.name,
         unit: custom ? custom.querySelector('.expense-quantity-unit').value : input.dataset.unit,
         amount: input.value,
-        unitPrice: input.closest('.quantity-price-group')?.querySelector('.expense-quantity-price')?.value || ''
+        unitPrice: input.closest('.quantity-price-group')?.querySelector('.expense-quantity-price')?.value || '',
+        totalAmount: input.closest('.quantity-price-group')?.querySelector('.expense-quantity-total')?.value || ''
       };
     });
     await api('PUT', `/expenses/occasional/${encodeURIComponent(id)}`, {
@@ -1145,7 +1236,8 @@ function onSpotQuantityInput(quantity = {}, inputClass = 'expense-quantity') {
   const name = escapeHtml(quantity.name || unit);
   const amount = quantity.amount || '';
   const quantityCategoryId = escapeHtml(quantity.quantityCategoryId || '');
-  return `<div class="input-group input-group-sm mb-2 onspot-quantity quantity-price-group" style="max-width:760px"><input type="text" class="form-control expense-quantity-name" style="max-width:180px" value="${name}" placeholder="Quantity"><input type="number" class="form-control ${inputClass}" data-quantity-category-id="${quantityCategoryId}" data-name="${name}" data-unit="${unit}" min="0" step="0.01" value="${amount}"><select class="form-select expense-quantity-unit" style="max-width:80px" data-prev-unit="${unit}" onchange="syncOnSpotQuantityName(this)">${['KG', 'Litre', 'Count'].map(option => `<option${unit === option ? ' selected' : ''}>${option}</option>`).join('')}</select>${quantityPriceInputHtml(parseFloat(quantity.unitPrice) || 0, false)}<button type="button" class="btn btn-outline-danger" title="Delete quantity" aria-label="Delete quantity" onclick="deleteOnSpotQuantity(this)"><i class="bi bi-trash"></i></button></div>`;
+  return `<div class="input-group input-group-sm mb-2 onspot-quantity quantity-price-group" style="max-width:760px"><input type="text" class="form-control expense-quantity-name" style="max-width:180px" value="${name}" placeholder="Quantity"><input type="number" class="form-control ${inputClass}" data-quantity-category-id="${quantityCategoryId}" data-name="${name}" data-unit="${unit}" min="0" step="0.01" value="${amount}"><select class="form-select expense-quantity-unit" style="max-width:80px" data-prev-unit="${unit}" onchange="syncOnSpotQuantityName(this)">${['KG', 'Grams', 'Litre', 'Count'].map(option => `<option${unit === option ? ' selected' : ''}>${option}</option>`).join('')}
+    </select>${quantityPriceInputHtml(parseFloat(quantity.unitPrice) || 0, false, quantity.totalAmount ?? '')}<button type="button" class="btn btn-outline-danger" title="Delete quantity" aria-label="Delete quantity" onclick="deleteOnSpotQuantity(this)"><i class="bi bi-trash"></i></button></div>`;
 }
 
 // Keeps the name in sync with the selected unit until the user overrides it with a custom label.
@@ -1248,7 +1340,6 @@ function renderUnpaidQuantities() {
       : '';
     const actions = canEdit ? `<div class="btn-group btn-group-sm">
       <button type="button" class="btn btn-outline-primary" title="Link to an expense" onclick="promptLinkUnpaid('${escapeHtml(receipt.id)}')" ${balance <= 0.001 ? 'disabled' : ''}><i class="bi bi-link-45deg"></i></button>
-      <button type="button" class="btn btn-outline-secondary" title="Edit" onclick="openUnpaidQuantityModal('${escapeHtml(receipt.id)}')"><i class="bi bi-pencil"></i></button>
       <button type="button" class="btn btn-outline-danger" title="Delete" onclick="deleteUnpaidQuantity('${escapeHtml(receipt.id)}')"><i class="bi bi-trash"></i></button>
     </div>` : '';
     return `<tr>
@@ -1302,113 +1393,6 @@ function renderReceiptsOnDate(container, date, occasional = false) {
       </div>`;
     }).join('')}
   </div>`;
-}
-
-function addUnpaidItemRow(item = {}) {
-  const container = document.getElementById('unpaidItemsContainer');
-  if (!container) return;
-  const row = document.createElement('div');
-  row.className = 'input-group input-group-sm unpaid-item-row';
-  row.innerHTML = `
-    <input type="text" class="form-control unpaid-item-name" placeholder="Item / quantity name" value="${escapeHtml(item.name || '')}" required>
-    <input type="number" class="form-control unpaid-item-amount" placeholder="Qty" min="0.01" step="0.01" value="${item.amount ?? ''}" style="max-width:100px" required>
-    <select class="form-select unpaid-item-unit" style="max-width:100px">
-      ${['KG', 'Litre', 'Count'].map(unit => `<option${(item.unit || 'Count') === unit ? ' selected' : ''}>${unit}</option>`).join('')}
-    </select>
-    <button type="button" class="btn btn-outline-danger" title="Remove item" onclick="this.closest('.unpaid-item-row').remove()"><i class="bi bi-trash"></i></button>
-  `;
-  container.appendChild(row);
-}
-
-function collectUnpaidItemsFromModal() {
-  return [...document.querySelectorAll('#unpaidItemsContainer .unpaid-item-row')].map(row => ({
-    name: row.querySelector('.unpaid-item-name').value.trim(),
-    amount: parseFloat(row.querySelector('.unpaid-item-amount').value),
-    unit: row.querySelector('.unpaid-item-unit').value
-  })).filter(item => item.name && item.amount > 0);
-}
-
-function populateUnpaidCategoryOptions() {
-  const typeSelect = document.getElementById('unpaidTypeId');
-  const datalist = document.getElementById('unpaidCategoryOptions');
-  if (!typeSelect || !datalist) return;
-  const typeId = typeSelect.value;
-  datalist.innerHTML = allCategories
-    .filter(category => category.status === 'Active' && (!typeId || category.typeId === typeId))
-    .sort((first, second) => first.sortOrder - second.sortOrder)
-    .map(category => `<option value="${escapeHtml(category.name)}"></option>`).join('');
-}
-
-function openUnpaidQuantityModal(id = null, contextMode = 'Daily') {
-  const modalEl = document.getElementById('unpaidQuantityModal');
-  if (!modalEl) return;
-  const form = document.getElementById('unpaidQuantityForm');
-  form.reset();
-  editingUnpaidQuantityId = id;
-  document.getElementById('unpaidItemsContainer').innerHTML = '';
-  document.getElementById('unpaidQuantityModalTitle').innerHTML = `<i class="bi bi-box-seam me-2"></i>${id ? 'Edit' : 'Add'} received without payment`;
-  const typeSelect = document.getElementById('unpaidTypeId');
-  const wantsOccasional = contextMode === 'Occasional';
-  const filterWorkflow = workflow => wantsOccasional ? workflow === 'Occasional' : workflow !== 'Occasional';
-  typeSelect.innerHTML = '<option value="">— Select type —</option>' + allCategoryTypes
-    .filter(type => type.status === 'Active' && filterWorkflow(normalizeWorkflow(type.workflow)))
-    .sort((first, second) => (first.sortOrder || 0) - (second.sortOrder || 0))
-    .map(type => `<option value="${escapeHtml(type.id)}">${escapeHtml(type.displayText || type.name)}</option>`).join('');
-  const dateInput = document.getElementById('unpaidReceivedDate');
-  dateInput.max = today;
-  if (id) {
-    const existing = allUnpaidQuantities.find(item => item.id === id);
-    if (!existing) { showNotification('Unpaid receipt not found.', 'warning'); return; }
-    const existingWorkflow = normalizeWorkflow(allCategoryTypes.find(type => type.id === existing.typeId)?.workflow);
-    if ((existingWorkflow === 'Occasional') !== wantsOccasional) {
-      typeSelect.innerHTML = '<option value="">— Select type —</option>' + allCategoryTypes
-        .filter(type => type.status === 'Active' && (existingWorkflow === 'Occasional' ? normalizeWorkflow(type.workflow) === 'Occasional' : normalizeWorkflow(type.workflow) !== 'Occasional'))
-        .sort((first, second) => (first.sortOrder || 0) - (second.sortOrder || 0))
-        .map(type => `<option value="${escapeHtml(type.id)}">${escapeHtml(type.displayText || type.name)}</option>`).join('');
-    }
-    dateInput.value = existing.receivedDate;
-    typeSelect.value = existing.typeId;
-    populateUnpaidCategoryOptions();
-    document.getElementById('unpaidCategory').value = existing.category;
-    document.getElementById('unpaidTotalAmount').value = existing.totalAmount || '';
-    document.getElementById('unpaidRemarks').value = existing.remarks || '';
-    (existing.items || []).forEach(item => addUnpaidItemRow(item));
-    if (!(existing.items || []).length) addUnpaidItemRow();
-  } else {
-    dateInput.value = getSelectedExpenseDate();
-    populateUnpaidCategoryOptions();
-    addUnpaidItemRow();
-  }
-  bootstrap.Modal.getOrCreateInstance(modalEl).show();
-}
-
-async function saveUnpaidQuantityFromModal() {
-  const form = document.getElementById('unpaidQuantityForm');
-  if (!form.checkValidity()) { form.reportValidity(); return; }
-  const items = collectUnpaidItemsFromModal();
-  if (!items.length) { showNotification('Add at least one item.', 'warning'); return; }
-  const button = document.getElementById('btnSaveUnpaidQuantity');
-  button.disabled = true;
-  try {
-    const payload = {
-      receivedDate: document.getElementById('unpaidReceivedDate').value,
-      typeId: document.getElementById('unpaidTypeId').value,
-      category: document.getElementById('unpaidCategory').value.trim(),
-      totalAmount: parseFloat(document.getElementById('unpaidTotalAmount').value),
-      remarks: document.getElementById('unpaidRemarks').value.trim(),
-      items
-    };
-    if (editingUnpaidQuantityId) await api('PUT', `/expenses/unpaid/${encodeURIComponent(editingUnpaidQuantityId)}`, payload);
-    else await api('POST', '/expenses/unpaid', payload);
-    bootstrap.Modal.getInstance(document.getElementById('unpaidQuantityModal')).hide();
-    showNotification(editingUnpaidQuantityId ? 'Receipt updated.' : 'Receipt saved.');
-    allUnpaidQuantities = await api('GET', '/expenses/unpaid?includeSettled=1');
-    renderUnpaidQuantities();
-  } catch (err) {
-    showNotification('Save failed: ' + err.message, 'danger');
-  } finally {
-    button.disabled = false;
-  }
 }
 
 async function deleteUnpaidQuantity(id) {
@@ -1569,7 +1553,8 @@ function renderQuantityInputs() {
     const custom = input.closest('.onspot-quantity');
     return [`${row.dataset.rowKey}|${custom ? custom.querySelector('.expense-quantity-name').value.trim() : input.dataset.quantityCategoryId}`,
       { amount: input.value, unit: custom ? custom.querySelector('.expense-quantity-unit').value : input.dataset.unit,
-        unitPrice: input.closest('.quantity-price-group')?.querySelector('.expense-quantity-price')?.value || '' }];
+        unitPrice: input.closest('.quantity-price-group')?.querySelector('.expense-quantity-price')?.value || '',
+        totalAmount: input.closest('.quantity-price-group')?.querySelector('.expense-quantity-total')?.value || '' }];
   }));
 
   // Custom on-spot quantities exist only in the DOM until save, so carry them over as-is.
@@ -1584,7 +1569,8 @@ function renderQuantityInputs() {
       name: group.querySelector('.expense-quantity-name').value,
       unit: group.querySelector('.expense-quantity-unit').value,
       amount: input.value,
-      unitPrice: group.querySelector('.expense-quantity-price')?.value || ''
+      unitPrice: group.querySelector('.expense-quantity-price')?.value || '',
+      totalAmount: group.querySelector('.expense-quantity-total')?.value || ''
     });
   });
 
@@ -1599,18 +1585,21 @@ function renderQuantityInputs() {
     const category = findConfiguredCategory(name, typeId);
     const defined = category ? allQuantityCategories.filter(quantity => quantity.categoryId === category.id) : [];
     const saved = allExpenseQuantities.filter(quantity => quantity.expenseId === input.dataset.id);
+    const pickerKey = category ? handpickKey(category, '', `${typeId}|${categoryBalanceName(name)}|${onSpot}`) : '';
+    const selected = selectedQuantityFields(category, pickerKey, saved);
 
     const customSaved = saved.filter(quantity => !defined.some(item => item.id === quantity.quantityCategoryId));
     if (!defined.length && !onSpot && !customSaved.length) return '';
 
     const fields = defined.map(quantity => {
       const draft = drafts.get(`${rowKey}|${quantity.id}`);
-      const value = draft ? draft.amount : (saved.find(item => item.quantityCategoryId === quantity.id)?.amount ?? '');
+      const value = draft ? draft.amount : (saved.find(item => item.quantityCategoryId === quantity.id)?.amount ?? (quantity.defaultQuantity ?? ''));
       const unitPrice = draft ? parseFloat(draft.unitPrice) || 0 : (saved.find(item => item.quantityCategoryId === quantity.id)?.unitPrice || 0);
-      return `<div class="input-group input-group-sm mb-2 quantity-price-group" style="max-width:560px">
+      const totalAmount = draft ? draft.totalAmount : (saved.find(item => item.quantityCategoryId === quantity.id)?.totalAmount ?? '');
+      return `<div class="input-group input-group-sm mb-2 quantity-price-group configured-quantity-field"${selected && !selected.has(quantity.id) ? ' hidden' : ''} style="max-width:560px">
         <span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span>
         <input type="number" class="form-control expense-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${value}"${readOnly}>
-        <span class="input-group-text">${escapeHtml(quantity.unit)}</span>${quantityPriceInputHtml(unitPrice, !!readOnly)}</div>`;
+        <span class="input-group-text">${escapeHtml(quantity.unit)}</span>${quantityPriceInputHtml(unitPrice, !!readOnly, totalAmount)}</div>`;
     }).join('');
 
     const matchNote = onSpot && defined.length
@@ -1640,10 +1629,10 @@ function renderQuantityInputs() {
     }
 
     if (!fields && !onSpot && !customFields) return '';
-    return `<tr data-row-key="${rowKey}" data-expense-amount="${parseFloat(input.value) || 0}">
+    return `<tr data-row-key="${rowKey}" data-picker-key="${escapeHtml(pickerKey)}" data-picker-category="${escapeHtml(name)}" data-expense-amount="${parseFloat(input.value) || 0}">
       <td data-label="Category type">${escapeHtml(typeNames.get(typeId) || 'Unassigned type')}</td>
       <td data-label="Category" class="fw-semibold">${escapeHtml(name)}${pendingSlotHtml(typeId, name)}<div class="text-muted small">${formatCurrency(parseFloat(input.value) || 0)}</div></td>
-      <td data-label="Quantities" class="expense-quantity-cell">${matchNote}${fields}${customFields}<div class="quantity-row-summary small text-muted mt-1"></div></td>
+      <td data-label="Quantities" class="expense-quantity-cell">${matchNote}${quantityPickerButton(category, !!readOnly)}${fields}${customFields}<div class="quantity-row-summary small text-muted mt-1"></div></td>
     </tr>`;
   }).filter(Boolean);
 
@@ -1656,12 +1645,13 @@ function collectQuantitiesFor(input) {
   const typeId = input.dataset.type;
   const row = document.querySelector(`#quantityInputsBody tr[data-row-key="${CSS.escape(input.dataset.quantityRowKey || quantityRowKey(input, input.dataset.category))}"]`);
   if (!row) return [];
-  return [...row.querySelectorAll('.expense-quantity')].map(quantityInput => {
+  return [...row.querySelectorAll('.expense-quantity')].filter(input => !input.closest('.configured-quantity-field')?.hidden).map(quantityInput => {
     const custom = quantityInput.closest('.onspot-quantity');
     const name = custom ? custom.querySelector('.expense-quantity-name').value.trim() : quantityInput.dataset.name;
     const unit = custom ? custom.querySelector('.expense-quantity-unit').value : quantityInput.dataset.unit;
     return { quantityCategoryId: quantityInput.dataset.quantityCategoryId || `onspot:${typeId}:${name}`, name, unit, amount: quantityInput.value,
-      unitPrice: quantityInput.closest('.quantity-price-group')?.querySelector('.expense-quantity-price')?.value || '' };
+      unitPrice: quantityInput.closest('.quantity-price-group')?.querySelector('.expense-quantity-price')?.value || '',
+      totalAmount: quantityInput.closest('.quantity-price-group')?.querySelector('.expense-quantity-total')?.value || '' };
   }).filter(quantity => quantity.name && parseFloat(quantity.amount) > 0);
 }
 
@@ -1690,7 +1680,7 @@ async function save(options = {}) {
     // Persist rows with an amount OR any quantities OR linked receipts so quantity-only entries survive save.
     const hasQuantities = quantities.some(quantity => parseFloat(quantity.amount) > 0);
     const hasLinks = Array.isArray(linkedUnpaid) && linkedUnpaid.length > 0;
-    if (amount > 0 || hasQuantities || hasLinks) {
+    if (amount > 0 || hasQuantities || hasLinks || inp.dataset.id) {
       entries.push({
         id: inp.dataset.id || '', category: name, amount, typeId: inp.dataset.type, onSpot,
         quantities, linkedUnpaid
@@ -2022,21 +2012,21 @@ function renderQuantitySummary(entries) {
     total.expenses += 1;
     total.amount += amount;
     if (quantity.unitPrice > 0) {
-      total.cost += amount * quantity.unitPrice;
+      total.cost += quantity.totalAmount !== '' && quantity.totalAmount != null ? Number(quantity.totalAmount) : amount * quantity.unitPrice;
       total.pricedAmount += amount;
     }
   });
   const rows = [...totals.values()].sort((first, second) => first.name.localeCompare(second.name));
   section.style.display = rows.length ? '' : 'none';
   summary.textContent = `${rows.length} quantity ${rows.length === 1 ? 'type' : 'types'}`;
-  body.innerHTML = rows.map(row => {
+  body.innerHTML = rows.length ? rows.map(row => {
     const average = row.pricedAmount > 0 ? `${formatCurrency(row.cost / row.pricedAmount)} / ${escapeHtml(row.unit)}` : '—';
     const partial = row.pricedAmount > 0 && row.pricedAmount < row.amount - 0.0001 ? `<div class="text-muted small fw-normal">Based on ${+row.pricedAmount.toFixed(2)} of ${+row.amount.toFixed(2)} ${escapeHtml(row.unit)}</div>` : '';
     return `<tr><td data-label="Quantity" class="fw-semibold">${escapeHtml(row.name)}</td>
     <td data-label="Unit">${escapeHtml(row.unit)}</td><td data-label="Expenses" class="text-end">${row.expenses}</td>
     <td data-label="Total" class="text-end fw-semibold">${row.amount}</td>
     <td data-label="Avg price / unit" class="text-end">${average}${partial}</td></tr>`;
-  }).join('');
+  }).join('') : emptyRow(4, 'No expenses in this range.');
   foot.innerHTML = rows.length ? `<tr class="fw-bold"><td colspan="2">Total</td><td class="text-end">${rows.reduce((sum, row) => sum + row.expenses, 0)}</td><td></td><td></td></tr>` : '';
 }
 

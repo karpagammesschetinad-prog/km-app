@@ -94,16 +94,17 @@ async function loadIncomingByCategory() {
     return bucket;
   };
   for (const row of expenseQtyRows) {
+    if (!expenseDates.has(row[EQ_C.EXPENSE_ID])) continue;
     const amount = parseFloat(row[EQ_C.AMOUNT]) || 0;
     if (!(amount > 0)) continue;
     const bucket = bucketFor(row[EQ_C.CATEGORY_ID], row[EQ_C.NAME], row[EQ_C.UNIT]);
     if (!bucket) continue;
-    // Missing expense row means the join failed; count it from day zero so nothing is silently dropped.
     const date = expenseDates.get(row[EQ_C.EXPENSE_ID]) || '';
     bucket.events.push({ date, amount, source: 'paid' });
     bucket.paid += amount;
   }
   for (const row of receiptItemRows) {
+    if (!receiptDates.has(row[RI_C.RECEIPT_ID])) continue;
     const amount = parseFloat(row[RI_C.AMOUNT]) || 0;
     if (!(amount > 0)) continue;
     const bucket = bucketFor(row[RI_C.CATEGORY_ID], row[RI_C.NAME], row[RI_C.UNIT]);
