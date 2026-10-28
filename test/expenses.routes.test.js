@@ -56,6 +56,35 @@ test('rejects unauthenticated requests', async () => {
   assert.equal(res.status, 401);
 });
 
+test('report returns only selected dates, categories and mode with optional quantities', async () => {
+  server.loginAs(SUPERUSER);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'selected', date: '2026-02-02', category: 'Milk' }),
+    expenseRow({ id: 'old', date: '2026-01-01', category: 'Milk' }),
+    expenseRow({ id: 'other', date: '2026-02-02', category: 'Rice' }),
+    expenseRow({ id: 'occasional', date: '2026-02-02', category: 'Repair', mode: 'Occasional', typeId: 'type-occasional' })
+  ]);
+  sheets.setRows(SHEETS.EXPENSE_QUANTITIES, [
+    ['q1', 'selected', 'milk', 'Milk', 'Litre', 10], ['q2', 'old', 'milk', 'Milk', 'Litre', 20]
+  ]);
+  const url = '/api/expenses/report?from=2026-02-01&to=2026-02-28&typeId=type-cash&category=Milk&mode=Daily';
+  let res = await server.request('GET', url);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.data.expenses.map(item => item.id), ['selected']);
+  assert.deepEqual(res.body.data.quantities, []);
+  res = await server.request('GET', url + '&quantities=1');
+  assert.deepEqual(res.body.data.quantities.map(item => item.id), ['q1']);
+});
+
+test('report endpoint enforces access and validates date filters', async () => {
+  assert.equal((await server.request('GET', '/api/expenses/report')).status, 403);
+  server.logout();
+  assert.equal((await server.request('GET', '/api/expenses/report')).status, 401);
+  server.loginAs(SUPERUSER);
+  assert.equal((await server.request('GET', '/api/expenses/report?from=2026-03-01&to=2026-02-01')).status, 400);
+  assert.equal((await server.request('GET', '/api/expenses/report?from=2026-02-30')).status, 400);
+});
+
 test('bulk save rejects future dates', async () => {
   const res = await server.request('POST', '/api/expenses/bulk', {
     date: '2099-01-01',
@@ -80,6 +109,102 @@ test('bulk save accepts an on-spot category that is not in the master list', asy
   assert.equal(rows[0][17], 'Daily Cash');
 });
 
+test('bulk save records configured quantity values against its expense row', async () => {
+  const res = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{ category: 'Milk', amount: 120, typeId: 'type-cash', quantities: [
+      { quantityCategoryId: 'quantity-1', name: 'Volume', unit: 'Litre', amount: 5 }
+    ] }]
+  });
+
+  assert.equal(res.status, 200);
+  const expenseId = sheets.getRows(SHEETS.EXPENSES)[0][0];
+  assert.deepEqual(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0].slice(1, 6), [expenseId, 'quantity-1', 'Volume', 'Litre', 5]);
+});
+
+test('bulk save records custom on-spot quantity values', async () => {
+  const res = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{ category: 'Auto fare', amount: 120, typeId: 'type-cash', onSpot: true, quantities: [
+      { quantityCategoryId: 'onspot:type-cash:Trips', name: 'Trips', unit: 'Count', amount: 2 }
+    ] }]
+  });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0].slice(2, 6), ['onspot:type-cash:Trips', 'Trips', 'Count', 2]);
+});
+
+test('quantity unit prices are stored independently of the expense amount and returned on read', async () => {
+  const res = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{ category: 'Milk', amount: 120, typeId: 'type-cash', quantities: [
+      { quantityCategoryId: 'quantity-1', name: 'Volume', unit: 'Litre', amount: 10, unitPrice: 52.5 },
+      { quantityCategoryId: 'onspot:type-cash:Curd', name: 'Curd', unit: 'KG', amount: 2 }
+    ] }]
+  });
+
+  assert.equal(res.status, 200);
+  const rows = sheets.getRows(SHEETS.EXPENSE_QUANTITIES);
+  assert.equal(rows[0][9], 52.5);
+  assert.equal(rows[1][9], '');
+  const read = (await server.request('GET', '/api/expenses/quantities')).body.data;
+  assert.deepEqual(read.map(quantity => quantity.unitPrice), [52.5, 0]);
+  assert.equal(sheets.getRows(SHEETS.EXPENSES)[0][4], 120);
+});
+
+test('resaving quantities replaces the stored unit price', async () => {
+  const entry = unitPrice => ({ category: 'Milk', amount: 120, typeId: 'type-cash', quantities: [
+    { quantityCategoryId: 'quantity-1', name: 'Volume', unit: 'Litre', amount: 10, unitPrice }
+  ] });
+  await server.request('POST', '/api/expenses/bulk', { date: '2026-01-05', entries: [entry(50)] });
+  await server.request('POST', '/api/expenses/bulk', { date: '2026-01-05', entries: [entry('48.25')] });
+  const rows = sheets.getRows(SHEETS.EXPENSE_QUANTITIES);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0][9], 48.25);
+});
+
+test('invalid unit prices are rejected before anything is saved', async () => {
+  for (const unitPrice of [-1, 'abc', 1.005, '1e400']) {
+    const res = await server.request('POST', '/api/expenses/bulk', {
+      date: '2026-01-05',
+      entries: [{ category: 'Milk', amount: 120, typeId: 'type-cash', quantities: [
+        { quantityCategoryId: 'quantity-1', name: 'Volume', unit: 'Litre', amount: 5, unitPrice }
+      ] }]
+    });
+    assert.equal(res.status, 400, `unit price ${unitPrice}`);
+  }
+  assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 0);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES).length, 0);
+  const occasional = await server.request('POST', '/api/expenses/occasional', {
+    date: '2026-01-05', category: 'Repair', typeId: 'type-occasional', amount: 400,
+    quantities: [{ quantityCategoryId: 'onspot:x', name: 'Bolts', unit: 'Count', amount: 4, unitPrice: -5 }]
+  });
+  assert.equal(occasional.status, 400);
+  assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 0);
+});
+
+test('occasional quantities keep their unit price and updates validate it', async () => {
+  const created = await server.request('POST', '/api/expenses/occasional', {
+    date: '2026-01-05', category: 'Repair', typeId: 'type-occasional', amount: 400,
+    quantities: [{ quantityCategoryId: 'onspot:x', name: 'Bolts', unit: 'Count', amount: 4, unitPrice: 25 }]
+  });
+  assert.equal(created.status, 201);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0][9], 25);
+  const id = created.body.data.id;
+  const bad = await server.request('PUT', `/api/expenses/occasional/${id}`, {
+    date: '2026-01-05', category: 'Repair', typeId: 'type-occasional', amount: 400,
+    quantities: [{ quantityCategoryId: 'onspot:x', name: 'Bolts', unit: 'Count', amount: 4, unitPrice: 'free' }]
+  });
+  assert.equal(bad.status, 400);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0][9], 25);
+  const good = await server.request('PUT', `/api/expenses/occasional/${id}`, {
+    date: '2026-01-05', category: 'Repair', typeId: 'type-occasional', amount: 400,
+    quantities: [{ quantityCategoryId: 'onspot:x', name: 'Bolts', unit: 'Count', amount: 4, unitPrice: 30 }]
+  });
+  assert.equal(good.status, 200);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0][9], 30);
+});
+
 test('bulk save skips entries with a non-positive amount', async () => {
   const res = await server.request('POST', '/api/expenses/bulk', {
     date: '2026-01-05',
@@ -91,6 +216,24 @@ test('bulk save skips entries with a non-positive amount', async () => {
 
   assert.equal(res.status, 200);
   assert.deepEqual(sheets.getRows(SHEETS.EXPENSES).map(row => row[2]), ['Milk']);
+});
+
+test('bulk save persists a zero-amount entry when it carries quantities', async () => {
+  const res = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{ category: 'Milk', amount: 0, typeId: 'type-cash', quantities: [
+      { quantityCategoryId: 'qcat-milk', name: 'Milk', unit: 'Litre', amount: 5 }
+    ] }]
+  });
+
+  assert.equal(res.status, 200);
+  const expenseRows = sheets.getRows(SHEETS.EXPENSES);
+  assert.equal(expenseRows.length, 1);
+  assert.equal(expenseRows[0][2], 'Milk');
+  assert.equal(parseFloat(expenseRows[0][4]), 0);
+  const quantityRows = sheets.getRows(SHEETS.EXPENSE_QUANTITIES);
+  assert.equal(quantityRows.length, 1);
+  assert.equal(parseFloat(quantityRows[0][5]), 5);
 });
 
 test('concurrent saves for one date do not create duplicate daily expenses', async () => {
@@ -269,6 +412,59 @@ test('rejecting one category preserves approved categories and resubmits only th
   assert.equal(saved.status, 200);
   assert.equal(sheets.getRows(SHEETS.EXPENSES)[0][8], 'Approved');
   assert.equal(sheets.getRows(SHEETS.EXPENSES)[1][8], 'Pending');
+});
+
+test('rejecting a missing category type records a placeholder that survives until the type is resubmitted', async () => {
+  sheets.setRows(SHEETS.EXPENSES, [expenseRow({ id: 'exp-milk', category: 'Milk', approvalStatus: 'Approved' })]);
+  server.loginAs(SUPERUSER);
+
+  const rejected = await server.request('POST', '/api/expenses/reject/2026-01-05', {
+    reason: 'Owner draw is missing.', missingTypeIds: ['type-limited']
+  });
+  assert.equal(rejected.status, 200);
+  assert.equal(rejected.body.data.updated, 1);
+  const afterReject = sheets.getRows(SHEETS.EXPENSES);
+  assert.equal(afterReject.length, 2);
+  const placeholder = afterReject.find(row => row[13] === 'type-limited');
+  assert.ok(placeholder, 'a placeholder row is added for the missing type');
+  assert.equal(placeholder[2], '');
+  assert.equal(Number(placeholder[4]), 0);
+  assert.equal(placeholder[8], 'Rejected');
+
+  // Duplicate reject on the same missing type does not add another placeholder.
+  const rejectedAgain = await server.request('POST', '/api/expenses/reject/2026-01-05', {
+    reason: 'still missing', missingTypeIds: ['type-limited']
+  });
+  assert.equal(rejectedAgain.body.data.updated, 0);
+  assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 2);
+
+  // Cashier saves an unrelated on-spot entry — the placeholder is preserved because the missing type is still unaddressed.
+  server.loginAs(CASHIER);
+  const partial = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05', entries: [{ category: 'Auto fare', amount: 80, typeId: 'type-cash', onSpot: true }]
+  });
+  assert.equal(partial.status, 200);
+  assert.ok(sheets.getRows(SHEETS.EXPENSES).some(row => row[13] === 'type-limited' && row[8] === 'Rejected'));
+
+  // Superuser submits the previously-missing type — placeholder is removed and the new entry is recorded.
+  server.loginAs(SUPERUSER);
+  const resubmit = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05', entries: [
+      { category: 'Auto fare', amount: 80, typeId: 'type-cash', onSpot: true },
+      { category: 'Owner Draw', amount: 400, typeId: 'type-limited' }
+    ]
+  });
+  assert.equal(resubmit.status, 200);
+  const finalRows = sheets.getRows(SHEETS.EXPENSES);
+  assert.ok(!finalRows.some(row => row[2] === '' && row[8] === 'Rejected'), 'placeholder is removed');
+  assert.ok(finalRows.some(row => row[2] === 'Owner Draw' && row[13] === 'type-limited'));
+});
+
+test('reject rejects the request when nothing is selected', async () => {
+  sheets.setRows(SHEETS.EXPENSES, [expenseRow({ id: 'exp-milk', approvalStatus: 'Approved' })]);
+  server.loginAs(SUPERUSER);
+  const res = await server.request('POST', '/api/expenses/reject/2026-01-05', { reason: 'x' });
+  assert.equal(res.status, 400);
 });
 
 test('a partial correction updates a matching pending row instead of reporting a duplicate', async () => {
@@ -458,4 +654,242 @@ test('a super user cannot approve their own submission', async () => {
   const res = await server.request('POST', '/api/expenses/approve/2026-01-05');
   assert.equal(res.body.data.updated, 0);
   assert.equal(sheets.getRows(SHEETS.EXPENSES)[0][8], 'Pending');
+});
+
+test('unpaid receipt CRUD writes the header row and line items', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 500, remarks: 'Vendor A',
+    items: [
+      { name: 'Volume', unit: 'Litre', amount: 8 },
+      { name: 'Bottles', unit: 'Count', amount: 4 }
+    ]
+  });
+  assert.equal(created.status, 201);
+  const id = created.body.data.id;
+  assert.ok(id);
+  assert.equal(created.body.data.items.length, 2);
+
+  const listed = await server.request('GET', '/api/expenses/unpaid');
+  assert.equal(listed.status, 200);
+  assert.equal(listed.body.data.length, 1);
+  assert.equal(listed.body.data[0].totalAmount, 500);
+  assert.equal(listed.body.data[0].items.length, 2);
+
+  const updated = await server.request('PUT', `/api/expenses/unpaid/${id}`, {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 600, remarks: 'Vendor A (revised)',
+    items: [{ name: 'Volume', unit: 'Litre', amount: 10 }]
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(sheets.getRows(SHEETS.UNPAID_RECEIPTS)[0][6], 600);
+  assert.equal(sheets.getRows(SHEETS.UNPAID_RECEIPT_ITEMS).length, 1);
+
+  const deleted = await server.request('DELETE', `/api/expenses/unpaid/${id}`);
+  assert.equal(deleted.status, 200);
+  assert.equal(sheets.getRows(SHEETS.UNPAID_RECEIPTS).length, 0);
+  assert.equal(sheets.getRows(SHEETS.UNPAID_RECEIPT_ITEMS).length, 0);
+});
+
+test('unpaid receipt POST refuses a category type the user cannot access', async () => {
+  const denied = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-limited', category: 'Owner Draw',
+    totalAmount: 100, items: [{ name: 'Volume', unit: 'Count', amount: 1 }]
+  });
+  assert.equal(denied.status, 403);
+});
+
+test('bulk save linking the full payable keeps the receipt (settled) and records all items on the expense', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 400,
+    items: [
+      { name: 'Volume', unit: 'Litre', amount: 8 },
+      { name: 'Bottles', unit: 'Count', amount: 4 }
+    ]
+  });
+  const unpaidId = created.body.data.id;
+
+  const saved = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{
+      category: 'Milk', amount: 400, typeId: 'type-cash',
+      linkedUnpaid: [{ unpaidId, amount: 400 }]
+    }]
+  });
+  assert.equal(saved.status, 200);
+  const receipts = sheets.getRows(SHEETS.UNPAID_RECEIPTS);
+  assert.equal(receipts.length, 1);
+  assert.equal(Number(receipts[0][9]), 400);
+  assert.equal(sheets.getRows(SHEETS.UNPAID_RECEIPT_ITEMS).length, 2);
+  assert.equal(sheets.getRows(SHEETS.RECEIPT_PAYMENTS).length, 1);
+  const quantityRows = sheets.getRows(SHEETS.EXPENSE_QUANTITIES);
+  assert.equal(quantityRows.length, 2);
+  assert.equal(quantityRows.every(row => row[8] === unpaidId), true);
+  // The list endpoint hides the receipt once balance reaches zero.
+  const listed = await server.request('GET', '/api/expenses/unpaid');
+  assert.equal(listed.body.data.length, 0);
+});
+
+test('bulk save partial payment increments PaidAmount without writing expense quantities', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 500,
+    items: [
+      { name: 'Volume', unit: 'Litre', amount: 10 },
+      { name: 'Bottles', unit: 'Count', amount: 5 }
+    ]
+  });
+  const unpaidId = created.body.data.id;
+
+  const saved = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{
+      category: 'Milk', amount: 300, typeId: 'type-cash',
+      linkedUnpaid: [{ unpaidId, amount: 300 }]
+    }]
+  });
+  assert.equal(saved.status, 200);
+  const remainingReceipts = sheets.getRows(SHEETS.UNPAID_RECEIPTS);
+  assert.equal(remainingReceipts.length, 1);
+  assert.equal(Number(remainingReceipts[0][6]), 500);
+  assert.equal(Number(remainingReceipts[0][9]), 300);
+  const remainingItems = sheets.getRows(SHEETS.UNPAID_RECEIPT_ITEMS);
+  assert.equal(remainingItems.length, 2);
+  assert.equal(Number(remainingItems.find(row => row[3] === 'Volume')[5]), 10);
+  assert.equal(Number(remainingItems.find(row => row[3] === 'Bottles')[5]), 5);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES).length, 0);
+  assert.equal(sheets.getRows(SHEETS.RECEIPT_PAYMENTS).length, 1);
+});
+
+test('bulk save that finishes the balance transfers every item to the settling expense', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 500,
+    items: [
+      { name: 'Volume', unit: 'Litre', amount: 10 },
+      { name: 'Bottles', unit: 'Count', amount: 5 }
+    ]
+  });
+  const unpaidId = created.body.data.id;
+
+  await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{ category: 'Milk', amount: 300, typeId: 'type-cash', linkedUnpaid: [{ unpaidId, amount: 300 }] }]
+  });
+  const final = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-06',
+    entries: [{ category: 'Milk', amount: 200, typeId: 'type-cash', linkedUnpaid: [{ unpaidId, amount: 200 }] }]
+  });
+  assert.equal(final.status, 200);
+  const receipts = sheets.getRows(SHEETS.UNPAID_RECEIPTS);
+  assert.equal(receipts.length, 1);
+  assert.equal(Number(receipts[0][9]), 500);
+  assert.equal(sheets.getRows(SHEETS.RECEIPT_PAYMENTS).length, 2);
+  const quantityRows = sheets.getRows(SHEETS.EXPENSE_QUANTITIES);
+  assert.equal(quantityRows.length, 2);
+  assert.equal(Number(quantityRows.find(row => row[3] === 'Volume')[5]), 10);
+  assert.equal(Number(quantityRows.find(row => row[3] === 'Bottles')[5]), 5);
+});
+
+test('a receipt can be linked to multiple expenses in one save and payment history is exposed', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 500,
+    items: [{ name: 'Volume', unit: 'Litre', amount: 10 }]
+  });
+  const unpaidId = created.body.data.id;
+
+  const saved = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [
+      { category: 'Milk', amount: 300, typeId: 'type-cash', linkedUnpaid: [{ unpaidId, amount: 300 }] },
+      { category: 'Auto fare', amount: 200, typeId: 'type-cash', onSpot: true, linkedUnpaid: [{ unpaidId, amount: 200 }] }
+    ]
+  });
+  assert.equal(saved.status, 200);
+  const receipts = sheets.getRows(SHEETS.UNPAID_RECEIPTS);
+  assert.equal(Number(receipts[0][9]), 500);
+  assert.equal(sheets.getRows(SHEETS.RECEIPT_PAYMENTS).length, 2);
+  const listed = await server.request('GET', '/api/expenses/unpaid');
+  assert.equal(listed.body.data.length, 0);
+});
+
+test('GET unpaid returns payment history for each active receipt', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 500, items: [{ name: 'Volume', unit: 'Litre', amount: 10 }]
+  });
+  const unpaidId = created.body.data.id;
+  await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{ category: 'Milk', amount: 200, typeId: 'type-cash', linkedUnpaid: [{ unpaidId, amount: 200 }] }]
+  });
+  const listed = await server.request('GET', '/api/expenses/unpaid');
+  assert.equal(listed.body.data.length, 1);
+  assert.equal(listed.body.data[0].payments.length, 1);
+  assert.equal(listed.body.data[0].payments[0].amount, 200);
+  assert.ok(listed.body.data[0].payments[0].expenseId);
+});
+
+test('GET unpaid?includeSettled=1 keeps settled receipts and their payment history visible', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 300, items: [{ name: 'Volume', unit: 'Litre', amount: 5 }]
+  });
+  const unpaidId = created.body.data.id;
+  await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-06',
+    entries: [{ category: 'Milk', amount: 300, typeId: 'type-cash', linkedUnpaid: [{ unpaidId, amount: 300 }] }]
+  });
+  const openOnly = await server.request('GET', '/api/expenses/unpaid');
+  assert.equal(openOnly.body.data.length, 0);
+  const withSettled = await server.request('GET', '/api/expenses/unpaid?includeSettled=1');
+  assert.equal(withSettled.body.data.length, 1);
+  assert.equal(withSettled.body.data[0].receivedDate, '2026-01-05');
+  assert.equal(withSettled.body.data[0].paidAmount, 300);
+  assert.equal(withSettled.body.data[0].payments.length, 1);
+});
+
+test('unlinking a receivable from a pending expense restores the balance and removes the linked quantities', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 500,
+    items: [{ name: 'Volume', unit: 'Litre', amount: 10 }]
+  });
+  const unpaidId = created.body.data.id;
+  const saved = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{ category: 'Milk', amount: 500, typeId: 'type-cash', linkedUnpaid: [{ unpaidId, amount: 500 }] }]
+  });
+  assert.equal(saved.status, 200);
+  const expenseId = saved.body.data[0].id;
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES).length, 1);
+
+  const unlinked = await server.request('DELETE', `/api/expenses/${expenseId}/unpaid-link/${unpaidId}`);
+  assert.equal(unlinked.status, 200);
+  assert.equal(unlinked.body.data.reversedAmount, 500);
+  const receipts = sheets.getRows(SHEETS.UNPAID_RECEIPTS);
+  assert.equal(Number(receipts[0][9]), 0);
+  assert.equal(sheets.getRows(SHEETS.RECEIPT_PAYMENTS).length, 0);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES).length, 0);
+  const listed = await server.request('GET', '/api/expenses/unpaid');
+  assert.equal(listed.body.data.length, 1);
+});
+
+test('unlinking a receivable is blocked once the expense is approved', async () => {
+  const created = await server.request('POST', '/api/expenses/unpaid', {
+    receivedDate: '2026-01-05', typeId: 'type-cash', category: 'Milk',
+    totalAmount: 200, items: [{ name: 'Volume', unit: 'Litre', amount: 4 }]
+  });
+  const unpaidId = created.body.data.id;
+  const saved = await server.request('POST', '/api/expenses/bulk', {
+    date: '2026-01-05',
+    entries: [{ category: 'Milk', amount: 200, typeId: 'type-cash', linkedUnpaid: [{ unpaidId, amount: 200 }] }]
+  });
+  const expenseId = saved.body.data[0].id;
+  server.loginAs(SUPERUSER);
+  await server.request('POST', `/api/expenses/approve/2026-01-05`);
+  const denied = await server.request('DELETE', `/api/expenses/${expenseId}/unpaid-link/${unpaidId}`);
+  assert.equal(denied.status, 409);
 });

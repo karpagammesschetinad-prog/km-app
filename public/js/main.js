@@ -11,6 +11,14 @@ let idleTimeoutMinutes = null;
 let autoSaveEnabled = true;
 const IDLE_WARNING_SECONDS = 30;
 
+function preventNumberInputWheel(event) {
+  if (event.target?.matches?.('input[type="number"]') && event.target === document.activeElement) {
+    event.preventDefault();
+  }
+}
+
+document.addEventListener('wheel', preventNumberInputWheel, { passive: false, capture: true });
+
 // Load config from server (currency and security settings)
 const configReady = (async () => {
   try {

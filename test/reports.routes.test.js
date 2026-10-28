@@ -138,6 +138,21 @@ test('salary accrues day-wise and reports paid, petta and pending', async () => 
   assert.equal(totals.salaryPending, 400, 'day one is 400 pending; day two is settled, not negative');
 });
 
+test('settlement bonus counts toward salary earnings once, including on leave days', async () => {
+  sheets.setRows(SHEETS.EMPLOYEES, [employeeRow()]);
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [
+    ['settlement', 'emp-1', 'Ravi', '2026-02-02', 600, '', 'admin', '', '2026-02-02', '2026-02-02', 200]
+  ]);
+  let totals = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.totals;
+  assert.equal(totals.salaryGross, 700);
+  assert.equal(totals.salaryPaid, 600);
+  assert.equal(totals.salaryPending, 0);
+  sheets.setRows(SHEETS.LEAVES, [['leave', 'emp-1', 'Ravi', '2026-02-02T00:00', '2026-02-03T00:00']]);
+  totals = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.totals;
+  assert.equal(totals.salaryGross, 200);
+  assert.equal(totals.pettaTotal, 0);
+});
+
 test('daily-pay staff are settled the same day and count as salary received', async () => {
   sheets.setRows(SHEETS.EMPLOYEES, [
     employeeRow({ id: 'emp-daily', name: 'Daily', dailyPay: 'true', perDay: 400, petta: 50 })

@@ -5,6 +5,13 @@ let allTypes = [];
 let allUsers = [];
 let editingCatId = null;
 let editingTypeId = null;
+let categoryQuantities = [];
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[character]));
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
@@ -80,9 +87,53 @@ function setupModal() {
     document.getElementById('catType').value = legacyType?.id || '';
     const maxOrder = allCategories.reduce((m, c) => Math.max(m, c.sortOrder || 0), 0);
     document.getElementById('catOrder').value = maxOrder + 1;
+    categoryQuantities = [];
+    renderQuantityFields();
     bootstrap.Modal.getOrCreateInstance(document.getElementById('catModal')).show();
   });
   document.getElementById('btnSaveCategory').addEventListener('click', save);
+  document.getElementById('btnAddQuantityField').addEventListener('click', () => {
+    syncQuantityFields();
+    categoryQuantities.push({ id: '', name: '', unit: 'Count', autoConsume: false });
+    renderQuantityFields();
+  });
+}
+
+function renderQuantityFields() {
+  const container = document.getElementById('quantityFields');
+  container.innerHTML = categoryQuantities.map((quantity, index) => `<div class="row g-2 align-items-center mb-2">
+    <div class="col"><input class="form-control form-control-sm quantity-name" data-index="${index}" value="${escapeHtml(quantity.name)}" placeholder="e.g. Weight"></div>
+    <div class="col-3"><select class="form-select form-select-sm quantity-unit" data-index="${index}">
+      ${['KG', 'Litre', 'Count'].map(unit => `<option${quantity.unit === unit ? ' selected' : ''}>${unit}</option>`).join('')}
+    </select></div>
+    <div class="col-auto">
+      <div class="form-check m-0" title="Any incoming for this quantity is counted as fully consumed the same day.">
+        <input class="form-check-input quantity-auto-consume" type="checkbox" id="qAuto-${index}" data-index="${index}"${quantity.autoConsume ? ' checked' : ''}>
+        <label class="form-check-label small" for="qAuto-${index}">Same-day</label>
+      </div>
+    </div>
+    <div class="col-auto"><button class="btn btn-sm btn-outline-danger" type="button" onclick="removeQuantityField(${index})" title="Remove quantity"><i class="bi bi-trash"></i></button></div>
+  </div>`).join('') || '<div class="text-muted small">No quantity fields configured.</div>';
+}
+
+function removeQuantityField(index) {
+  syncQuantityFields();
+  categoryQuantities.splice(index, 1);
+  renderQuantityFields();
+}
+
+function syncQuantityFields() {
+  categoryQuantities = categoryQuantities.map((quantity, index) => ({
+    id: quantity.id,
+    name: document.querySelector(`.quantity-name[data-index="${index}"]`)?.value.trim() || '',
+    unit: document.querySelector(`.quantity-unit[data-index="${index}"]`)?.value || '',
+    autoConsume: !!document.querySelector(`.quantity-auto-consume[data-index="${index}"]`)?.checked
+  }));
+}
+
+function collectQuantityFields() {
+  syncQuantityFields();
+  return categoryQuantities.filter(quantity => quantity.name);
 }
 
 function populateTypeSelect() {
@@ -195,9 +246,11 @@ async function save() {
   try {
     if (editingCatId) {
       await api('PUT', `/categories/${editingCatId}`, body);
+      await api('PUT', `/categories/${editingCatId}/quantities`, { quantities: collectQuantityFields() });
       showNotification('Category updated.');
     } else {
-      await api('POST', '/categories', body);
+      const category = await api('POST', '/categories', body);
+      await api('PUT', `/categories/${category.id}/quantities`, { quantities: collectQuantityFields() });
       showNotification('Category added.');
     }
     bootstrap.Modal.getInstance(document.getElementById('catModal')).hide();
@@ -222,6 +275,8 @@ async function openEdit(id) {
   document.getElementById('catStatus').value = c.status;
   populateTypeSelect();
   document.getElementById('catType').value = c.typeId || '';
+  categoryQuantities = await api('GET', `/categories/${id}/quantities`);
+  renderQuantityFields();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('catModal')).show();
 }
 

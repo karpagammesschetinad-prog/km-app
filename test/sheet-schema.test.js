@@ -50,13 +50,21 @@ const USER_COLUMNS = {
 const CASES = [
   { file: 'expenses.js', constant: 'C', sheet: 'EXPENSES', columns: EXPENSE_COLUMNS },
   { file: 'expenses.js', constant: 'TYPE_C', sheet: 'EXPENSE_CATEGORY_TYPES', columns: CATEGORY_TYPE_COLUMNS },
+  {
+    file: 'expenses.js', constant: 'QUANTITY_C', sheet: 'EXPENSE_QUANTITIES',
+    columns: {
+      ID: 'ID', EXPENSE_ID: 'ExpenseID', CATEGORY_ID: 'QuantityCategoryID', NAME: 'QuantityName', UNIT: 'Unit',
+      AMOUNT: 'Amount', CREATED_AT: 'CreatedAt', UPDATED_AT: 'UpdatedAt', SOURCE_RECEIPT_ID: 'SourceReceiptID', UNIT_PRICE: 'UnitPrice'
+    }
+  },
   { file: 'payments.js', constant: 'EXPENSE_C', sheet: 'EXPENSES', columns: EXPENSE_COLUMNS },
   { file: 'payments.js', constant: 'TYPE_C', sheet: 'EXPENSE_CATEGORY_TYPES', columns: CATEGORY_TYPE_COLUMNS },
   {
     file: 'payments.js', constant: 'C', sheet: 'SALARY_PAYMENTS',
     columns: {
       ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', DATE: 'PaymentDate',
-      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt'
+      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt',
+      SETTLEMENT_START: 'SettlementStart', SETTLEMENT_END: 'SettlementEnd', BONUS_AMOUNT: 'BonusAmount'
     }
   },
   {
@@ -121,7 +129,8 @@ const CASES = [
     file: 'categories.js', constant: 'C', sheet: 'EXPENSE_CATEGORIES',
     columns: {
       ID: 'ID', NAME: 'Name', ORDER: 'SortOrder', STATUS: 'Status',
-      TYPE_ID: 'CategoryTypeID', EXCLUDE_CASH: 'ExcludeDailyCashSales'
+      TYPE_ID: 'CategoryTypeID', EXCLUDE_CASH: 'ExcludeDailyCashSales', OPENING_BALANCE: 'OpeningBalance',
+      BALANCE_UPDATED_BY: 'BalanceUpdatedBy', BALANCE_UPDATED_AT: 'BalanceUpdatedAt'
     }
   },
   { file: 'categories.js', constant: 'EXPENSE_C', sheet: 'EXPENSES', columns: EXPENSE_COLUMNS },
@@ -147,7 +156,7 @@ const CASES = [
     file: 'reports.js', constant: 'PAYMENT_C', sheet: 'SALARY_PAYMENTS',
     columns: {
       ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', DATE: 'PaymentDate',
-      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt'
+      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt', BONUS_AMOUNT: 'BonusAmount'
     }
   },
   {

@@ -28,6 +28,14 @@ const SCREEN_PERMISSIONS = [
     ]
   },
   {
+    key: 'consumption', label: 'Consumption', icon: 'bi-box-seam',
+    subs: [
+      { key: 'view',   label: 'View consumption & stock' },
+      { key: 'add',    label: 'Record daily consumption' },
+      { key: 'manage', label: 'Edit / delete consumption entries' }
+    ]
+  },
+  {
     key: 'employees', label: 'Employees', icon: 'bi-people',
     subs: [
       { key: 'view',     label: 'View employee list' },
@@ -56,6 +64,7 @@ const ROLE_DEFAULTS = {
     expenses:   { enabled: true,  view: true,  add: true,  approve: true },
     sales:      { enabled: true,  view: true,  add: true },
     categories: { enabled: true,  view: true,  manage: true },
+    consumption:{ enabled: true,  view: true,  add: true,  manage: true },
     employees:  { enabled: true,  view: true,  add: true,  leaves: true, payments: true },
     salaries:   { enabled: true,  view: true },
     users:      { enabled: true,  view: true,  manage: true }
@@ -64,6 +73,7 @@ const ROLE_DEFAULTS = {
     expenses:   { enabled: true,  view: true,  add: true,  approve: false },
     sales:      { enabled: true,  view: true,  add: true },
     categories: { enabled: false, view: false, manage: false },
+    consumption:{ enabled: true,  view: true,  add: true,  manage: false },
     employees:  { enabled: true,  view: true,  add: false,  leaves: true, payments: true },
     salaries:   { enabled: false, view: false },
     users:      { enabled: false, view: false, manage: false }

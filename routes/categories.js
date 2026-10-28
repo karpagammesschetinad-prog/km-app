@@ -6,9 +6,12 @@ const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware'
 
 const SHEET = SHEETS.EXPENSE_CATEGORIES;
 const TYPE_SHEET = SHEETS.EXPENSE_CATEGORY_TYPES;
-const C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, TYPE_ID: 4, EXCLUDE_CASH: 5 };
+const QUANTITY_SHEET = SHEETS.EXPENSE_QUANTITY_CATEGORIES;
+const C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, TYPE_ID: 4, EXCLUDE_CASH: 5, OPENING_BALANCE: 6, BALANCE_UPDATED_BY: 7, BALANCE_UPDATED_AT: 8 };
 const T = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, DISPLAY_TEXT: 6, WORKFLOW: 7 };
+const Q = { ID: 0, CATEGORY_ID: 1, NAME: 2, UNIT: 3, ORDER: 4, STATUS: 5, AUTO_CONSUME: 6 };
 const EXPENSE_C = { CATEGORY: 2, EMPLOYEE_ID: 5, TYPE_ID: 13, ON_SPOT: 14 };
+const QUANTITY_UNITS = new Set(['KG', 'Litre', 'Count']);
 
 function normalizeWorkflow(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -51,12 +54,28 @@ function rowToObj(row) {
     sortOrder: parseInt(row[C.ORDER]) || 0,
     status: row[C.STATUS] || 'Active',
     typeId: row[C.TYPE_ID] || '',
-    excludeDailyCashSales: String(row[C.EXCLUDE_CASH] || '').toLowerCase() === 'true'
+    excludeDailyCashSales: String(row[C.EXCLUDE_CASH] || '').toLowerCase() === 'true',
+    openingBalance: parseFloat(row[C.OPENING_BALANCE]) || 0,
+    balanceUpdatedBy: row[C.BALANCE_UPDATED_BY] || '',
+    balanceUpdatedAt: row[C.BALANCE_UPDATED_AT] || ''
   };
 }
 
 function objToRow(o) {
-  return [o.id, o.name, o.sortOrder, o.status, o.typeId || '', o.excludeDailyCashSales ? 'TRUE' : ''];
+  return [o.id, o.name, o.sortOrder, o.status, o.typeId || '', o.excludeDailyCashSales ? 'TRUE' : '', o.openingBalance || 0, o.balanceUpdatedBy || '', o.balanceUpdatedAt || ''];
+}
+
+function quantityRowToObj(row) {
+  return {
+    id: row[Q.ID] || '', categoryId: row[Q.CATEGORY_ID] || '', name: row[Q.NAME] || '',
+    unit: row[Q.UNIT] || 'Count', sortOrder: parseInt(row[Q.ORDER]) || 0, status: row[Q.STATUS] || 'Active',
+    autoConsume: String(row[Q.AUTO_CONSUME] || '').toLowerCase() === 'true'
+  };
+}
+
+function quantityObjToRow(quantity) {
+  return [quantity.id, quantity.categoryId, quantity.name, quantity.unit, quantity.sortOrder, quantity.status,
+    quantity.autoConsume ? 'TRUE' : ''];
 }
 
 // GET all (sorted by order)
@@ -114,13 +133,38 @@ router.post('/', requireSuperUser, async (req, res) => {
   }
 });
 
+router.put('/:id/opening-balance', requireAuth, async (req, res) => {
+  try {
+    const user = req.session.user;
+    if (user.role !== 'superuser' && !user.permissions?.expenses?.add) {
+      return res.status(403).json({ success: false, message: 'Expense editing permission is required.' });
+    }
+    const amount = req.body.openingBalance;
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) {
+      return res.status(400).json({ success: false, message: 'Opening balance must be a valid amount with at most two decimal places.' });
+    }
+    const found = await findRowById(SHEET, req.params.id);
+    if (!found) return res.status(404).json({ success: false, message: 'Category not found.' });
+    const existing = rowToObj(found.row);
+    const types = await getTypes();
+    const type = existing.typeId ? types.find(item => item.id === existing.typeId) : getLegacyDefaultType(types);
+    if (!type || !canUseType(type, user)) return res.status(403).json({ success: false, message: 'Access denied for this category type.' });
+    const updated = { ...existing, openingBalance: amount, balanceUpdatedBy: user.username || user.displayName || user.id, balanceUpdatedAt: new Date().toISOString() };
+    await updateRow(SHEET, found.index, objToRow(updated));
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // PUT update
 router.put('/:id([0-9a-fA-F-]{36})', requireSuperUser, async (req, res) => {
   try {
     const found = await findRowById(SHEET, req.params.id);
     if (!found) return res.status(404).json({ success: false, message: 'Category not found.' });
     const existing = rowToObj(found.row);
-    const updated = { ...existing, ...req.body, id: existing.id };
+    const updated = { ...existing, ...req.body, id: existing.id, openingBalance: existing.openingBalance,
+      balanceUpdatedBy: existing.balanceUpdatedBy, balanceUpdatedAt: existing.balanceUpdatedAt };
     if (updated.typeId) {
       const types = await getTypes();
       if (!types.some(type => type.id === updated.typeId)) {
@@ -158,6 +202,59 @@ router.delete('/:id([0-9a-fA-F-]{36})', requireSuperUser, async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
+});
+
+router.get('/:id([0-9a-fA-F-]{36})/quantities', requireAuth, async (req, res) => {
+  try {
+    const category = await findRowById(SHEET, req.params.id);
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found.' });
+    const quantities = (await getAllRows(QUANTITY_SHEET)).map(quantityRowToObj)
+      .filter(quantity => quantity.categoryId === req.params.id && quantity.status === 'Active')
+      .sort((first, second) => first.sortOrder - second.sortOrder);
+    res.json({ success: true, data: quantities });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.get('/quantities/all', requireAuth, async (req, res) => {
+  try {
+    const visibleCategories = new Set((await getAllRows(SHEET)).map(rowToObj).map(category => category.id));
+    const quantities = (await getAllRows(QUANTITY_SHEET)).map(quantityRowToObj)
+      .filter(quantity => quantity.status === 'Active' && visibleCategories.has(quantity.categoryId))
+      .sort((first, second) => first.sortOrder - second.sortOrder);
+    res.json({ success: true, data: quantities });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.put('/:id([0-9a-fA-F-]{36})/quantities', requireSuperUser, async (req, res) => {
+  try {
+    const category = await findRowById(SHEET, req.params.id);
+    if (!category) return res.status(404).json({ success: false, message: 'Category not found.' });
+    const quantities = Array.isArray(req.body.quantities) ? req.body.quantities : [];
+    const names = new Set();
+    const normalized = quantities.map((quantity, index) => {
+      const name = String(quantity.name || '').trim();
+      const unit = String(quantity.unit || '');
+      if (!name || !QUANTITY_UNITS.has(unit) || names.has(name.toLowerCase())) throw new Error('Each quantity needs a unique name and a valid unit.');
+      names.add(name.toLowerCase());
+      return {
+        id: String(quantity.id || uuidv4()), categoryId: req.params.id, name, unit,
+        sortOrder: index + 1, status: 'Active', autoConsume: !!quantity.autoConsume
+      };
+    });
+    const existing = await getAllRows(QUANTITY_SHEET);
+    const oldRows = existing.map((row, index) => ({ row: quantityRowToObj(row), index: index + 2 }))
+      .filter(item => item.row.categoryId === req.params.id);
+    const byId = new Map(oldRows.map(item => [item.row.id, item]));
+    const submittedIds = new Set(normalized.map(quantity => quantity.id));
+    for (const quantity of normalized) {
+      if (byId.has(quantity.id)) await updateRow(QUANTITY_SHEET, byId.get(quantity.id).index, quantityObjToRow(quantity));
+      else await appendRow(QUANTITY_SHEET, quantityObjToRow(quantity));
+    }
+    for (const item of oldRows.filter(item => !submittedIds.has(item.row.id)).sort((first, second) => second.index - first.index)) {
+      await deleteRow(QUANTITY_SHEET, item.index);
+    }
+    res.json({ success: true, data: normalized });
+  } catch (err) { res.status(400).json({ success: false, message: err.message }); }
 });
 
 router.get('/types/all', requireAuth, async (req, res) => {

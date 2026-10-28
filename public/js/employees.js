@@ -4,6 +4,9 @@ let allEmployees = [];
 let employeeLeaves = [];
 let editingEmpId = null;
 let daySalaryData = null;
+const selectedEmployeeExportIds = new Set();
+let visibleEmployeeIds = [];
+let exportingEmployeeSalary = false;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, character => ({
@@ -19,6 +22,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupSearch();
   setupModal();
   setupDaySalaryModal();
+  setupEmployeeSalaryExport();
   // Hide Add button if no add sub-permission
   if (!canAccess('employees', 'add')) {
     const btn = document.getElementById('btnAddEmployee');
@@ -38,7 +42,7 @@ async function loadEmployeesPage() {
       api('GET', '/employees'), api('GET', '/leaves')
     ]);
     _cache.employees = allEmployees;
-    renderTable(allEmployees);
+    applyEmployeeFilters();
   } catch (err) {
     document.getElementById('empBody').innerHTML = emptyRow(showSalary ? 7 : 6, 'Failed to load employees.');
     showNotification('Error: ' + err.message, 'danger');
@@ -46,17 +50,27 @@ async function loadEmployeesPage() {
 }
 
 function setupSearch() {
-  document.getElementById('empSearch')?.addEventListener('input', function () {
-    const q = this.value.toLowerCase();
-    const filtered = allEmployees.filter(e =>
-      e.name.toLowerCase().includes(q) ||
-      (e.phone || '').includes(q)
-    );
-    renderTable(filtered);
-  });
+  document.getElementById('empSearch')?.addEventListener('input', applyEmployeeFilters);
+  document.getElementById('empShowInactive')?.addEventListener('change', applyEmployeeFilters);
+}
+
+function applyEmployeeFilters() {
+  const q = (document.getElementById('empSearch')?.value || '').toLowerCase();
+  const showInactive = document.getElementById('empShowInactive')?.checked || false;
+  const filtered = allEmployees.filter(e =>
+    (showInactive || e.status !== 'Inactive') &&
+    (e.name.toLowerCase().includes(q) || (e.phone || '').includes(q))
+  );
+  renderTable(filtered);
 }
 
 function renderTable(list) {
+  visibleEmployeeIds = list.map(employee => employee.id);
+  // Filtered-out selections must never be exported accidentally.
+  for (const id of selectedEmployeeExportIds) {
+    if (!visibleEmployeeIds.includes(id)) selectedEmployeeExportIds.delete(id);
+  }
+  updateEmployeeExportSelection();
   const tbody = document.getElementById('empBody');
   const countEl = document.getElementById('empCount');
   if (countEl) countEl.textContent = list.length;
@@ -71,6 +85,7 @@ function renderTable(list) {
     return `
     <tr>
       <td data-label="Employee">
+        ${showSalary ? `<input type="checkbox" class="form-check-input me-2 employee-export-check" value="${escapeHtml(e.id)}" aria-label="Select ${escapeHtml(e.name)} for PDF"${selectedEmployeeExportIds.has(e.id) ? ' checked' : ''}>` : ''}
         <a href="/employee-detail.html?id=${e.id}" class="fw-semibold text-decoration-none">${e.name}</a>
         ${e.dailySalaryEnabled ? '<span class="badge bg-info-subtle text-info border border-info-subtle ms-1" style="font-size:.65rem"><i class="bi bi-calendar-day me-1"></i>Daily Pay</span>' : ''}
         ${onLeave ? '<span class="badge bg-primary-subtle text-primary border border-primary-subtle ms-1"><i class="bi bi-calendar-x me-1"></i>On Leave</span>' : ''}
@@ -226,26 +241,13 @@ async function renderDaySalary() {
     return;
   }
 
-  const dates = dateRange(startDate, endDate);
-  const rows = allEmployees
-    .filter(employee => employee.status === 'Active' && String(employee.startDate || '') <= endDate &&
-      (!selectedEmployeeIds.size || selectedEmployeeIds.has(employee.id)))
-    .map(employee => salaryRangeRow(employee, dates))
-    .filter(row => row.working)
-    .sort((first, second) => first.name.localeCompare(second.name));
+  const { rows, totals } = salarySummaryData(startDate, endDate, selectedEmployeeIds);
 
   if (!rows.length) {
     body.innerHTML = emptyRow(6, 'No employees working in this date range.');
     document.getElementById('daySalaryTotals').textContent = '';
     return;
   }
-
-  const totals = rows.reduce((sum, row) => ({
-    earned: sum.earned + row.earned,
-    petta: sum.petta + (row.temporary ? 0 : row.petta),
-    received: sum.received + row.received,
-    pending: sum.pending + Math.max(0, row.pending)
-  }), { earned: 0, petta: 0, received: 0, pending: 0 });
 
   document.getElementById('daySalaryTotals').textContent = `${rows.length} employees working from ${formatDate(startDate)} to ${formatDate(endDate)}`;
 
@@ -272,6 +274,163 @@ async function renderDaySalary() {
   </tr>`;
 }
 
+function salarySummaryData(startDate, endDate, selectedIds) {
+  const dates = dateRange(startDate, endDate);
+  const rows = allEmployees
+    .filter(employee => employee.status === 'Active' && String(employee.startDate || '') <= endDate &&
+      (!selectedIds.size || selectedIds.has(employee.id)))
+    .map(employee => salaryRangeRow(employee, dates))
+    .filter(row => row.working)
+    .sort((first, second) => first.name.localeCompare(second.name));
+  const totals = rows.reduce((sum, row) => ({
+    earned: sum.earned + row.earned,
+    petta: sum.petta + (row.temporary ? 0 : row.petta),
+    received: sum.received + row.received,
+    pending: sum.pending + Math.max(0, row.pending)
+  }), { earned: 0, petta: 0, received: 0, pending: 0 });
+  return { rows, totals, dates };
+}
+
+function setupEmployeeSalaryExport() {
+  const allowed = canAccess('salaries') || canAccess('employees', 'add');
+  for (const id of ['btnExportEmployeeSalary', 'employeeSelectAll', 'employeeExportHint']) {
+    const element = document.getElementById(id);
+    if (element) element.hidden = !allowed;
+  }
+  document.getElementById('btnExportEmployeeSalary')?.addEventListener('click', exportEmployeeSalaryPdf);
+  document.getElementById('employeeSelectAll')?.addEventListener('change', event => {
+    visibleEmployeeIds.forEach(id => event.target.checked ? selectedEmployeeExportIds.add(id) : selectedEmployeeExportIds.delete(id));
+    applyEmployeeFilters();
+  });
+  document.getElementById('empBody')?.addEventListener('change', event => {
+    if (!event.target.classList.contains('employee-export-check')) return;
+    const id = event.target.value;
+    if (!visibleEmployeeIds.includes(id)) return;
+    if (event.target.checked) selectedEmployeeExportIds.add(id);
+    else selectedEmployeeExportIds.delete(id);
+    updateEmployeeExportSelection();
+  });
+  updateEmployeeExportSelection();
+}
+
+function updateEmployeeExportSelection() {
+  const button = document.getElementById('btnExportEmployeeSalary');
+  if (button) {
+    button.disabled = exportingEmployeeSalary || !selectedEmployeeExportIds.size;
+    button.textContent = exportingEmployeeSalary ? 'Preparing PDF…' : `Export PDF${selectedEmployeeExportIds.size ? ` (${selectedEmployeeExportIds.size})` : ''}`;
+  }
+  const selectAll = document.getElementById('employeeSelectAll');
+  if (selectAll) {
+    selectAll.checked = visibleEmployeeIds.length > 0 && selectedEmployeeExportIds.size === visibleEmployeeIds.length;
+    selectAll.indeterminate = selectedEmployeeExportIds.size > 0 && !selectAll.checked;
+    selectAll.disabled = !visibleEmployeeIds.length;
+  }
+}
+
+function employeeDetailExportData(employee, data) {
+  const dateOnly = value => {
+    if (!value) return null;
+    const [year, month, day] = String(value).slice(0, 10).split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+  const payments = data.payments.filter(payment => payment.employeeId === employee.id);
+  const settlements = isSuperUser() ? payments.map(payment => {
+    const legacy = String(payment.remarks || '').match(/^Salary settlement: (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2}) \(includes opening pending\/advance\)/);
+    return { start: payment.settlementStart || legacy?.[1], end: payment.settlementEnd || legacy?.[2], paymentDate: payment.paymentDate };
+  }).filter(item => item.start && item.end && item.end === item.paymentDate).sort((a, b) => a.end.localeCompare(b.end)) : [];
+  const latest = settlements.at(-1);
+  const today = dateOnly(dayKeyOf(new Date()));
+  let start = dateOnly(data.config?.fiscalYear?.start) || dateOnly(employee.startDate);
+  const configuredEnd = dateOnly(data.config?.fiscalYear?.end);
+  let end = configuredEnd && configuredEnd < today ? configuredEnd : today;
+  if (latest) {
+    start = dateOnly(latest.end);
+    start.setDate(start.getDate() + 1);
+    end = today;
+  }
+  return { employee, start, end, latest, salary: calculateEmployeeDetailSalary({
+    employee, start, end, payments,
+    leaves: data.leaves.filter(leave => leave.employeeId === employee.id),
+    pettaHistory: data.petta.filter(record => record.employeeId === employee.id),
+    salaryHistory: data.salaryHistory.filter(record => record.employeeId === employee.id)
+  }) };
+}
+
+function employeeDetailPdfHtml(employees, data) {
+  if (!employees.length) throw new Error('Select employees from the directory to export.');
+  const money = value => escapeHtml(formatCurrency(value));
+  const balance = value => `${money(Math.abs(value))} ${value < 0 ? 'Advance' : value > 0 ? 'Pending' : 'Settled'}`;
+  const date = value => value ? escapeHtml(formatDate(dayKeyOf(value))) : '—';
+  const details = employees.map(employee => {
+    const { salary, start, end, latest } = employeeDetailExportData(employee, data);
+    const stats = [
+      ['Total Days', salary.totalDays], ['Leave Days', salary.leaveDays], ['Days Worked', salary.workedDays],
+      ['Earned (after petta, includes bonus)', money(salary.earnedSalary)], ['Bonus included', money(salary.totalBonus || 0)],
+      ['Total Paid', money(salary.totalPaid)], ['Salary Pending / Advance', balance(salary.balance)]
+    ].map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('');
+    const periods = salary.periods.map(period => {
+      return `<tr><td>${date(period.start)} – ${date(period.end)}</td><td>${money(period.perDay ?? employee.perDaySalary)}</td><td>${money(period.petta)}</td><td>${period.workedDays}</td><td>${money(period.earned)}</td><td>${money(period.paid)}</td><td>${money(period.opening)}</td><td>${money(period.closing)}</td></tr>`;
+    }).join('');
+    return `<section class="employee-detail"><h2>${escapeHtml(employee.name)}</h2><p>${escapeHtml(employee.status)} · Joined: ${escapeHtml(formatDate(employee.startDate))} · ${employee.temporaryEmployee ? 'Temporary employee' : employee.dailySalaryEnabled ? 'Daily salary' : 'Regular employee'}</p><p>Summary period: ${date(start)} – ${date(end)}${latest ? ` · Account settled through ${escapeHtml(formatDate(latest.end))}` : ''}</p><h3>Salary Summary</h3><table class="stats"><tbody>${stats}</tbody></table><h3>Consolidated Salary Periods</h3><table><thead><tr><th>Period</th><th>Salary / Day</th><th>Petta / Day</th><th>Days Worked</th><th>Earned</th><th>Paid</th><th>Opening</th><th>Closing</th></tr></thead><tbody>${periods || '<tr><td colspan="8">No calculated periods yet</td></tr>'}</tbody></table></section>`;
+  }).join('');
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Employee Salary Summaries</title><style>
+    @page { size: A4 landscape; margin: 12mm; }
+    body { font: 11px Arial, sans-serif; color: #172033; margin: 0; }
+    h1 { font-size: 23px; margin-bottom: 6px; } h2 { font-size: 17px; margin-bottom: 6px; }
+    p { color: #475569; } table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+    th, td { padding: 8px; border: 1px solid #cbd5e1; text-align: right; }
+    th { background: #edf2f7; } th:first-child, td:first-child { text-align: left; }
+    thead { display: table-header-group; } tfoot { display: table-row-group; font-weight: bold; }
+    tr { break-inside: avoid; } .employee-detail + .employee-detail { break-before: page; }
+    .stats { max-width: 650px; } .stats th { text-align: left; }
+  </style></head><body><h1>BizTracker · Employee Salary Summaries</h1><p>${employees.length} employees · Matches Employee Detail salary summary and current period, including carried balances.</p>${details}</body></html>`;
+}
+
+async function exportEmployeeSalaryPdf() {
+  if (exportingEmployeeSalary || !(canAccess('salaries') || canAccess('employees', 'add'))) return;
+  const ids = [...selectedEmployeeExportIds].filter(id => visibleEmployeeIds.includes(id));
+  if (!ids.length) {
+    showNotification('Select employees from the directory to export.', 'warning');
+    return;
+  }
+  exportingEmployeeSalary = true;
+  updateEmployeeExportSelection();
+  try {
+    const [employees, leaves, payments, petta, salaryHistory, config] = await Promise.all([
+      Promise.all(ids.map(id => api('GET', `/employees/${encodeURIComponent(id)}`))),
+      api('GET', '/leaves'), api('GET', '/payments'), api('GET', '/petta'), api('GET', '/salary-history'), api('GET', '/config')
+    ]);
+    const html = employeeDetailPdfHtml(employees, { leaves, payments, petta, salaryHistory, config });
+    printEmployeeSalaryPdf(html);
+  } catch (err) {
+    showNotification('Unable to prepare PDF: ' + err.message, 'danger');
+  } finally {
+    exportingEmployeeSalary = false;
+    updateEmployeeExportSelection();
+  }
+}
+
+function printEmployeeSalaryPdf(html) {
+  document.getElementById('salaryPdfFrame')?.remove();
+  const frame = document.createElement('iframe');
+  frame.id = 'salaryPdfFrame';
+  frame.title = 'Salary PDF export';
+  frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1120px;height:800px;border:0;';
+  frame.setAttribute('aria-hidden', 'true');
+  frame.onload = () => {
+    try {
+      frame.contentWindow.addEventListener('afterprint', () => setTimeout(() => frame.remove(), 0), { once: true });
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch (err) {
+      frame.remove();
+      showNotification('Unable to open PDF export: ' + err.message, 'danger');
+    }
+  };
+  frame.srcdoc = html;
+  document.body.appendChild(frame);
+}
+
 function salaryRangeRow(employee, dates) {
   const dailyRows = dates.map(date => daySalaryRow(employee, date));
   const workingRows = dailyRows.filter(row => row.working);
@@ -283,9 +442,9 @@ function salaryRangeRow(employee, dates) {
     name: employee.name,
     type: temporary ? 'Temporary' : (employee.dailySalaryEnabled ? 'Daily salary' : 'Regular'),
     temporary,
-    working: temporary ? dailyRows.some(row => row.working) : workingDays > 0,
+    working: temporary ? dailyRows.some(row => row.working) : workingDays > 0 || dailyRows.some(row => row.bonusAmount > 0),
     workingDays,
-    earned: temporary ? dailyRows.reduce((sum, row) => sum + row.received, 0) : dailyRows.reduce((sum, row) => sum + (row.perDay * row.worked), 0),
+    earned: temporary ? dailyRows.reduce((sum, row) => sum + row.received, 0) : dailyRows.reduce((sum, row) => sum + (row.perDay * row.worked) + row.bonusAmount, 0),
     petta: temporary ? 0 : dailyRows.reduce((sum, row) => sum + (row.petta * row.worked), 0),
     received: dailyRows.reduce((sum, row) => sum + row.received, 0),
     pending: dailyRows.reduce((sum, row) => sum + row.pending, 0)
@@ -294,10 +453,22 @@ function salaryRangeRow(employee, dates) {
 
 // Each date is settled independently: what was due that day minus what was paid that day.
 function daySalaryRow(employee, dateKey) {
+  const employeeStart = String(employee.startDate || '').slice(0, 10);
+  if (employeeStart && dateKey < employeeStart) {
+    return {
+      id: employee.id, name: employee.name,
+      type: employee.temporaryEmployee ? 'Temporary' : (employee.dailySalaryEnabled ? 'Daily salary' : 'Regular'),
+      temporary: !!employee.temporaryEmployee,
+      working: false, worked: 0, perDay: 0, bonusAmount: 0, petta: 0, received: 0, pending: 0
+    };
+  }
   const payments = daySalaryData.payments.filter(payment => payment.employeeId === employee.id);
   const received = payments
     .filter(payment => String(payment.paymentDate || '').slice(0, 10) === dateKey)
     .reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
+  const bonusAmount = payments
+    .filter(payment => String(payment.paymentDate || '').slice(0, 10) === dateKey)
+    .reduce((sum, payment) => sum + (parseFloat(payment.bonusAmount) || 0), 0);
 
   if (employee.temporaryEmployee) {
     return {
@@ -317,7 +488,7 @@ function daySalaryRow(employee, dateKey) {
     daySalaryData.salaryHistory.filter(entry => entry.employeeId === employee.id));
   const petta = amountOnDate(dateKey, parseFloat(employee.dailyPetta) || 0,
     daySalaryData.petta.filter(entry => entry.employeeId === employee.id));
-  const earned = worked * (perDay - petta);
+  const earned = worked * (perDay - petta) + bonusAmount;
   // Daily-pay staff are settled the same evening, so the day's earning is treated as received.
   const dailyPay = !!employee.dailySalaryEnabled;
 
@@ -326,9 +497,10 @@ function daySalaryRow(employee, dateKey) {
     name: employee.name,
     type: dailyPay ? 'Daily salary' : 'Regular',
     temporary: false,
-    working: worked > 0,
+    working: worked > 0 || bonusAmount > 0,
     worked,
     perDay,
+    bonusAmount,
     petta,
     received: dailyPay ? (received || earned) : received,
     pending: dailyPay ? 0 : earned - received

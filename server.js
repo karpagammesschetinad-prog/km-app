@@ -79,6 +79,7 @@ app.use('/api/auth', require('./routes/auth'));
 
 // Protected API Routes
 app.use('/api/expenses', require('./routes/expenses'));
+app.use('/api/consumption', require('./routes/consumption'));
 app.use('/api/sales', require('./routes/sales'));
 app.use('/api/sales-entries', require('./routes/salesEntries'));
 app.use('/api/employees', require('./routes/employees'));

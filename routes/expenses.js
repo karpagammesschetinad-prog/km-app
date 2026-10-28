@@ -5,6 +5,10 @@ const { SHEETS, getAllRows, appendRow, updateRow, deleteRow, findRowById } = req
 const { requireAuth, requireSuperUser } = require('../middleware/authMiddleware');
 
 const SHEET = SHEETS.EXPENSES;
+const QUANTITY_SHEET = SHEETS.EXPENSE_QUANTITIES;
+const UNPAID_RECEIPTS_SHEET = SHEETS.UNPAID_RECEIPTS;
+const UNPAID_ITEMS_SHEET = SHEETS.UNPAID_RECEIPT_ITEMS;
+const RECEIPT_PAYMENTS_SHEET = SHEETS.RECEIPT_PAYMENTS;
 const bulkSaveLocks = new Map();
 // Columns: ID, Date, Category, Description, Amount, EmployeeID, EmployeeName,
 //          SubmittedBy, ApprovalStatus, ApprovedBy, ApprovedAt, RejectionReason, CreatedAt
@@ -17,6 +21,10 @@ const C = {
 };
 
 const TYPE_C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, WORKFLOW: 7 };
+const QUANTITY_C = { ID: 0, EXPENSE_ID: 1, CATEGORY_ID: 2, NAME: 3, UNIT: 4, AMOUNT: 5, CREATED_AT: 6, UPDATED_AT: 7, SOURCE_RECEIPT_ID: 8, UNIT_PRICE: 9 };
+const RECEIPT_C = { ID: 0, RECEIVED_DATE: 1, TYPE_ID: 2, CATEGORY: 3, REMARKS: 4, SUBMITTED_BY: 5, TOTAL_AMOUNT: 6, CREATED_AT: 7, UPDATED_AT: 8, PAID_AMOUNT: 9 };
+const RECEIPT_ITEM_C = { ID: 0, RECEIPT_ID: 1, CATEGORY_ID: 2, NAME: 3, UNIT: 4, AMOUNT: 5, CREATED_AT: 6, UPDATED_AT: 7 };
+const RECEIPT_PAYMENT_C = { ID: 0, RECEIPT_ID: 1, EXPENSE_ID: 2, AMOUNT: 3, CREATED_AT: 4, CREATED_BY: 5 };
 
 async function withBulkSaveLock(date, operation) {
   const previous = bulkSaveLocks.get(date) || Promise.resolve();
@@ -57,6 +65,172 @@ function isOccasionalMode(value) {
 
 function expenseIdentity(date, typeId, category) {
   return `${date}|${typeId}|${String(category || '').trim().toLowerCase()}`;
+}
+
+function quantityRowToObj(row) {
+  return {
+    id: row[QUANTITY_C.ID] || '', expenseId: row[QUANTITY_C.EXPENSE_ID] || '', quantityCategoryId: row[QUANTITY_C.CATEGORY_ID] || '',
+    name: row[QUANTITY_C.NAME] || '', unit: row[QUANTITY_C.UNIT] || '', amount: parseFloat(row[QUANTITY_C.AMOUNT]) || 0,
+    createdAt: row[QUANTITY_C.CREATED_AT] || '', updatedAt: row[QUANTITY_C.UPDATED_AT] || '',
+    sourceReceiptId: row[QUANTITY_C.SOURCE_RECEIPT_ID] || '',
+    unitPrice: parseFloat(row[QUANTITY_C.UNIT_PRICE]) || 0
+  };
+}
+
+function quantityObjToRow(quantity) {
+  return [quantity.id, quantity.expenseId, quantity.quantityCategoryId, quantity.name, quantity.unit, quantity.amount, quantity.createdAt, quantity.updatedAt, quantity.sourceReceiptId || '', quantity.unitPrice || ''];
+}
+
+function parseUnitPrice(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const price = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isFinite(price) || price < 0 || Math.abs(price * 100 - Math.round(price * 100)) > 1e-6) return NaN;
+  return price;
+}
+
+// Called before any write so a bad price cannot leave an expense half saved.
+function quantityPriceError(quantityLists) {
+  const invalid = quantityLists.some(list => Array.isArray(list) && list.some(quantity => Number.isNaN(parseUnitPrice(quantity?.unitPrice))));
+  return invalid ? 'Unit price must be zero or more, with at most two decimal places.' : '';
+}
+
+async function replaceExpenseQuantities(expenseId, quantities) {
+  const rows = await getAllRows(QUANTITY_SHEET);
+  // Rows sourced from a receipt are managed by the receipt link flow; leave them alone here.
+  const oldRows = rows.map((row, index) => ({ row: quantityRowToObj(row), index: index + 2 }))
+    .filter(item => item.row.expenseId === expenseId && !item.row.sourceReceiptId);
+  for (const item of oldRows.sort((first, second) => second.index - first.index)) await deleteRow(QUANTITY_SHEET, item.index);
+  const now = new Date().toISOString();
+  for (const quantity of quantities || []) {
+    const amount = parseFloat(quantity.amount);
+    if (!(amount > 0) || !quantity.name || !quantity.unit) continue;
+    await appendRow(QUANTITY_SHEET, quantityObjToRow({
+      id: uuidv4(), expenseId, quantityCategoryId: String(quantity.quantityCategoryId), name: String(quantity.name),
+      unit: String(quantity.unit), amount, unitPrice: parseUnitPrice(quantity.unitPrice), createdAt: now, updatedAt: now
+    }));
+  }
+}
+
+function unpaidReceiptRowToObj(row) {
+  return {
+    id: row[RECEIPT_C.ID] || '', receivedDate: row[RECEIPT_C.RECEIVED_DATE] || '',
+    typeId: row[RECEIPT_C.TYPE_ID] || '', category: row[RECEIPT_C.CATEGORY] || '',
+    remarks: row[RECEIPT_C.REMARKS] || '', submittedBy: row[RECEIPT_C.SUBMITTED_BY] || '',
+    totalAmount: parseFloat(row[RECEIPT_C.TOTAL_AMOUNT]) || 0,
+    paidAmount: parseFloat(row[RECEIPT_C.PAID_AMOUNT]) || 0,
+    createdAt: row[RECEIPT_C.CREATED_AT] || '', updatedAt: row[RECEIPT_C.UPDATED_AT] || ''
+  };
+}
+
+function unpaidReceiptObjToRow(receipt) {
+  return [
+    receipt.id, receipt.receivedDate, receipt.typeId, receipt.category,
+    receipt.remarks, receipt.submittedBy, receipt.totalAmount,
+    receipt.createdAt, receipt.updatedAt, receipt.paidAmount || 0
+  ];
+}
+
+function unpaidItemRowToObj(row) {
+  return {
+    id: row[RECEIPT_ITEM_C.ID] || '', receiptId: row[RECEIPT_ITEM_C.RECEIPT_ID] || '',
+    quantityCategoryId: row[RECEIPT_ITEM_C.CATEGORY_ID] || '', name: row[RECEIPT_ITEM_C.NAME] || '',
+    unit: row[RECEIPT_ITEM_C.UNIT] || '', amount: parseFloat(row[RECEIPT_ITEM_C.AMOUNT]) || 0,
+    createdAt: row[RECEIPT_ITEM_C.CREATED_AT] || '', updatedAt: row[RECEIPT_ITEM_C.UPDATED_AT] || ''
+  };
+}
+
+function unpaidItemObjToRow(item) {
+  return [item.id, item.receiptId, item.quantityCategoryId, item.name, item.unit, item.amount, item.createdAt, item.updatedAt];
+}
+
+async function replaceReceiptItems(receiptId, items) {
+  const rows = await getAllRows(UNPAID_ITEMS_SHEET);
+  const oldRows = rows.map((row, index) => ({ row: unpaidItemRowToObj(row), index: index + 2 }))
+    .filter(item => item.row.receiptId === receiptId);
+  for (const item of oldRows.sort((first, second) => second.index - first.index)) await deleteRow(UNPAID_ITEMS_SHEET, item.index);
+  const now = new Date().toISOString();
+  const saved = [];
+  for (const item of items || []) {
+    const amount = parseFloat(item.amount);
+    if (!(amount > 0) || !item.name || !item.unit) continue;
+    const obj = {
+      id: uuidv4(), receiptId, quantityCategoryId: String(item.quantityCategoryId || ''),
+      name: String(item.name), unit: String(item.unit), amount, createdAt: now, updatedAt: now
+    };
+    await appendRow(UNPAID_ITEMS_SHEET, unpaidItemObjToRow(obj));
+    saved.push(obj);
+  }
+  return saved;
+}
+
+// Accumulate `payableAmount` currency toward an unpaid receipt. Payments are logged in ReceiptPayments so links can be reversed;
+// item quantities are transferred to the settling expense only once the balance reaches zero. Receipts are never deleted here.
+async function consumeUnpaidLink(receiptId, requestedAmount, expenseId, username) {
+  const found = await findRowById(UNPAID_RECEIPTS_SHEET, receiptId);
+  if (!found) throw new Error(`Unpaid receipt ${receiptId} not found.`);
+  const receipt = unpaidReceiptRowToObj(found.row);
+  const balance = +((receipt.totalAmount - receipt.paidAmount) || 0).toFixed(2);
+  const consumePayable = Number.isFinite(requestedAmount) && requestedAmount > 0
+    ? Math.min(requestedAmount, balance || requestedAmount)
+    : balance;
+  if (!(consumePayable > 0)) return { receipt, consumedPayable: 0, consumedItems: [] };
+  const newPaid = +(receipt.paidAmount + consumePayable).toFixed(2);
+  const fullyPaid = newPaid + 0.001 >= receipt.totalAmount;
+  const now = new Date().toISOString();
+  await appendRow(RECEIPT_PAYMENTS_SHEET, [uuidv4(), receiptId, expenseId, consumePayable, now, username || '']);
+  await updateRow(UNPAID_RECEIPTS_SHEET, found.index, unpaidReceiptObjToRow({
+    ...receipt, paidAmount: newPaid, updatedAt: now,
+    submittedBy: receipt.submittedBy || username
+  }));
+  let consumedItems = [];
+  if (fullyPaid) {
+    const itemRows = (await getAllRows(UNPAID_ITEMS_SHEET)).map(unpaidItemRowToObj)
+      .filter(item => item.receiptId === receiptId);
+    consumedItems = itemRows.map(item => ({ ...item, consumedAmount: item.amount, sourceReceiptId: receiptId }));
+  }
+  return { receipt, consumedPayable: consumePayable, consumedItems };
+}
+
+// Append quantity rows linked to an expense from consumed unpaid entries. `sourceReceiptId` marks the origin so links can be reversed.
+async function appendLinkedQuantityRows(expenseId, consumed) {
+  const now = new Date().toISOString();
+  for (const item of consumed) {
+    if (!(item.consumedAmount > 0)) continue;
+    await appendRow(QUANTITY_SHEET, quantityObjToRow({
+      id: uuidv4(), expenseId, quantityCategoryId: String(item.quantityCategoryId || ''),
+      name: String(item.name || ''), unit: String(item.unit || ''), amount: item.consumedAmount,
+      createdAt: now, updatedAt: now, sourceReceiptId: String(item.sourceReceiptId || '')
+    }));
+  }
+}
+
+// Reverse every payment this expense made against a receipt: drop payment log rows, restore the receipt balance, and clean linked quantity rows.
+async function reverseReceiptLink(expenseId, receiptId) {
+  const paymentRows = (await getAllRows(RECEIPT_PAYMENTS_SHEET))
+    .map((row, index) => ({
+      obj: {
+        id: row[RECEIPT_PAYMENT_C.ID] || '', receiptId: row[RECEIPT_PAYMENT_C.RECEIPT_ID] || '',
+        expenseId: row[RECEIPT_PAYMENT_C.EXPENSE_ID] || '', amount: parseFloat(row[RECEIPT_PAYMENT_C.AMOUNT]) || 0
+      },
+      index: index + 2
+    }))
+    .filter(entry => entry.obj.receiptId === receiptId && entry.obj.expenseId === expenseId);
+  if (!paymentRows.length) return 0;
+  const reversedAmount = paymentRows.reduce((sum, entry) => sum + entry.obj.amount, 0);
+  for (const entry of paymentRows.sort((first, second) => second.index - first.index)) await deleteRow(RECEIPT_PAYMENTS_SHEET, entry.index);
+  const quantityRows = (await getAllRows(QUANTITY_SHEET))
+    .map((row, index) => ({ obj: quantityRowToObj(row), index: index + 2 }))
+    .filter(entry => entry.obj.expenseId === expenseId && entry.obj.sourceReceiptId === receiptId);
+  for (const entry of quantityRows.sort((first, second) => second.index - first.index)) await deleteRow(QUANTITY_SHEET, entry.index);
+  const receiptFound = await findRowById(UNPAID_RECEIPTS_SHEET, receiptId);
+  if (receiptFound) {
+    const receipt = unpaidReceiptRowToObj(receiptFound.row);
+    const newPaid = Math.max(0, +(receipt.paidAmount - reversedAmount).toFixed(2));
+    await updateRow(UNPAID_RECEIPTS_SHEET, receiptFound.index, unpaidReceiptObjToRow({
+      ...receipt, paidAmount: newPaid, updatedAt: new Date().toISOString()
+    }));
+  }
+  return reversedAmount;
 }
 
 function getBusinessDate() {
@@ -177,6 +351,160 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
+router.get('/report', requireSuperUser, async (req, res) => {
+  try {
+    const { from = '', to = '', mode = 'Daily' } = req.query;
+    const validDate = value => !value || (/^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value);
+    if (!validDate(from) || !validDate(to) || (from && to && from > to) || !['Daily', 'Occasional', 'All', 'None'].includes(mode)) {
+      return res.status(400).json({ success: false, message: 'Select a valid report date range and expense mode.' });
+    }
+    const typeIds = new Set([].concat(req.query.typeId || []));
+    const categories = new Set([].concat(req.query.category || []).map(value => String(value).trim().toLowerCase()));
+    const expenses = (await getAllRows(SHEET)).map(rowToObj).filter(expense =>
+      (!from || expense.date >= from) && (!to || expense.date <= to) &&
+      (!typeIds.size || typeIds.has(expense.typeId)) &&
+      (!categories.size || categories.has(String(expense.category).trim().toLowerCase())) &&
+      mode !== 'None' && (mode === 'All' || (mode === 'Occasional') === (expense.mode === 'Occasional')));
+    let quantities = [];
+    if (req.query.quantities === '1' && expenses.length) {
+      const ids = new Set(expenses.map(expense => expense.id));
+      quantities = (await getAllRows(QUANTITY_SHEET)).map(quantityRowToObj).filter(quantity => ids.has(quantity.expenseId));
+    }
+    res.json({ success: true, data: { expenses, quantities } });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.get('/quantities', requireAuth, async (req, res) => {
+  try {
+    const expenseIds = new Set((await getAllRows(SHEET)).map(rowToObj).map(expense => expense.id));
+    const quantities = (await getAllRows(QUANTITY_SHEET)).map(quantityRowToObj)
+      .filter(quantity => expenseIds.has(quantity.expenseId));
+    res.json({ success: true, data: quantities });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.get('/unpaid', requireAuth, async (req, res) => {
+  try {
+    const access = await getExpenseAccess(req.session.user, true);
+    const includeSettled = req.query.includeSettled === '1' || req.query.includeSettled === 'true';
+    const receipts = (await getAllRows(UNPAID_RECEIPTS_SHEET)).map(unpaidReceiptRowToObj)
+      .filter(receipt => (includeSettled || (receipt.totalAmount - receipt.paidAmount) > 0.001)
+        && (receipt.typeId ? access.allowedTypes.has(receipt.typeId) : true));
+    const validIds = new Set(receipts.map(receipt => receipt.id));
+    const itemsByReceipt = new Map();
+    (await getAllRows(UNPAID_ITEMS_SHEET)).map(unpaidItemRowToObj)
+      .filter(item => validIds.has(item.receiptId))
+      .forEach(item => {
+        if (!itemsByReceipt.has(item.receiptId)) itemsByReceipt.set(item.receiptId, []);
+        itemsByReceipt.get(item.receiptId).push(item);
+      });
+    const paymentsByReceipt = new Map();
+    (await getAllRows(RECEIPT_PAYMENTS_SHEET))
+      .map(row => ({
+        id: row[RECEIPT_PAYMENT_C.ID] || '', receiptId: row[RECEIPT_PAYMENT_C.RECEIPT_ID] || '',
+        expenseId: row[RECEIPT_PAYMENT_C.EXPENSE_ID] || '', amount: parseFloat(row[RECEIPT_PAYMENT_C.AMOUNT]) || 0,
+        createdAt: row[RECEIPT_PAYMENT_C.CREATED_AT] || '', createdBy: row[RECEIPT_PAYMENT_C.CREATED_BY] || ''
+      }))
+      .filter(payment => validIds.has(payment.receiptId))
+      .forEach(payment => {
+        if (!paymentsByReceipt.has(payment.receiptId)) paymentsByReceipt.set(payment.receiptId, []);
+        paymentsByReceipt.get(payment.receiptId).push(payment);
+      });
+    const data = receipts.map(receipt => ({
+      ...receipt,
+      items: itemsByReceipt.get(receipt.id) || [],
+      payments: (paymentsByReceipt.get(receipt.id) || []).sort((first, second) => (first.createdAt || '').localeCompare(second.createdAt || ''))
+    }));
+    res.json({ success: true, data });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.post('/unpaid', requireAuth, async (req, res) => {
+  try {
+    const { receivedDate, typeId, category, remarks, totalAmount, items } = req.body;
+    const total = parseFloat(totalAmount);
+    if (!receivedDate || !typeId || !category || !(total > 0) || !Array.isArray(items) || !items.length) {
+      return res.status(400).json({ success: false, message: 'receivedDate, typeId, category, a positive total amount and at least one item are required.' });
+    }
+    if (receivedDate > getBusinessDate()) return res.status(400).json({ success: false, message: 'Future dates cannot be used.' });
+    if (items.some(item => !item.name || !item.unit || !(parseFloat(item.amount) > 0))) {
+      return res.status(400).json({ success: false, message: 'Every item needs a name, unit and a positive quantity.' });
+    }
+    const access = await getExpenseAccess(req.session.user, true);
+    if (!access.allowedTypes.has(String(typeId))) return res.status(403).json({ success: false, message: 'Access denied for this category type.' });
+    const now = new Date().toISOString();
+    const receipt = {
+      id: uuidv4(), receivedDate: String(receivedDate), typeId: String(typeId),
+      category: String(category).trim(), remarks: String(remarks || ''),
+      submittedBy: req.session.user.username, totalAmount: total,
+      createdAt: now, updatedAt: now
+    };
+    await appendRow(UNPAID_RECEIPTS_SHEET, unpaidReceiptObjToRow(receipt));
+    const savedItems = await replaceReceiptItems(receipt.id, items);
+    res.status(201).json({ success: true, data: { ...receipt, items: savedItems } });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.put('/unpaid/:id', requireAuth, async (req, res) => {
+  try {
+    const found = await findRowById(UNPAID_RECEIPTS_SHEET, req.params.id);
+    if (!found) return res.status(404).json({ success: false, message: 'Unpaid receipt not found.' });
+    const current = unpaidReceiptRowToObj(found.row);
+    const access = await getExpenseAccess(req.session.user, true);
+    if (current.typeId && !access.allowedTypes.has(current.typeId)) return res.status(403).json({ success: false, message: 'Access denied.' });
+    const { receivedDate, typeId, category, remarks, totalAmount, items } = req.body;
+    const total = parseFloat(totalAmount);
+    if (!receivedDate || !typeId || !category || !(total > 0) || !Array.isArray(items) || !items.length) {
+      return res.status(400).json({ success: false, message: 'receivedDate, typeId, category, a positive total amount and at least one item are required.' });
+    }
+    if (items.some(item => !item.name || !item.unit || !(parseFloat(item.amount) > 0))) {
+      return res.status(400).json({ success: false, message: 'Every item needs a name, unit and a positive quantity.' });
+    }
+    if (!access.allowedTypes.has(String(typeId))) return res.status(403).json({ success: false, message: 'Access denied for this category type.' });
+    const updated = {
+      ...current,
+      receivedDate: String(receivedDate), typeId: String(typeId), category: String(category).trim(),
+      remarks: String(remarks || ''), totalAmount: total, updatedAt: new Date().toISOString()
+    };
+    await updateRow(UNPAID_RECEIPTS_SHEET, found.index, unpaidReceiptObjToRow(updated));
+    const savedItems = await replaceReceiptItems(updated.id, items);
+    res.json({ success: true, data: { ...updated, items: savedItems } });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+router.delete('/unpaid/:id', requireAuth, async (req, res) => {
+  try {
+    const found = await findRowById(UNPAID_RECEIPTS_SHEET, req.params.id);
+    if (!found) return res.status(404).json({ success: false, message: 'Unpaid receipt not found.' });
+    const current = unpaidReceiptRowToObj(found.row);
+    const access = await getExpenseAccess(req.session.user, true);
+    if (current.typeId && !access.allowedTypes.has(current.typeId)) return res.status(403).json({ success: false, message: 'Access denied.' });
+    await replaceReceiptItems(current.id, []);
+    await deleteRow(UNPAID_RECEIPTS_SHEET, found.index);
+    res.json({ success: true, message: 'Unpaid receipt deleted.' });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// Detach a previously-linked receivable from an expense (only while the expense is still editable).
+router.delete('/:expenseId/unpaid-link/:receiptId', requireAuth, async (req, res) => {
+  try {
+    const { expenseId, receiptId } = req.params;
+    const foundExpense = await findRowById(SHEET, expenseId);
+    if (!foundExpense) return res.status(404).json({ success: false, message: 'Expense not found.' });
+    const expense = rowToObj(foundExpense.row);
+    if (expense.approvalStatus === 'Approved' || expense.approvalStatus === 'AutoApproved') {
+      return res.status(409).json({ success: false, message: 'Approved expenses cannot be edited.' });
+    }
+    const access = await getExpenseAccess(req.session.user, true);
+    if (expense.typeId ? !access.allowedTypes.has(expense.typeId) : !access.allowedCategories.has(expense.category)) {
+      return res.status(403).json({ success: false, message: 'Access denied for this expense category.' });
+    }
+    const reversed = await reverseReceiptLink(expenseId, receiptId);
+    if (!(reversed > 0)) return res.status(404).json({ success: false, message: 'No link found between this expense and receipt.' });
+    res.json({ success: true, data: { reversedAmount: reversed } });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
 // GET by ID
 router.get('/:id', requireAuth, async (req, res) => {
   try {
@@ -201,6 +529,8 @@ router.post('/bulk', requireAuth, async (req, res) => {
     }
     const todayDate = getBusinessDate();
     if (date > todayDate) return res.status(400).json({ success: false, message: 'Future dates cannot be saved.' });
+    const priceError = quantityPriceError(entries.map(entry => entry?.quantities));
+    if (priceError) return res.status(400).json({ success: false, message: priceError });
     const user = req.session.user;
     const isSuperUser = user.role === 'superuser';
     const approvalStatus = 'Pending';
@@ -278,11 +608,21 @@ router.post('/bulk', requireAuth, async (req, res) => {
     if ([...submittedIds].some(id => !writableById.has(id))) {
       return res.status(409).json({ success: false, message: 'This expense was changed by another user. Refresh and try again.' });
     }
-    const toDelete = editableRows.filter(item => !submittedIds.has(item.row.id)).map(item => item.index);
+    // Preserve placeholder rejections (empty category) until the cashier submits an entry for that type.
+    const submittedTypeIds = new Set(matchedEntries.map(entry => String(entry.typeId || '')));
+    const toDelete = editableRows.filter(item => {
+      if (submittedIds.has(item.row.id)) return false;
+      if (!item.row.category && item.row.approvalStatus === 'Rejected' && !submittedTypeIds.has(String(item.row.typeId))) return false;
+      return true;
+    }).map(item => item.index);
     const saved = [];
     for (const entry of matchedEntries) {
-      const amount = parseFloat(entry.amount);
-      if (!entry.category || !(amount > 0)) continue;
+      const amount = parseFloat(entry.amount) || 0;
+      const hasQuantities = Array.isArray(entry.quantities)
+        && entry.quantities.some(quantity => parseFloat(quantity.amount) > 0);
+      const hasLinks = Array.isArray(entry.linkedUnpaid) && entry.linkedUnpaid.length > 0;
+      // Skip an entry only when there is nothing to store — a quantity- or link-only row is still meaningful.
+      if (!entry.category || (!(amount > 0) && !hasQuantities && !hasLinks)) continue;
       const existing = entry.id ? writableById.get(String(entry.id))?.row : null;
       const obj = {
         id: existing?.id || uuidv4(), date,
@@ -304,6 +644,16 @@ router.post('/bulk', requireAuth, async (req, res) => {
       };
       if (existing) await updateRow(SHEET, writableById.get(existing.id).index, objToRow(obj));
       else await appendRow(SHEET, objToRow(obj));
+      await replaceExpenseQuantities(obj.id, entry.quantities);
+      if (Array.isArray(entry.linkedUnpaid) && entry.linkedUnpaid.length) {
+        const consumedItems = [];
+        for (const link of entry.linkedUnpaid) {
+          if (!link || !link.unpaidId) continue;
+          const result = await consumeUnpaidLink(String(link.unpaidId), parseFloat(link.amount), obj.id, user.username);
+          consumedItems.push(...result.consumedItems);
+        }
+        await appendLinkedQuantityRows(obj.id, consumedItems);
+      }
       saved.push(obj);
     }
     for (let i = toDelete.length - 1; i >= 0; i--) {
@@ -320,11 +670,13 @@ router.post('/bulk', requireAuth, async (req, res) => {
 router.post('/occasional', requireAuth, async (req, res) => {
   return withBulkSaveLock(String(req.body?.date || ''), async () => {
     try {
-    const { date, category, typeId, amount, remarks } = req.body;
+    const { date, category, typeId, amount, remarks, quantities, linkedUnpaid } = req.body;
     if (!date || !category || !typeId || !(parseFloat(amount) > 0)) {
       return res.status(400).json({ success: false, message: 'date, category, typeId and a positive amount are required.' });
     }
     if (date > getBusinessDate()) return res.status(400).json({ success: false, message: 'Future dates cannot be used.' });
+    const priceError = quantityPriceError([quantities]);
+    if (priceError) return res.status(400).json({ success: false, message: priceError });
     const user = req.session.user;
     const access = await getExpenseAccess(user);
     if (!access.allowedTypes.has(typeId) || !access.allowedCategories.has(String(category)) || access.typeModes.get(typeId) !== 'Occasional') {
@@ -340,6 +692,16 @@ router.post('/occasional', requireAuth, async (req, res) => {
       rejectionReason: '', createdAt: new Date().toISOString(), updatedBy: user.username, updatedAt: new Date().toISOString(), typeId, onSpot: false, paymentId: '', mode: 'Occasional'
     };
     await appendRow(SHEET, objToRow(obj));
+    await replaceExpenseQuantities(obj.id, quantities);
+    if (Array.isArray(linkedUnpaid) && linkedUnpaid.length) {
+      const consumedItems = [];
+      for (const link of linkedUnpaid) {
+        if (!link || !link.unpaidId) continue;
+        const result = await consumeUnpaidLink(String(link.unpaidId), parseFloat(link.amount), obj.id, user.username);
+        consumedItems.push(...result.consumedItems);
+      }
+      await appendLinkedQuantityRows(obj.id, consumedItems);
+    }
     res.status(201).json({ success: true, data: obj });
     } catch (err) {
       res.status(500).json({ success: false, message: err.message });
@@ -349,10 +711,12 @@ router.post('/occasional', requireAuth, async (req, res) => {
 
 router.put('/occasional/:id', requireAuth, async (req, res) => {
   try {
-    const { date, category, typeId, amount, remarks } = req.body;
+    const { date, category, typeId, amount, remarks, quantities, linkedUnpaid } = req.body;
     if (!date || !category || !typeId || !(parseFloat(amount) > 0)) {
       return res.status(400).json({ success: false, message: 'date, category, typeId and a positive amount are required.' });
     }
+    const priceError = quantityPriceError([quantities]);
+    if (priceError) return res.status(400).json({ success: false, message: priceError });
     const found = await findRowById(SHEET, req.params.id);
     if (!found) return res.status(404).json({ success: false, message: 'Occasional expense not found.' });
     const existing = rowToObj(found.row);
@@ -375,6 +739,16 @@ router.put('/occasional/:id', requireAuth, async (req, res) => {
       updatedBy: req.session.user.username, updatedAt: new Date().toISOString(), mode: 'Occasional'
     };
     await updateRow(SHEET, found.index, objToRow(updated));
+    await replaceExpenseQuantities(updated.id, quantities);
+    if (Array.isArray(linkedUnpaid) && linkedUnpaid.length) {
+      const consumedItems = [];
+      for (const link of linkedUnpaid) {
+        if (!link || !link.unpaidId) continue;
+        const result = await consumeUnpaidLink(String(link.unpaidId), parseFloat(link.amount), updated.id, req.session.user.username);
+        consumedItems.push(...result.consumedItems);
+      }
+      await appendLinkedQuantityRows(updated.id, consumedItems);
+    }
     res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -411,12 +785,14 @@ router.post('/approve/:date', requireSuperUser, async (req, res) => {
 router.post('/reject/:date', requireSuperUser, async (req, res) => {
   try {
     const { date } = req.params;
-    const { reason, expenseIds } = req.body;
+    const { reason, expenseIds, missingTypeIds } = req.body;
     const mode = req.body?.mode === 'Occasional' ? 'Occasional' : 'Daily';
-    if (!Array.isArray(expenseIds) || !expenseIds.length) {
+    const ids = Array.isArray(expenseIds) ? expenseIds : [];
+    const missingIds = Array.isArray(missingTypeIds) ? missingTypeIds : [];
+    if (!ids.length && !missingIds.length) {
       return res.status(400).json({ success: false, message: 'Select at least one category or category type to reject.' });
     }
-    const selectedIds = new Set(expenseIds.map(String));
+    const selectedIds = new Set(ids.map(String));
     const user = req.session.user;
     const rows = await getAllRows(SHEET);
     let updated = 0;
@@ -430,6 +806,30 @@ router.post('/reject/:date', requireSuperUser, async (req, res) => {
         obj.approvedAt      = new Date().toISOString();
         obj.rejectionReason = reason || '';
         await updateRow(SHEET, i + 2, objToRow(obj));
+        updated++;
+      }
+    }
+    // Placeholder rejected rows flag missing category types so the cashier is notified and can enter them.
+    if (missingIds.length) {
+      const typeRows = await getAllRows(SHEETS.EXPENSE_CATEGORY_TYPES);
+      const typeById = new Map(typeRows.map(row => [row[TYPE_C.ID] || '', row]));
+      const existingPlaceholders = new Set(rows.map(rowToObj)
+        .filter(obj => obj.date === date && !obj.employeeId && !obj.category && obj.approvalStatus === 'Rejected')
+        .map(obj => obj.typeId));
+      for (const typeId of missingIds.map(String)) {
+        if (existingPlaceholders.has(typeId)) continue;
+        const typeRow = typeById.get(typeId);
+        if (!typeRow) continue;
+        const typeMode = workflowToMode(typeRow[TYPE_C.WORKFLOW]);
+        if ((mode === 'Occasional') !== (typeMode === 'Occasional')) continue;
+        const now = new Date().toISOString();
+        await appendRow(SHEET, objToRow({
+          id: uuidv4(), date, category: '', description: '', amount: 0,
+          employeeId: '', employeeName: '', submittedBy: '', approvalStatus: 'Rejected',
+          approvedBy: user.username, approvedAt: now, rejectionReason: reason || '',
+          createdAt: now, typeId, onSpot: false, paymentId: '', shift: '', mode: typeMode,
+          updatedBy: user.username, updatedAt: now
+        }));
         updated++;
       }
     }

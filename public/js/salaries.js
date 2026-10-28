@@ -114,11 +114,13 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory, salaryHistory) 
   const rateFor = day => getPettaForDate(day, salaryTimeline);
 
   const paymentMap = new Map();
+  const bonusMap = new Map();
   (payments || []).forEach(p => {
     const d = parseDateOnly(p.paymentDate);
     if (!d || d < start || d > today) return;
     const key = dateKey(d);
     paymentMap.set(key, (paymentMap.get(key) || 0) + (parseFloat(p.amount) || 0));
+    bonusMap.set(key, (bonusMap.get(key) || 0) + (parseFloat(p.bonusAmount) || 0));
   });
 
   const pettaChangeKeys = new Set(
@@ -143,7 +145,7 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory, salaryHistory) 
     const paid = (payments || []).filter(p => {
       const paymentDate = parseDateOnly(p.paymentDate);
       return paymentDate && dateKey(paymentDate) === dateKey(day);
-    }).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+    }).reduce((sum, p) => sum + (parseFloat(p.amount) || 0) - (parseFloat(p.bonusAmount) || 0), 0);
     segOpening += Math.max(0, 1 - leaveFrac) * (rateFor(day) - getPettaForDate(day, timeline)) - paid;
   }
   runningBalance = segOpening;
@@ -155,12 +157,13 @@ function calcEmployeeSalary(emp, leaves, payments, pettaHistory, salaryHistory) 
     const netPerDay = rateFor(day) - petta;
 
     const dayPaid = paymentMap.get(dateKey(day)) || 0;
+    const dayBonus = bonusMap.get(dateKey(day)) || 0;
 
     workedDays += workedFrac;
-    earned += workedFrac * netPerDay;
+    earned += workedFrac * netPerDay + dayBonus;
     totalPaid += dayPaid;
 
-    segEarned += workedFrac * netPerDay;
+    segEarned += workedFrac * netPerDay + dayBonus;
     segPaid += dayPaid;
 
     const nextDay = addDays(day, 1);

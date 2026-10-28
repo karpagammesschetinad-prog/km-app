@@ -39,24 +39,27 @@ async function loadDashboard() {
       fetchNamed('Configuration', '/config'),
       fetchNamed('Sales', `/sales/history?days=${salesExpensePeriodDays()}`)
     ]);
+    const unpaidQuantities = await api('GET', '/expenses/unpaid').catch(() => []);
+    // Placeholder rejection markers (empty category, zero amount) shouldn't skew any dashboard aggregate.
+    const realExpenses = expenses.filter(expense => expense.category && (parseFloat(expense.amount) || 0) > 0);
 
     const now = new Date();
     const fyStart = new Date(config.fiscalYear.start + 'T00:00:00');
     const fyEnd = new Date(Math.min(now.getTime(), new Date(config.fiscalYear.end + 'T23:59:59').getTime()));
 
-    const monthExp = expenses.filter(e => {
+    const monthExp = realExpenses.filter(e => {
       const d = new Date(e.date);
       return d >= fyStart && d <= fyEnd;
     });
 
     const monthSal = salaries.filter(s => s.paymentDate && new Date(s.paymentDate) >= fyStart && new Date(s.paymentDate) <= fyEnd);
     const expenseChartStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 19);
-    const recentChartExpenses = expenses.filter(e => {
+    const recentChartExpenses = realExpenses.filter(e => {
       const d = new Date(`${e.date}T00:00:00`);
       return d >= expenseChartStart && d <= now;
     });
 
-    const pendingExp = expenses.filter(e => e.status === 'Pending');
+    const pendingExp = realExpenses.filter(e => e.status === 'Pending');
 
     const totalExp = monthExp.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
     const totalSal = monthSal.reduce((s, e) => s + (parseFloat(e.netSalary) || 0), 0);
@@ -68,9 +71,11 @@ async function loadDashboard() {
     document.getElementById('stat-expenses').textContent   = formatCurrency(totalExp);
     document.getElementById('stat-salaries').textContent   = formatCurrency(totalSal);
     document.getElementById('stat-pending').textContent    = pendingExp.length;
+    const unpaidEl = document.getElementById('stat-unpaid');
+    if (unpaidEl) unpaidEl.textContent = Array.isArray(unpaidQuantities) ? unpaidQuantities.length : 0;
 
-    dashboardChartData = { expenses: recentChartExpenses, allExpenses: expenses, salesHistory, referenceDate: now };
-    renderSalesExpenseChart(expenses, salesHistory, now, salesExpensePeriodDays());
+    dashboardChartData = { expenses: recentChartExpenses, allExpenses: realExpenses, salesHistory, referenceDate: now };
+    renderSalesExpenseChart(realExpenses, salesHistory, now, salesExpensePeriodDays());
     categoryChartLoaded = false;
     categoryTrendLoaded = false;
     recentExpensesLoaded = false;
@@ -103,7 +108,9 @@ async function loadRecentExpensesOnDemand() {
   if (!tbody) return;
   try {
     const expenses = await api('GET', '/expenses');
-    renderRecentExpenses(expenses.slice(-6).reverse());
+    // Skip placeholder rejection markers (empty category, zero amount) added when a whole type is missing.
+    const visible = expenses.filter(expense => expense.category && (parseFloat(expense.amount) || 0) > 0);
+    renderRecentExpenses(visible.slice(-6).reverse());
     recentExpensesLoaded = true;
   } catch (err) {
     tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">Failed to load recent expenses.</td></tr>';
@@ -162,7 +169,9 @@ async function loadEmployeeStatusOnDemand() {
           return sum + (rateFor(day.toISOString().slice(0, 10)) - emp.dailyPetta);
         }, 0) * (workedDays / Math.ceil(totalDays))
         : 0;
-      const paid = payments.reduce((sum, payment) => sum + payment.amount, 0);
+      const periodPayments = payments.filter(payment => new Date(`${payment.paymentDate}T00:00:00`) >= start && new Date(`${payment.paymentDate}T00:00:00`) <= fyEnd);
+      const paid = periodPayments.reduce((sum, payment) => sum + payment.amount, 0);
+      const bonus = periodPayments.reduce((sum, payment) => sum + (parseFloat(payment.bonusAmount) || 0), 0);
       let carriedBalance = parseFloat(emp.openingBalance) || 0;
       for (let day = new Date(emp.startDate); day < fyStart; day.setDate(day.getDate() + 1)) {
         const dayKey = day.toISOString().slice(0, 10);
@@ -170,10 +179,10 @@ async function loadEmployeeStatusOnDemand() {
           const span = leaveDateSpan(item, now);
           return span && dayKey >= span.startKey && dayKey <= span.endKey;
         });
-        const dayPaid = payments.filter(payment => payment.paymentDate === dayKey).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0), 0);
+        const dayPaid = payments.filter(payment => payment.paymentDate === dayKey).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0) - (parseFloat(payment.bonusAmount) || 0), 0);
         carriedBalance += (leave ? 0 : (rateFor(dayKey) - emp.dailyPetta)) - dayPaid;
       }
-      const balance = carriedBalance + earned - paid;
+      const balance = carriedBalance + earned + bonus - paid;
       const onLeave = leaves.some(leave => new Date(leave.startDateTime) <= now && (!leave.endDateTime || now <= new Date(leave.endDateTime)));
       return { emp, balance, onLeave };
     });

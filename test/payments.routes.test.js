@@ -176,3 +176,73 @@ test('deleting an unknown payment returns 404', async () => {
   const res = await server.request('DELETE', '/api/payments/missing');
   assert.equal(res.status, 404);
 });
+
+test('settlement ranges persist and are returned on later reads without removing old payments', async () => {
+  server.loginAs(SUPERUSER);
+  sheets.setRows(SHEETS.EMPLOYEES, [['regular', 'Regular', '', '', '2020-01-01', 100, 0, 'Active', 'false', 'false']]);
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [['old', 'regular', 'Regular', '2020-01-01', 10, '', 'Admin', '']]);
+  const created = await server.request('POST', '/api/payments', {
+    employeeId: 'regular', paymentDate: '2020-01-05', amount: 490,
+    settlementStart: '2020-01-01', settlementEnd: '2020-01-05'
+  });
+  assert.equal(created.status, 201);
+  const records = (await server.request('GET', '/api/payments?employeeId=regular')).body.data;
+  assert.equal(records.length, 2);
+  assert.equal(records[1].settlementStart, '2020-01-01');
+  assert.equal(records[1].settlementEnd, '2020-01-05');
+  const overlap = await server.request('POST', '/api/payments', {
+    employeeId: 'regular', paymentDate: '2020-01-06', amount: 100,
+    settlementStart: '2020-01-05', settlementEnd: '2020-01-06'
+  });
+  assert.equal(overlap.status, 409);
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS).length, 2);
+});
+
+test('legacy settlement payments expose their archived period', async () => {
+  server.loginAs(SUPERUSER);
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [
+    ['legacy', 'emp-perm', 'Ravi', '2020-01-05', 500, 'Salary settlement: 2020-01-01 to 2020-01-05 (includes opening pending/advance)', 'Admin', '']
+  ]);
+  const records = (await server.request('GET', '/api/payments')).body.data;
+  assert.equal(records[0].settlementStart, '2020-01-01');
+  assert.equal(records[0].settlementEnd, '2020-01-05');
+});
+
+test('settlement metadata rejects invalid dates and missing date boundaries', async () => {
+  server.loginAs(SUPERUSER);
+  sheets.setRows(SHEETS.EMPLOYEES, [['regular', 'Regular', '', '', '2020-01-01', 100, 0, 'Active', 'false', 'false']]);
+  for (const [settlementStart, settlementEnd] of [['2020-01-01', ''], ['2020-02-30', '2020-03-01'], ['2020-01-06', '2020-01-05']]) {
+    const result = await server.request('POST', '/api/payments', {
+      employeeId: 'regular', paymentDate: settlementEnd || '2020-01-05', amount: 100, settlementStart, settlementEnd
+    });
+    assert.equal(result.status, 400);
+  }
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS).length, 0);
+});
+
+test('settlement bonus is persisted and returned as part of the total payment', async () => {
+  server.loginAs(SUPERUSER);
+  sheets.setRows(SHEETS.EMPLOYEES, [['regular', 'Regular', '', '', '2020-01-01', 100, 0, 'Active', 'false', 'false']]);
+  const created = await server.request('POST', '/api/payments', {
+    employeeId: 'regular', paymentDate: '2020-01-05', amount: 650.25,
+    settlementStart: '2020-01-01', settlementEnd: '2020-01-05', bonusAmount: 150.25,
+    addAsExpense: true, expenseTypeId: 'type-general'
+  });
+  assert.equal(created.status, 201);
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS)[0][10], 150.25);
+  const records = (await server.request('GET', '/api/payments')).body.data;
+  assert.equal(records[0].bonusAmount, 150.25);
+  assert.equal(records[0].amount, 650.25);
+  assert.equal(sheets.getRows(SHEETS.EXPENSES)[0][4], 650.25);
+});
+
+test('invalid bonus amounts and non-settlement bonuses are rejected', async () => {
+  server.loginAs(SUPERUSER);
+  for (const bonusAmount of [-1, 'abc', '100', 1.001, 50]) {
+    const result = await server.request('POST', '/api/payments', {
+      employeeId: 'emp-perm', paymentDate: '2020-01-05', amount: 100, bonusAmount
+    });
+    assert.equal(result.status, 400);
+  }
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS).length, 0);
+});

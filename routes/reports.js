@@ -10,7 +10,7 @@ const C = {
 };
 const ENTRY_C = { ID: 0, DATE: 1, SHIFT: 2, PAYMENT_TYPE: 3, VENDOR: 4, AMOUNT: 5, ENTERED_BY: 6, CREATED_AT: 7, UPDATED_AT: 8 };
 const SALES_C = { ID: 0, DATE: 1, MORNING: 2, AFTERNOON: 3, DINNER: 4, TOTAL: 5, EXPENSES: 6, REMAINING: 7, ENTERED_BY: 8, CREATED_AT: 9, MORNING_BY: 10, AFTERNOON_BY: 11, DINNER_BY: 12 };
-const PAYMENT_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
+const PAYMENT_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7, BONUS_AMOUNT: 10 };
 const EMPLOYEE_C = { ID: 0, NAME: 1, ADDRESS: 2, PHONE: 3, START: 4, PER_DAY: 5, PETTA: 6, STATUS: 7, DAILY_PAY: 8, TEMPORARY: 9 };
 const LEAVE_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, START: 3, END: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
 const PETTA_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, EFFECTIVE_DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
@@ -106,7 +106,7 @@ function amountForDate(date, baseAmount, history) {
   return amount;
 }
 
-function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, salaryHistoryRows, paymentsByDateAndEmployee }) {
+function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, salaryHistoryRows, paymentsByDateAndEmployee, bonusesByDateAndEmployee }) {
   const gross = new Map(dates.map(date => [date, 0]));
   const petta = new Map(dates.map(date => [date, 0]));
   // Amount treated as received/settled on the day beyond recorded payments (daily-pay staff).
@@ -157,8 +157,9 @@ function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, salary
     dates.forEach(date => {
       if (date < startDate) return;
       const worked = Math.max(0, 1 - leaveFractionForDay(date, leaves));
-      if (!worked) return;
-      const earned = worked * amountForDate(date, perDay, salaryRevisions);
+      const bonus = bonusesByDateAndEmployee.get(`${date}|${id}`) || 0;
+      if (!worked && !bonus) return;
+      const earned = worked * amountForDate(date, perDay, salaryRevisions) + bonus;
       const pettaDay = worked * amountForDate(date, basePetta, history);
       const payment = paymentsByDateAndEmployee.get(`${date}|${id}`) || 0;
       gross.set(date, gross.get(date) + earned);
@@ -206,6 +207,7 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
   });
 
   const paymentsByDateAndEmployee = new Map();
+  const bonusesByDateAndEmployee = new Map();
   paymentRows.forEach(row => {
     const date = row[PAYMENT_C.DATE];
     const bucket = byDate.get(date);
@@ -213,10 +215,11 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
     if (bucket) bucket.salaryPaid += amount;
     const key = `${date}|${row[PAYMENT_C.EMP_ID] || ''}`;
     paymentsByDateAndEmployee.set(key, (paymentsByDateAndEmployee.get(key) || 0) + amount);
+    bonusesByDateAndEmployee.set(key, (bonusesByDateAndEmployee.get(key) || 0) + amountOf(row, PAYMENT_C.BONUS_AMOUNT));
   });
 
   const { gross: grossByDate, petta: pettaByDate, received: receivedByDate, pending: pendingByDate } = salaryAccrualByDate({
-    dates, employeeRows: employeeRows || [], leaveRows: leaveRows || [], pettaRows: pettaRows || [], salaryHistoryRows: salaryHistoryRows || [], paymentsByDateAndEmployee
+    dates, employeeRows: employeeRows || [], leaveRows: leaveRows || [], pettaRows: pettaRows || [], salaryHistoryRows: salaryHistoryRows || [], paymentsByDateAndEmployee, bonusesByDateAndEmployee
   });
 
   // Legacy Sales rows are only used for days with no SalesEntries data.

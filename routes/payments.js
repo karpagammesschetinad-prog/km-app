@@ -9,7 +9,7 @@ const EXPENSE_C = { DATE: 1, CATEGORY: 2, DESCRIPTION: 3, AMOUNT: 4, EMP_ID: 5, 
 const EMPLOYEE_C = { ID: 0, NAME: 1 };
 
 const SHEET = SHEETS.SALARY_PAYMENTS;
-const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
+const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7, SETTLEMENT_START: 8, SETTLEMENT_END: 9, BONUS_AMOUNT: 10 };
 const TYPE_C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5 };
 
 function normalizePaymentShift(value) {
@@ -35,6 +35,8 @@ function canUseExpenseType(row, user) {
 }
 
 function rowToObj(row) {
+  // Recognize settlements recorded before dedicated period columns were added.
+  const legacy = String(row[C.REMARKS] || '').match(/^Salary settlement: (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2}) \(includes opening pending\/advance\)/);
   return {
     id:           row[C.ID]          || '',
     employeeId:   row[C.EMP_ID]      || '',
@@ -43,7 +45,10 @@ function rowToObj(row) {
     amount:       parseFloat(row[C.AMOUNT]) || 0,
     remarks:      row[C.REMARKS]     || '',
     createdBy:    row[C.CREATED_BY]  || '',
-    createdAt:    row[C.CREATED_AT]  || ''
+    createdAt:    row[C.CREATED_AT]  || '',
+    settlementStart: row[C.SETTLEMENT_START] || legacy?.[1] || '',
+    settlementEnd: row[C.SETTLEMENT_END] || legacy?.[2] || '',
+    bonusAmount: parseFloat(row[C.BONUS_AMOUNT]) || 0
   };
 }
 
@@ -67,7 +72,14 @@ router.get('/', requireAuth, async (req, res) => {
 // POST /api/payments
 router.post('/', requireAuth, async (req, res) => {
   try {
-    const { employeeId, employeeName, paymentDate, amount, remarks, addAsExpense, expenseTypeId, expenseShift } = req.body;
+    const { employeeId, employeeName, paymentDate, amount, remarks, addAsExpense, expenseTypeId, expenseShift, settlementStart, settlementEnd, bonusAmount = 0 } = req.body;
+    if (typeof bonusAmount !== 'number' || !Number.isFinite(bonusAmount) || bonusAmount < 0 ||
+        Math.abs(bonusAmount * 100 - Math.round(bonusAmount * 100)) > 0.000001) {
+      return res.status(400).json({ success: false, message: 'Bonus must be a non-negative amount with up to two decimal places.' });
+    }
+    if (bonusAmount > 0 && (!settlementStart || !settlementEnd)) {
+      return res.status(400).json({ success: false, message: 'Bonus can only be awarded during settlement.' });
+    }
     if (!employeeId || !paymentDate || amount === undefined) {
       return res.status(400).json({ success: false, message: 'employeeId, paymentDate and amount are required.' });
     }
@@ -81,6 +93,20 @@ router.post('/', requireAuth, async (req, res) => {
     const employeeRows = await getAllRows(SHEETS.EMPLOYEES);
     const employee = employeeRows.find(row => row[EMPLOYEE_C.ID] === employeeId);
     const isTemporaryEmployee = String(employee?.[9] || '').toLowerCase() === 'true';
+    if (settlementStart || settlementEnd) {
+      if (req.session.user.role !== 'superuser') return res.status(403).json({ success: false, message: 'Only superusers can settle salary periods.' });
+      const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+        Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+      if (!validDate(settlementStart) || !validDate(settlementEnd) || settlementStart > settlementEnd ||
+          settlementEnd !== paymentDate || settlementEnd > getBusinessDate() || !employee ||
+          settlementStart < employee[4] || isTemporaryEmployee || String(employee[8]).toLowerCase() === 'true') {
+        return res.status(400).json({ success: false, message: 'Invalid settlement period or employee.' });
+      }
+      const previous = (await getAllRows(SHEET)).filter(row => row[C.EMP_ID] === employeeId).map(rowToObj);
+      if (previous.some(payment => payment.settlementEnd && settlementStart <= payment.settlementEnd)) {
+        return res.status(409).json({ success: false, message: 'This period overlaps an existing settlement. Choose a period after the last closing date.' });
+      }
+    }
     const resolvedExpenseShift = normalizePaymentShift(expenseShift);
     const shouldAddAsExpense = !!addAsExpense || isTemporaryEmployee;
     let resolvedExpenseTypeId = expenseTypeId || '';
@@ -106,10 +132,13 @@ router.post('/', requireAuth, async (req, res) => {
       amount: parseFloat(amount),
       remarks: remarks || '',
       createdBy: req.session?.user?.displayName || '',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      settlementStart: settlementStart || '',
+      settlementEnd: settlementEnd || '',
+      bonusAmount
     };
     await appendRow(SHEET, [obj.id, obj.employeeId, obj.employeeName, obj.paymentDate,
-                            obj.amount, obj.remarks, obj.createdBy, obj.createdAt]);
+                            obj.amount, obj.remarks, obj.createdBy, obj.createdAt, obj.settlementStart, obj.settlementEnd, obj.bonusAmount]);
 
     // Also record as an expense if cashier confirmed
     if (shouldAddAsExpense) {

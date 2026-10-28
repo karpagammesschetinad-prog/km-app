@@ -450,6 +450,8 @@ body.tamil-keyboard-ready .tamil-keyboard-panel.show { display: block; }
 .onspot-row { background: #fffbeb; }
 .onspot-name { min-width: 0; }
 .onspot-action-row { display: flex; justify-content: flex-end; padding: .55rem .85rem; background: #fff; }
+.expense-quantity-popup .dropdown-menu { min-width: 220px; }
+.expense-quantity-popup .form-control[readonly] { background: #f8f9fa; }
 
 /* ---- Forms ---- */
 .form-label { font-size: .83rem; font-weight: 500; color: var(--text-main); margin-bottom: .3rem; }
