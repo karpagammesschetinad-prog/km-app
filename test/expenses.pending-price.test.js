@@ -242,6 +242,8 @@ test('the price input is labelled for assistive technology and lockable', () => 
   const { context } = createPage();
   assert.match(context.quantityPriceInputHtml(52.5, false), /aria-label="Price per unit"[^>]*value="52.5"/);
   assert.match(context.quantityPriceInputHtml(0, true), /value=""[^>]* readonly disabled/);
+  assert.doesNotMatch(context.quantityPriceInputHtml(52.5, false), /quantity-value/);
+  assert.match(context.quantityPriceInputHtml(52.5, false), /expense-quantity-total/);
 });
 
 test('on-spot quantity offers and retains the selected Grams unit', () => {

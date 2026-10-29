@@ -18,6 +18,9 @@ let autoSaveInFlight = false;
 let autoSavePending = false;
 let expenseAutoSaveEnabled = true;
 let nextOnSpotQuantityKey = 0;
+let quantityRenderTimer = null;
+let pendingOnSpotNameInput = null;
+let employeeExpenseDataLoaded = false;
 const handpickedQuantityIds = new Map();
 let quantityPickerRow = null;
 
@@ -105,6 +108,34 @@ function categoryBalanceIdentity(item) {
   };
 }
 
+let categoryLedgerIndex = null;
+
+function getCategoryLedgerIndex() {
+  const sources = [allExpenses, allCategories, allExpenseQuantities, allUnpaidQuantities];
+  if (categoryLedgerIndex && sources.every((source, index) => source === categoryLedgerIndex.sources[index])) return categoryLedgerIndex;
+  const index = { sources, expensesById: new Map(), expenses: new Map(), receipts: new Map(), quantities: new Map(), applied: new Map(), balances: new Map() };
+  const add = (map, identity, item) => {
+    const key = JSON.stringify([identity.typeId, categoryBalanceName(identity.category)]);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(item);
+  };
+  allExpenses.forEach(expense => {
+    index.expensesById.set(expense.id, expense);
+    if (!expense.employeeId) add(index.expenses, categoryBalanceIdentity(expense), expense);
+  });
+  allExpenseQuantities.forEach(quantity => {
+    if (quantity.sourceReceiptId) return;
+    if (!index.quantities.has(quantity.expenseId)) index.quantities.set(quantity.expenseId, []);
+    index.quantities.get(quantity.expenseId).push(quantity);
+  });
+  allUnpaidQuantities.forEach(receipt => {
+    add(index.receipts, categoryBalanceIdentity(receipt), receipt);
+    (receipt.payments || []).forEach(payment => index.applied.set(payment.expenseId, (index.applied.get(payment.expenseId) || 0) + (parseFloat(payment.amount) || 0)));
+  });
+  categoryLedgerIndex = index;
+  return index;
+}
+
 // An expense is either an on-the-spot payment for goods received or a payment toward earlier goods, so its amount never sets a unit price.
 // Balance = goods received at the entered unit prices (plus unpaid receipts) minus payments, kept from the category's first priced entry.
 function categoryLedger(typeId, category, includeDraftLinks = true, reportFilter = null) {
@@ -112,17 +143,18 @@ function categoryLedger(typeId, category, includeDraftLinks = true, reportFilter
   typeId = target?.typeId || typeId;
   const name = categoryBalanceName(target?.name || category);
   if (!name) return null;
-  const sameCategory = item => {
-    const identity = categoryBalanceIdentity(item);
-    return identity.typeId === (typeId || '') && categoryBalanceName(identity.category) === name;
-  };
+  const index = getCategoryLedgerIndex();
+  const identityKey = JSON.stringify([typeId || '', name]);
+  const draftsKey = includeDraftLinks ? JSON.stringify([...pendingUnpaidLinks.values()].map(link => [link.receiptId, link.amount])) : '';
+  const cacheKey = JSON.stringify([identityKey, reportFilter?.to || '', draftsKey, includeDraftLinks]);
+  if (index.balances.has(cacheKey)) return index.balances.get(cacheKey);
   const configured = target || balanceCategory(typeId, category);
   const opening = parseFloat(configured?.openingBalance) || 0;
   // Pending is a closing balance: earlier dues and payments carry into the report period.
   const throughEnd = date => !!date && (!reportFilter?.to || date <= reportFilter.to);
-  const receipts = allUnpaidQuantities.filter(item => sameCategory(item) && throughEnd(item.receivedDate));
-  const matchingExpenses = allExpenses.filter(expense => !expense.employeeId && sameCategory(expense) && throughEnd(expense.date));
-  const expensesById = new Map(allExpenses.map(expense => [expense.id, expense]));
+  const receipts = (index.receipts.get(identityKey) || []).filter(item => throughEnd(item.receivedDate));
+  const matchingExpenses = (index.expenses.get(identityKey) || []).filter(expense => throughEnd(expense.date));
+  const expensesById = index.expensesById;
   const paymentThroughEnd = payment => {
     const date = expensesById.get(payment.expenseId)?.date || payment.paymentDate || String(payment.createdAt || '').slice(0, 10);
     return !reportFilter?.to || throughEnd(date);
@@ -130,15 +162,8 @@ function categoryLedger(typeId, category, includeDraftLinks = true, reportFilter
   const linkedNow = new Map();
   if (includeDraftLinks) pendingUnpaidLinks.forEach(link => linkedNow.set(link.receiptId, (linkedNow.get(link.receiptId) || 0) + (parseFloat(link.amount) || 0)));
   // Money already applied to a receipt is counted there, not again as a payment of the expense.
-  const appliedToReceipts = new Map();
-  allUnpaidQuantities.forEach(receipt => (receipt.payments || []).forEach(payment => {
-    appliedToReceipts.set(payment.expenseId, (appliedToReceipts.get(payment.expenseId) || 0) + (parseFloat(payment.amount) || 0));
-  }));
-  const ownQuantities = new Map();
-  allExpenseQuantities.filter(quantity => !quantity.sourceReceiptId).forEach(quantity => {
-    if (!ownQuantities.has(quantity.expenseId)) ownQuantities.set(quantity.expenseId, []);
-    ownQuantities.get(quantity.expenseId).push(quantity);
-  });
+  const appliedToReceipts = index.applied;
+  const ownQuantities = index.quantities;
   const entries = matchingExpenses.map(expense => {
     const own = ownQuantities.get(expense.id) || [];
     const value = own.reduce((sum, quantity) => sum + (quantity.totalAmount !== '' && quantity.totalAmount != null ? Number(quantity.totalAmount) : quantity.unitPrice > 0 ? quantity.amount * quantity.unitPrice : 0), 0);
@@ -149,7 +174,10 @@ function categoryLedger(typeId, category, includeDraftLinks = true, reportFilter
   });
   const starts = [...receipts.map(receipt => receipt.receivedDate), ...entries.filter(entry => entry.priced).map(entry => entry.date),
     ...(configured?.balanceUpdatedAt ? entries.map(entry => entry.date) : [])].filter(Boolean).sort();
-  if (!starts.length && !configured?.balanceUpdatedAt && !opening) return null;
+  if (!starts.length && !configured?.balanceUpdatedAt && !opening) {
+    index.balances.set(cacheKey, null);
+    return null;
+  }
   const start = starts[0] || getLocalDateKey();
   let received = 0;
   let paid = 0;
@@ -168,7 +196,9 @@ function categoryLedger(typeId, category, includeDraftLinks = true, reportFilter
     paid += entry.payment;
   });
   const round = value => Math.round(value * 100) / 100;
-  return { start, opening, received: round(received), paid: round(paid), balance: round(opening + received - paid) };
+  const result = { start, opening, received: round(received), paid: round(paid), balance: round(opening + received - paid) };
+  index.balances.set(cacheKey, result);
+  return result;
 }
 
 function balanceText(balance) {
@@ -392,7 +422,7 @@ function refreshCategoryPendingBadges() {
 }
 
 function quantityPriceInputHtml(unitPrice, readOnly, totalAmount = '') {
-  return `<span class="input-group-text">&#8377;/unit</span><input type="number" class="form-control expense-quantity-price" style="max-width:110px" min="0" step="0.01" placeholder="Optional price" aria-label="Price per unit" title="Enter any two values to calculate the blank field" value="${unitPrice > 0 ? unitPrice : ''}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">Total ₹</span><input type="number" class="form-control expense-quantity-total" style="min-width:100px" min="0" step="0.01" placeholder="Total amount" aria-label="Total amount for quantity" value="${escapeHtml(totalAmount ?? '')}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text quantity-value" style="min-width:80px"></span>`;
+  return `<span class="input-group-text">&#8377;/unit</span><input type="number" class="form-control expense-quantity-price" style="max-width:110px" min="0" step="0.01" placeholder="Optional price" aria-label="Price per unit" title="Enter any two values to calculate the blank field" value="${unitPrice > 0 ? unitPrice : ''}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">Total ₹</span><input type="number" class="form-control expense-quantity-total" style="min-width:100px" min="0" step="0.01" placeholder="Total amount" aria-label="Total amount for quantity" value="${escapeHtml(totalAmount ?? '')}"${readOnly ? ' readonly disabled' : ''}>`;
 }
 
 function updateQuantityValue(group, changedInput = null) {
@@ -543,15 +573,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('categoryInputs').addEventListener('input', event => {
     if (!(event.target instanceof HTMLElement)) return;
-    // Re-render Quantities tab when an on-spot name is typed or when a cat-amount changes so
-    // the default-quantity rows unlock as soon as the category has a positive amount.
-    if (event.target.matches('.onspot-name')) {
-      const row = event.target.closest('.onspot-row');
-      row.querySelector('.category-pending-slot')?.remove();
-      event.target.insertAdjacentHTML('afterend', pendingSlotHtml(event.target.dataset.type, event.target.value));
-    }
-    if (event.target.matches('.onspot-name') || event.target.matches('.cat-amount')) renderQuantityInputs();
+    if (event.target.matches('.onspot-name')) scheduleQuantityInputsRender(event.target);
   });
+  document.getElementById('expenseQuantitiesTab')?.addEventListener('shown.bs.tab', flushQuantityInputsRender);
   document.getElementById('expenseQuantitiesPane').addEventListener('focusout', () => {
     if (expenseAutoSaveEnabled) scheduleAutoSave();
   });
@@ -609,18 +633,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btnConfirmReject').addEventListener('click', confirmReject);
 
   try {
-    [allCategories, allCategoryTypes, allExpenses, expenseEmployees, allQuantityCategories, allExpenseQuantities, allUnpaidQuantities] = await Promise.all([
+    [allCategories, allCategoryTypes, allExpenses, allQuantityCategories, allExpenseQuantities, allUnpaidQuantities] = await Promise.all([
       api('GET', '/categories'),
       api('GET', '/categories/types/all'),
       api('GET', '/expenses'),
-      api('GET', '/employees'),
       api('GET', '/categories/quantities/all'),
       api('GET', '/expenses/quantities'),
       api('GET', '/expenses/unpaid?includeSettled=1')
     ]);
     loadDateIntoForm(today);
-    renderExpenseDatePicker();
-    renderOccasionalExpenses();
     renderUnpaidQuantities();
     if (!allCategoryTypes.some(type => type.status === 'Active' && normalizeWorkflow(type.workflow) === 'Occasional')) {
       document.getElementById('btnOccasionalExpense').style.display = 'none';
@@ -630,7 +651,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-function openEmployeeExpenseModal() {
+async function openEmployeeExpenseModal() {
+  if (!employeeExpenseDataLoaded) {
+    try {
+      expenseEmployees = await api('GET', '/employees');
+      employeeExpenseDataLoaded = true;
+    } catch (err) {
+      showNotification('Unable to load employees: ' + err.message, 'danger');
+      return;
+    }
+  }
   const employeeSelect = document.getElementById('employeeExpenseEmployee');
   const typeSelect = document.getElementById('employeeExpenseType');
   employeeSelect.innerHTML = '<option value="">— Select Employee —</option>' + expenseEmployees
@@ -1049,7 +1079,6 @@ function loadDateIntoForm(date) {
   }
 
   buildCategoryInputs(existing, isApproved, isCorrection ? editableCategories : null, editableTypeIds);
-  updateTotal();
   renderReceiptsOnDate(document.getElementById('receiptsOnDateDaily'), date, false);
 
   // Disable save button and remarks if approved
@@ -1505,6 +1534,25 @@ function toggleExpenseType(button) {
   button.setAttribute('aria-expanded', String(expanded));
 }
 
+function scheduleQuantityInputsRender(nameInput = null) {
+  if (nameInput) pendingOnSpotNameInput = nameInput;
+  clearTimeout(quantityRenderTimer);
+  quantityRenderTimer = setTimeout(flushQuantityInputsRender, 100);
+}
+
+function flushQuantityInputsRender() {
+  clearTimeout(quantityRenderTimer);
+  quantityRenderTimer = null;
+  const input = pendingOnSpotNameInput;
+  pendingOnSpotNameInput = null;
+  if (input?.isConnected) {
+    const row = input.closest('.onspot-row');
+    row.querySelector('.category-pending-slot')?.remove();
+    input.insertAdjacentHTML('afterend', pendingSlotHtml(input.dataset.type, input.value));
+  }
+  renderQuantityInputs();
+}
+
 function updateTotal() {
   const typeTotals = {};
   document.querySelectorAll('.cat-amount').forEach(inp => {
@@ -1517,7 +1565,8 @@ function updateTotal() {
     sum + (workflowByTypeId.get(typeId) === 'Daily Cash' ? amount : 0), 0);
   const dailyCashTotalEl = document.getElementById('dailyCashSectionTotal');
   if (dailyCashTotalEl) dailyCashTotalEl.textContent = formatCurrency(dailyCashTotal);
-  renderQuantityInputs();
+  if (document.activeElement?.matches?.('.cat-amount, .onspot-name')) scheduleQuantityInputsRender();
+  else renderQuantityInputs();
 }
 
 function quantityRowKey(input, category) {
@@ -1658,6 +1707,7 @@ function collectQuantitiesFor(input) {
 /* ---- Save ---- */
 
 async function save(options = {}) {
+  if (quantityRenderTimer !== null) flushQuantityInputsRender();
   const silent = !!options.silent;
   const date = document.getElementById('expDate').value;
   if (!date) { if (!silent) showNotification('Please select a date.', 'warning'); return; }

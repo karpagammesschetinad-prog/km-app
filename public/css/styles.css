@@ -1,6 +1,65 @@
 .configured-quantity-field[hidden] {
   display: none !important;
 }
+
+@media (min-width: 576px) {
+  #quantityInputsBody .quantity-price-group,
+  #occasionalQuantityBody .quantity-price-group {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0;
+    width: 100%;
+    max-width: 100% !important;
+    padding: 0;
+  }
+  #quantityInputsBody .quantity-price-group > *,
+  #occasionalQuantityBody .quantity-price-group > * {
+    width: auto;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
+    padding: .25rem .3rem;
+    font-size: .68rem;
+    line-height: 1.25;
+  }
+  #quantityInputsBody .quantity-price-group > :first-child,
+  #occasionalQuantityBody .quantity-price-group > :first-child,
+  #quantityInputsBody .quantity-value,
+  #occasionalQuantityBody .quantity-value {
+    flex: 0 1 auto;
+    white-space: nowrap;
+  }
+  #quantityInputsBody .quantity-price-group > .input-group-text,
+  #occasionalQuantityBody .quantity-price-group > .input-group-text {
+    flex: 0 1 auto;
+    white-space: nowrap;
+  }
+  #quantityInputsBody .quantity-price-group input,
+  #occasionalQuantityBody .quantity-price-group input {
+    flex: 1 1 4.5rem;
+    width: 4.5rem;
+    min-height: 30px;
+    font-size: .72rem;
+  }
+  #quantityInputsBody .quantity-price-group select,
+  #occasionalQuantityBody .quantity-price-group select {
+    flex: 0 0 3.75rem;
+    width: 3.75rem;
+    padding-right: 1rem;
+    background-position: right .2rem center;
+  }
+  #quantityInputsBody .quantity-price-group > :first-child,
+  #occasionalQuantityBody .quantity-price-group > :first-child {
+    max-width: 6rem !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #quantityInputsBody .onspot-quantity > button,
+  #occasionalQuantityBody .onspot-quantity > button {
+    flex: 0 0 auto;
+    width: auto;
+  }
+}
 /* ============================================================
    BizTracker – Global Styles
    ============================================================ */
@@ -574,6 +633,68 @@ body.tamil-keyboard-ready .tamil-keyboard-panel.show { display: block; }
     padding: 1rem 0;
   }
   .mobile-grid-table tbody td[colspan]::before { display: none; }
+  #quantityInputsBody tr,
+  #occasionalQuantityBody tr {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #quantityInputsBody td,
+  #occasionalQuantityBody td {
+    display: block;
+    grid-column: 1 / -1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  #quantityInputsBody td::before,
+  #occasionalQuantityBody td::before {
+    display: block;
+    margin-bottom: .35rem;
+  }
+  #quantityInputsBody .quantity-price-group,
+  #occasionalQuantityBody .quantity-price-group {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: .5rem;
+    width: 100%;
+    max-width: 100% !important;
+    padding: .75rem;
+    border: 1px solid var(--border);
+    border-radius: .5rem;
+    background: #f8fafc;
+  }
+  #quantityInputsBody .quantity-price-group > *,
+  #occasionalQuantityBody .quantity-price-group > * {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    width: 100%;
+    margin-left: 0 !important;
+    border-radius: .375rem !important;
+    white-space: normal;
+  }
+  #quantityInputsBody .quantity-price-group > :first-child,
+  #occasionalQuantityBody .quantity-price-group > :first-child,
+  #quantityInputsBody .quantity-value,
+  #occasionalQuantityBody .quantity-value {
+    grid-column: 1 / -1;
+  }
+  #quantityInputsBody .quantity-price-group input,
+  #quantityInputsBody .quantity-price-group select,
+  #occasionalQuantityBody .quantity-price-group input,
+  #occasionalQuantityBody .quantity-price-group select {
+    min-height: 44px;
+    font-size: 16px;
+  }
+  #quantityInputsBody .onspot-quantity > button,
+  #occasionalQuantityBody .onspot-quantity > button {
+    grid-column: 2;
+    justify-self: end;
+    width: auto;
+    min-height: 44px;
+  }
+  #quantityInputsBody .choose-category-quantities,
+  #occasionalQuantityBody .choose-category-quantities {
+    width: 100%;
+    min-height: 44px;
+  }
   #superSummary .row.g-2 > [class*="col-"] { width: 100%; }
   .sales-summary-box { min-height: auto; padding: .75rem .8rem; }
   #superSummary .sales-summary-box small { font-size: .66rem; }
