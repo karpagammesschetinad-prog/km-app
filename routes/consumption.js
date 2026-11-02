@@ -22,7 +22,7 @@ const C = {
 };
 
 const QCAT_C = { ID: 0, CATEGORY_ID: 1, NAME: 2, UNIT: 3, ORDER: 4, STATUS: 5, AUTO_CONSUME: 6 };
-const EQ_C = { ID: 0, EXPENSE_ID: 1, CATEGORY_ID: 2, NAME: 3, UNIT: 4, AMOUNT: 5 };
+const EQ_C = { ID: 0, EXPENSE_ID: 1, CATEGORY_ID: 2, NAME: 3, UNIT: 4, AMOUNT: 5, CREATED_AT: 6, UPDATED_AT: 7, SOURCE_RECEIPT_ID: 8, UNIT_PRICE: 9 };
 const RI_C = { ID: 0, RECEIPT_ID: 1, CATEGORY_ID: 2, NAME: 3, UNIT: 4, AMOUNT: 5 };
 const EXPENSE_C = { ID: 0, DATE: 1 };
 const EXPENSE_CAT_C = { ID: 0, NAME: 1 };
@@ -87,7 +87,7 @@ async function loadIncomingByCategory() {
   const bucketFor = (categoryId, name, unit) => {
     const key = String(categoryId || '');
     if (!key) return null;
-    if (!map.has(key)) map.set(key, { events: [], paid: 0, unpaid: 0, name: name || '', unit: unit || '' });
+    if (!map.has(key)) map.set(key, { events: [], priceEvents: [], paid: 0, unpaid: 0, name: name || '', unit: unit || '' });
     const bucket = map.get(key);
     if (!bucket.name && name) bucket.name = name;
     if (!bucket.unit && unit) bucket.unit = unit;
@@ -101,6 +101,14 @@ async function loadIncomingByCategory() {
     if (!bucket) continue;
     const date = expenseDates.get(row[EQ_C.EXPENSE_ID]) || '';
     bucket.events.push({ date, amount, source: 'paid' });
+    const unitPrice = parseFloat(row[EQ_C.UNIT_PRICE]) || 0;
+    if (unitPrice > 0) {
+      bucket.priceEvents.push({
+        date,
+        price: unitPrice,
+        timestamp: row[EQ_C.UPDATED_AT] || row[EQ_C.CREATED_AT] || ''
+      });
+    }
     bucket.paid += amount;
   }
   for (const row of receiptItemRows) {
@@ -113,8 +121,26 @@ async function loadIncomingByCategory() {
     bucket.events.push({ date, amount, source: 'unpaid' });
     bucket.unpaid += amount;
   }
-  for (const bucket of map.values()) bucket.events.sort((first, second) => first.date.localeCompare(second.date));
+  for (const bucket of map.values()) {
+    bucket.events.sort((first, second) => first.date.localeCompare(second.date));
+    bucket.priceEvents.sort((first, second) => first.date.localeCompare(second.date) || first.timestamp.localeCompare(second.timestamp));
+  }
   return map;
+}
+
+function latestPriceChange(priceEvents = []) {
+  if (priceEvents.length < 2) return null;
+  const current = priceEvents[priceEvents.length - 1];
+  const previous = [...priceEvents].slice(0, -1).reverse().find(item => Math.abs(item.price - current.price) > 0.000001);
+  if (!previous) return null;
+  return {
+    previousPrice: previous.price,
+    currentPrice: current.price,
+    previousDate: previous.date,
+    date: current.date,
+    change: current.price - previous.price,
+    changePercent: previous.price > 0 ? ((current.price - previous.price) / previous.price) * 100 : null
+  };
 }
 
 function incomingUpTo(events, dateInclusive) {
@@ -250,7 +276,7 @@ router.get('/stock', requireAuth, async (req, res) => {
     const knownIds = new Set([...catById.keys(), ...incomingMap.keys(), ...entriesByCategory.keys()]);
     const data = [...knownIds].map(id => {
       const cat = catById.get(id);
-      const bucket = incomingMap.get(id) || { paid: 0, unpaid: 0, name: '', unit: '', events: [] };
+      const bucket = incomingMap.get(id) || { paid: 0, unpaid: 0, name: '', unit: '', events: [], priceEvents: [] };
       const entries = entriesByCategory.get(id) || [];
       const latest = entries[entries.length - 1];
       const totalIncoming = bucket.paid + bucket.unpaid;
@@ -271,6 +297,8 @@ router.get('/stock', requireAuth, async (req, res) => {
         incoming: totalIncoming,
         incomingPaid: bucket.paid,
         incomingUnpaid: bucket.unpaid,
+        latestUnitPrice: bucket.priceEvents.at(-1)?.price || 0,
+        priceChange: latestPriceChange(bucket.priceEvents),
         consumed,
         remaining,
         lastObservation: latest ? { date: latest.date, availableStock: latest.availableStock, usedAmount: latest.usedAmount, id: latest.id } : null

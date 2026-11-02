@@ -46,8 +46,8 @@ function receiptRow(id, receivedDate) {
 }
 
 // ExpenseQuantities: ID, ExpenseID, QuantityCategoryID, QuantityName, Unit, Amount, CreatedAt, UpdatedAt, SourceReceiptID
-function paidRow(id, expenseId, quantityCategoryId, name, unit, amount) {
-  return [id, expenseId, quantityCategoryId, name, unit, amount, '', '', ''];
+function paidRow(id, expenseId, quantityCategoryId, name, unit, amount, unitPrice = '') {
+  return [id, expenseId, quantityCategoryId, name, unit, amount, '', '', '', unitPrice, ''];
 }
 // UnpaidReceiptItems: ID, ReceiptID, QuantityCategoryID, QuantityName, Unit, Amount, CreatedAt, UpdatedAt
 function unpaidRow(id, receiptId, quantityCategoryId, name, unit, amount) {
@@ -116,6 +116,40 @@ test('stock returns full incoming when no observation exists', async () => {
   assert.equal(chicken.consumed, 0);
   assert.equal(chicken.remaining, 8);
   assert.equal(chicken.lastObservation, null);
+});
+
+test('stock flags changed incoming unit prices against the previous different price', async () => {
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow('price-old', '2026-01-01'),
+    expenseRow('price-new', '2026-01-02')
+  ]);
+  sheets.setRows(SHEETS.EXPENSE_QUANTITIES, [
+    paidRow('old-price-row', 'price-old', 'qcat-chicken', 'Chicken', 'KG', 5, 80),
+    paidRow('new-price-row', 'price-new', 'qcat-chicken', 'Chicken', 'KG', 3, 92)
+  ]);
+  const res = await server.request('GET', '/api/consumption/stock');
+  const chicken = res.body.data.find(row => row.quantityCategoryId === 'qcat-chicken');
+  assert.equal(chicken.latestUnitPrice, 92);
+  assert.deepEqual(chicken.priceChange, {
+    previousPrice: 80, currentPrice: 92, previousDate: '2026-01-01', date: '2026-01-02', change: 12, changePercent: 15
+  });
+});
+
+test('stock does not flag unchanged or unpriced incoming unit prices', async () => {
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow('same-old', '2026-01-01'),
+    expenseRow('same-new', '2026-01-02'),
+    expenseRow('no-price', '2026-01-03')
+  ]);
+  sheets.setRows(SHEETS.EXPENSE_QUANTITIES, [
+    paidRow('price-1', 'same-old', 'qcat-chicken', 'Chicken', 'KG', 5, 80),
+    paidRow('price-2', 'same-new', 'qcat-chicken', 'Chicken', 'KG', 3, 80),
+    paidRow('price-3', 'no-price', 'qcat-chicken', 'Chicken', 'KG', 2)
+  ]);
+  const res = await server.request('GET', '/api/consumption/stock');
+  const chicken = res.body.data.find(row => row.quantityCategoryId === 'qcat-chicken');
+  assert.equal(chicken.latestUnitPrice, 80);
+  assert.equal(chicken.priceChange, null);
 });
 
 test('preview reports incoming since prior observation', async () => {

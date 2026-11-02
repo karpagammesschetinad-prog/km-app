@@ -11,6 +11,7 @@ let fiscalYearConfig = null;
 let returningLeaveId = null;
 let savingSettlement = false;
 let historySettlementId = null;
+let editingPaymentId = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
@@ -381,7 +382,7 @@ function render() {
       </div>
       <div class="table-responsive">
         <table class="table mobile-grid-table">
-          <thead><tr><th>Date</th><th>Amount</th><th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Amount</th><th>Paid From</th><th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
           <tbody id="paymentsBody">${renderPaymentsRows(visiblePayments)}</tbody>
         </table>
       </div>
@@ -446,12 +447,11 @@ function render() {
   });
   if (btnLeave)   btnLeave.addEventListener('click',   () => bootstrap.Modal.getOrCreateInstance(document.getElementById('leaveModal')).show());
   if (btnPayment) btnPayment.addEventListener('click', () => {
-    const now = new Date();
-    const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const paymentDate = document.getElementById('payDate');
-    paymentDate.value = currentDate;
-    paymentDate.max = currentDate;
-    paymentDate.disabled = !isSuperUser();
+    editingPaymentId = null;
+    document.getElementById('paymentForm').reset();
+    document.getElementById('payMethod').value = (empData.temporaryEmployee || empData.dailySalaryEnabled) ? 'Day Sale Cash' : 'Online';
+    document.getElementById('paymentModalTitle').textContent = 'Record Salary Payment';
+    document.getElementById('btnSavePayment').innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Payment';
     bootstrap.Modal.getOrCreateInstance(document.getElementById('paymentModal')).show();
   });
   if (btnPetta)   btnPetta.addEventListener('click',   () => {
@@ -488,14 +488,15 @@ function renderLeaveRows(leaves = empLeaves) {
 }
 
 function renderPaymentsRows(payments) {
-  if (!payments || !payments.length) return `<tr><td colspan="5" class="text-center text-muted py-3">No payments recorded</td></tr>`;
+  if (!payments || !payments.length) return `<tr><td colspan="6" class="text-center text-muted py-3">No payments recorded</td></tr>`;
   return payments.map(p => `
     <tr>
       <td data-label="Date">${formatDate(p.paymentDate)}</td>
       <td data-label="Amount" class="fw-semibold text-success">${formatCurrency(p.amount)}</td>
+      <td data-label="Paid from"><span class="badge ${p.paymentMethod === 'Online' ? 'bg-primary-subtle text-primary' : 'bg-success-subtle text-success'}">${p.paymentSource || (p.paymentMethod === 'Online' ? 'Online' : 'Cash In Hand')}</span></td>
       <td data-label="Remarks">${p.remarks || '—'}${p.bonusAmount ? `<div class="text-success small">Bonus awarded: ${formatCurrency(p.bonusAmount)} (included in total)</div>` : ''}</td>
       <td data-label="Recorded by" class="text-muted small">${p.createdBy || '—'}</td>
-      <td data-label="Actions"><button class="btn btn-sm btn-outline-danger btn-action" onclick="deletePayment('${p.id}')"><i class="bi bi-trash"></i></button></td>
+      <td data-label="Actions" class="text-nowrap">${canAccess('employees', 'payments') ? `<button class="btn btn-sm btn-outline-primary btn-action me-1" onclick="editPayment('${p.id}')" title="Edit payment"><i class="bi bi-pencil"></i></button>` : ''}<button class="btn btn-sm btn-outline-danger btn-action" onclick="deletePayment('${p.id}')"><i class="bi bi-trash"></i></button></td>
     </tr>
   `).join('');
 }
@@ -610,21 +611,38 @@ function setupModals() {
   document.getElementById('paymentModal').addEventListener('show.bs.modal', () => {
     const now = new Date();
     const currentDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    document.getElementById('payDate').value = currentDate;
-    document.getElementById('payDate').max = currentDate;
-    document.getElementById('payDate').disabled = !isSuperUser();
-    expenseToggle.checked = !!empData.temporaryEmployee;
-    expenseToggle.disabled = !!empData.temporaryEmployee;
-    togglePaymentExpenseType();
-    expenseToggle.closest('.form-check')?.querySelector('label span')?.replaceChildren(document.createTextNode(empData.temporaryEmployee
-      ? ' — Temporary employee payments are always recorded as expenses for the selected shift'
-      : ' — Record this payment as an expense entry'));
+    const paymentDate = document.getElementById('payDate');
+    paymentDate.max = currentDate;
+    if (!editingPaymentId) {
+      paymentDate.value = currentDate;
+      paymentDate.disabled = !isSuperUser();
+      document.getElementById('payMethod').value = (empData.temporaryEmployee || empData.dailySalaryEnabled) ? 'Day Sale Cash' : 'Online';
+      expenseToggle.checked = !!empData.temporaryEmployee;
+      expenseToggle.disabled = !!empData.temporaryEmployee;
+      document.getElementById('payAddAsExpense').closest('.col-12').hidden = false;
+      document.getElementById('payExpenseTypeWrap').hidden = false;
+      togglePaymentExpenseType();
+      expenseToggle.closest('.form-check')?.querySelector('label span')?.replaceChildren(document.createTextNode(empData.temporaryEmployee
+        ? ' — Temporary employee payments are always recorded as expenses for the selected shift'
+        : ' — Record this payment as an expense entry'));
+    } else {
+      document.getElementById('payAddAsExpense').closest('.col-12').hidden = true;
+      document.getElementById('payExpenseTypeWrap').hidden = true;
+    }
     // Pre-fill today's date automatically for daily-pay employees
-    if (empData.dailySalaryEnabled) {
+    if (empData.dailySalaryEnabled && !editingPaymentId) {
       document.getElementById('payDate').value = currentDate;
       const amountEl = document.getElementById('payAmount');
       if (!amountEl.value) amountEl.value = empData.perDaySalary || '';
     }
+  });
+  document.getElementById('paymentModal').addEventListener('hidden.bs.modal', () => {
+    editingPaymentId = null;
+    document.getElementById('payDate').disabled = false;
+    document.getElementById('paymentModalTitle').textContent = 'Record Salary Payment';
+    document.getElementById('btnSavePayment').innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Payment';
+    document.getElementById('payAddAsExpense').closest('.col-12').hidden = false;
+    document.getElementById('payExpenseTypeWrap').hidden = false;
   });
 }
 
@@ -726,6 +744,7 @@ async function saveSalarySettlement() {
   button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
   // Capture form values before refreshing the latest balances.
   const note = document.getElementById('settlementRemarks').value.trim();
+  const paymentSource = document.getElementById('settlementPaymentMethod').value;
   const addAsExpense = document.getElementById('settlementAddAsExpense').checked;
   const expenseTypeId = document.getElementById('settlementExpenseType').value;
   try {
@@ -747,6 +766,8 @@ async function saveSalarySettlement() {
       settlementEnd: selected.endKey,
       amount: selected.balance,
       bonusAmount: selected.bonusAmount,
+      paymentMethod: paymentSource === 'Online' ? 'Online' : 'Cash',
+      paymentSource,
       remarks: `Salary settlement: ${selected.startKey} to ${selected.endKey} (includes opening pending/advance)${note ? ' — ' + note : ''}`,
       addAsExpense,
       expenseTypeId
@@ -864,29 +885,54 @@ async function saveLeave() {
   }
 }
 
+function editPayment(id) {
+  if (!canAccess('employees', 'payments')) return;
+  const payment = empPayments.find(item => item.id === id);
+  if (!payment) return;
+  editingPaymentId = payment.id;
+  const form = document.getElementById('paymentForm');
+  form.reset();
+  document.getElementById('payDate').value = payment.paymentDate;
+  document.getElementById('payDate').max = dateKey(new Date());
+  document.getElementById('payDate').disabled = !isSuperUser() || !!(payment.settlementStart || payment.settlementEnd);
+  document.getElementById('payAmount').value = payment.amount;
+  document.getElementById('payMethod').value = payment.paymentSource || (payment.paymentMethod === 'Online' ? 'Online' : 'Cash In Hand');
+  document.getElementById('payRemarks').value = payment.remarks || '';
+  document.getElementById('paymentModalTitle').textContent = 'Edit Salary Payment';
+  document.getElementById('btnSavePayment').innerHTML = '<i class="bi bi-check-lg me-1"></i>Update Payment';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('paymentModal')).show();
+}
+
 async function savePayment() {
   const form = document.getElementById('paymentForm');
   if (!form.checkValidity()) { form.reportValidity(); return; }
+  const paymentId = editingPaymentId;
   const btn = document.getElementById('btnSavePayment');
   btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
   try {
-    await api('POST', '/payments', {
+    await api(paymentId ? 'PUT' : 'POST', paymentId ? `/payments/${paymentId}` : '/payments', {
       employeeId:   empId,
       employeeName: empData.name,
       paymentDate:  document.getElementById('payDate').value,
       amount:       parseFloat(document.getElementById('payAmount').value),
+      paymentMethod: document.getElementById('payMethod').value === 'Online' ? 'Online' : 'Cash',
+      paymentSource: document.getElementById('payMethod').value,
       remarks:      document.getElementById('payRemarks').value.trim(),
-      addAsExpense: document.getElementById('payAddAsExpense').checked,
-      expenseTypeId: document.getElementById('payExpenseType').value
+      ...(paymentId ? {} : {
+        addAsExpense: document.getElementById('payAddAsExpense').checked,
+        expenseTypeId: document.getElementById('payExpenseType').value
+      })
     });
     form.reset();
+    editingPaymentId = null;
     bootstrap.Modal.getInstance(document.getElementById('paymentModal')).hide();
-    showNotification('Payment recorded.');
+    showNotification(paymentId ? 'Payment updated.' : 'Payment recorded.');
     await loadAll();
   } catch (err) {
-    showNotification('Save failed: ' + err.message, 'danger');
+    showNotification((paymentId ? 'Update' : 'Save') + ' failed: ' + err.message, 'danger');
   } finally {
-    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Payment';
+    btn.disabled = false;
+    btn.innerHTML = editingPaymentId ? '<i class="bi bi-check-lg me-1"></i>Update Payment' : '<i class="bi bi-check-lg me-1"></i>Save Payment';
   }
 }
 

@@ -40,6 +40,8 @@ async function withBulkSaveLock(date, operation) {
 
 function normalizeWorkflow(value) {
   const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'occasional cash' || normalized === 'occasional_cash') return 'Occasional Cash';
+  if (normalized === 'day / online' || normalized === 'day online' || normalized === 'daily online' || normalized === 'daily_online') return 'Daily Online';
   if (normalized === 'occasional' || normalized === 'occasional_excluded') return 'Occasional';
   if (normalized === 'daily non cash' || normalized === 'daily_non_cash' || normalized === 'dailycashexcluded') return 'Daily Non Cash';
   return 'Daily Cash';
@@ -47,6 +49,8 @@ function normalizeWorkflow(value) {
 
 function workflowToMode(workflow) {
   const normalized = normalizeWorkflow(workflow);
+  if (normalized === 'Occasional Cash') return 'Occasional Cash';
+  if (normalized === 'Daily Online') return 'Daily Online';
   if (normalized === 'Occasional') return 'Occasional';
   if (normalized === 'Daily Non Cash') return 'Daily Non Cash';
   return 'Daily Cash';
@@ -54,13 +58,16 @@ function workflowToMode(workflow) {
 
 function normalizeExpenseMode(value) {
   const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'occasional cash' || normalized === 'occasional_cash') return 'Occasional Cash';
+  if (normalized === 'day / online' || normalized === 'daily online' || normalized === 'daily_online') return 'Daily Online';
   if (normalized === 'occasional') return 'Occasional';
   if (normalized === 'daily non cash' || normalized === 'daily_non_cash') return 'Daily Non Cash';
   return 'Daily Cash';
 }
 
 function isOccasionalMode(value) {
-  return normalizeExpenseMode(value) === 'Occasional';
+  const mode = normalizeExpenseMode(value);
+  return mode === 'Occasional' || mode === 'Occasional Cash';
 }
 
 function expenseIdentity(date, typeId, category) {
@@ -366,7 +373,7 @@ router.get('/report', requireSuperUser, async (req, res) => {
       (!from || expense.date >= from) && (!to || expense.date <= to) &&
       (!typeIds.size || typeIds.has(expense.typeId)) &&
       (!categories.size || categories.has(String(expense.category).trim().toLowerCase())) &&
-      mode !== 'None' && (mode === 'All' || (mode === 'Occasional') === (expense.mode === 'Occasional')));
+      mode !== 'None' && (mode === 'All' || (mode === 'Occasional') === isOccasionalMode(expense.mode)));
     let quantities = [];
     if (req.query.quantities === '1' && expenses.length) {
       const ids = new Set(expenses.map(expense => expense.id));
@@ -682,7 +689,8 @@ router.post('/occasional', requireAuth, async (req, res) => {
     if (priceError) return res.status(400).json({ success: false, message: priceError });
     const user = req.session.user;
     const access = await getExpenseAccess(user);
-    if (!access.allowedTypes.has(typeId) || !access.allowedCategories.has(String(category)) || access.typeModes.get(typeId) !== 'Occasional') {
+    const typeMode = access.typeModes.get(typeId);
+    if (!access.allowedTypes.has(typeId) || !access.allowedCategories.has(String(category)) || !isOccasionalMode(typeMode)) {
       return res.status(403).json({ success: false, message: 'You do not have access to this occasional expense category.' });
     }
     const rows = await getAllRows(SHEET);
@@ -692,7 +700,7 @@ router.post('/occasional', requireAuth, async (req, res) => {
     const obj = {
       id: uuidv4(), date, category: String(category), description: String(remarks || ''), amount: parseFloat(amount),
       employeeId: '', employeeName: '', submittedBy: user.username, approvalStatus: 'Pending', approvedBy: '', approvedAt: '',
-      rejectionReason: '', createdAt: new Date().toISOString(), updatedBy: user.username, updatedAt: new Date().toISOString(), typeId, onSpot: false, paymentId: '', mode: 'Occasional'
+      rejectionReason: '', createdAt: new Date().toISOString(), updatedBy: user.username, updatedAt: new Date().toISOString(), typeId, onSpot: false, paymentId: '', mode: normalizeExpenseMode(typeMode)
     };
     await appendRow(SHEET, objToRow(obj));
     await replaceExpenseQuantities(obj.id, quantities);
@@ -728,7 +736,8 @@ router.put('/occasional/:id', requireAuth, async (req, res) => {
       return res.status(409).json({ success: false, message: 'Approved expenses cannot be edited.' });
     }
     const access = await getExpenseAccess(req.session.user);
-    if (!access.allowedTypes.has(typeId) || !access.allowedCategories.has(String(category)) || access.typeModes.get(typeId) !== 'Occasional') {
+    const typeMode = access.typeModes.get(typeId);
+    if (!access.allowedTypes.has(typeId) || !access.allowedCategories.has(String(category)) || !isOccasionalMode(typeMode)) {
       return res.status(403).json({ success: false, message: 'You do not have access to this occasional expense category.' });
     }
     const rows = await getAllRows(SHEET);
@@ -739,7 +748,7 @@ router.put('/occasional/:id', requireAuth, async (req, res) => {
     const updated = {
       ...existing, date, category: String(category).trim(), typeId, amount: parseFloat(amount),
       description: String(remarks || ''), approvalStatus: 'Pending', approvedBy: '', approvedAt: '', rejectionReason: '',
-      updatedBy: req.session.user.username, updatedAt: new Date().toISOString(), mode: 'Occasional'
+      updatedBy: req.session.user.username, updatedAt: new Date().toISOString(), mode: normalizeExpenseMode(typeMode)
     };
     await updateRow(SHEET, found.index, objToRow(updated));
     await replaceExpenseQuantities(updated.id, quantities);
@@ -824,7 +833,7 @@ router.post('/reject/:date', requireSuperUser, async (req, res) => {
         const typeRow = typeById.get(typeId);
         if (!typeRow) continue;
         const typeMode = workflowToMode(typeRow[TYPE_C.WORKFLOW]);
-        if ((mode === 'Occasional') !== (typeMode === 'Occasional')) continue;
+        if ((mode === 'Occasional') !== isOccasionalMode(typeMode)) continue;
         const now = new Date().toISOString();
         await appendRow(SHEET, objToRow({
           id: uuidv4(), date, category: '', description: '', amount: 0,
@@ -848,7 +857,7 @@ router.delete('/:id', requireAuth, async (req, res) => {
     const found = await findRowById(SHEET, req.params.id);
     if (!found) return res.status(404).json({ success: false, message: 'Expense not found.' });
     const expense = rowToObj(found.row);
-    const deletable = expense.onSpot || expense.mode === 'Occasional';
+    const deletable = expense.onSpot || isOccasionalMode(expense.mode);
     if (!deletable) return res.status(403).json({ success: false, message: 'Only on-spot or occasional expenses can be deleted here.' });
     if (expense.approvalStatus === 'Approved' || expense.approvalStatus === 'AutoApproved') {
       return res.status(409).json({ success: false, message: 'Approved expenses cannot be deleted.' });

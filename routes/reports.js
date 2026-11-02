@@ -10,12 +10,12 @@ const C = {
 };
 const ENTRY_C = { ID: 0, DATE: 1, SHIFT: 2, PAYMENT_TYPE: 3, VENDOR: 4, AMOUNT: 5, ENTERED_BY: 6, CREATED_AT: 7, UPDATED_AT: 8 };
 const SALES_C = { ID: 0, DATE: 1, MORNING: 2, AFTERNOON: 3, DINNER: 4, TOTAL: 5, EXPENSES: 6, REMAINING: 7, ENTERED_BY: 8, CREATED_AT: 9, MORNING_BY: 10, AFTERNOON_BY: 11, DINNER_BY: 12 };
-const PAYMENT_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7, BONUS_AMOUNT: 10 };
+const PAYMENT_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7, BONUS_AMOUNT: 10, PAYMENT_METHOD: 11, PAYMENT_SOURCE: 12 };
 const EMPLOYEE_C = { ID: 0, NAME: 1, ADDRESS: 2, PHONE: 3, START: 4, PER_DAY: 5, PETTA: 6, STATUS: 7, DAILY_PAY: 8, TEMPORARY: 9 };
 const LEAVE_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, START: 3, END: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
 const PETTA_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, EFFECTIVE_DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
 const SALARY_HISTORY_C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, EFFECTIVE_DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7 };
-const TYPE_C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, WORKFLOW: 7 };
+const TYPE_C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, WORKFLOW: 7, CASH_ENABLED: 8 };
 
 const MAX_RANGE_DAYS = 400;
 const OUTLIER_MULTIPLIER = 3;
@@ -25,6 +25,8 @@ const RATIO_MIN_DEVIATION = 0.05;
 
 function normalizeMode(value) {
   const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'occasional cash' || normalized === 'occasional_cash') return 'Occasional Cash';
+  if (normalized === 'day / online' || normalized === 'day online' || normalized === 'daily online' || normalized === 'daily_online') return 'Daily Online';
   if (normalized === 'occasional' || normalized === 'occasional_excluded') return 'Occasional';
   if (normalized === 'daily non cash' || normalized === 'daily_non_cash' || normalized === 'dailycashexcluded') return 'Daily Non Cash';
   return 'Daily Cash';
@@ -57,8 +59,10 @@ function isSalaryExpense(row) {
 }
 
 function expenseMode(row, typeModes) {
+  const configuredMode = typeModes.get(row[C.TYPE_ID] || '');
+  if (configuredMode) return configuredMode;
   if (String(row[C.MODE] || '').trim()) return normalizeMode(row[C.MODE]);
-  return typeModes.get(row[C.TYPE_ID] || '') || 'Daily Cash';
+  return 'Daily Cash';
 }
 
 function round(value) {
@@ -180,7 +184,7 @@ function salaryAccrualByDate({ dates, employeeRows, leaveRows, pettaRows, salary
 function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows, salaryHistoryRows }) {
   const typeModes = new Map((typeRows || []).map(row => [row[TYPE_C.ID] || '', normalizeMode(row[TYPE_C.WORKFLOW])]));
   const dates = listDates(from, to);
-  const blank = () => ({ sales: 0, cashSales: 0, onlineSales: 0, dailyCash: 0, market: 0, occasional: 0, salaryPaid: 0, salaryInExpenses: 0 });
+  const blank = () => ({ sales: 0, cashSales: 0, onlineSales: 0, dailyCash: 0, dailyOnline: 0, market: 0, occasional: 0, occasionalCash: 0, cashExpenses: 0, onlineExpenses: 0, salaryPaid: 0, salaryDaySaleCash: 0, salaryCashInHand: 0, salaryOnline: 0, salaryInExpenses: 0 });
   const byDate = new Map(dates.map(date => [date, blank()]));
 
   entryRows.forEach(row => {
@@ -192,6 +196,7 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
     else bucket.onlineSales += amount;
   });
 
+  const expenseTypeRows = typeRows || [];
   expenseRows.forEach(row => {
     const mode = expenseMode(row, typeModes);
     const amount = amountOf(row, C.AMOUNT);
@@ -199,7 +204,19 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
     const reportDate = mode === 'Daily Non Cash' ? shiftDate(row[C.DATE], -1) : row[C.DATE];
     const bucket = byDate.get(reportDate);
     if (!bucket) return;
+    const typeRow = expenseTypeRows.find(type => (type[TYPE_C.ID] || '') === (row[C.TYPE_ID] || ''));
+    const cashFlag = typeRow?.[TYPE_C.CASH_ENABLED];
+    const cashEnabled = cashFlag === undefined || cashFlag === ''
+      ? ['Daily Cash', 'Daily Non Cash', 'Occasional Cash'].includes(mode)
+      : String(cashFlag).toLowerCase() === 'true';
+    // Expense entries are the source of truth for cash balances, including any
+    // salary/Petta entries already recorded in Expenses. SalaryPayments only
+    // provides the P&L salary breakdown and must not subtract the same payout again.
+    if (cashEnabled) bucket.cashExpenses += amount;
+    else bucket.onlineExpenses += amount;
     if (mode === 'Daily Non Cash') bucket.market += amount;
+    else if (mode === 'Daily Online') bucket.dailyOnline += amount;
+    else if (mode === 'Occasional Cash') bucket.occasionalCash += amount;
     else if (mode === 'Occasional') bucket.occasional += amount;
     else bucket.dailyCash += amount;
     // Salary rows sit inside the expense totals, so the salary line subtracts them again.
@@ -208,11 +225,23 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
 
   const paymentsByDateAndEmployee = new Map();
   const bonusesByDateAndEmployee = new Map();
+  const expensesWithPaymentIds = new Set(expenseRows.map(row => row[C.PAYMENT_ID]).filter(Boolean));
+  const employeeById = new Map((employeeRows || []).map(row => [row[EMPLOYEE_C.ID] || '', row]));
   paymentRows.forEach(row => {
     const date = row[PAYMENT_C.DATE];
     const bucket = byDate.get(date);
     const amount = amountOf(row, PAYMENT_C.AMOUNT);
-    if (bucket) bucket.salaryPaid += amount;
+    if (bucket) {
+      bucket.salaryPaid += amount;
+      const employee = employeeById.get(row[PAYMENT_C.EMP_ID] || '');
+      const isDaySalePay = expensesWithPaymentIds.has(row[PAYMENT_C.ID]) ||
+        isTrue(employee?.[EMPLOYEE_C.TEMPORARY]) || isTrue(employee?.[EMPLOYEE_C.DAILY_PAY]);
+      const source = row[PAYMENT_C.PAYMENT_SOURCE] ||
+        (row[PAYMENT_C.PAYMENT_METHOD] === 'Online' ? 'Online' : (isDaySalePay ? 'Day Sale Cash' : 'Cash In Hand'));
+      if (source === 'Day Sale Cash') bucket.salaryDaySaleCash += amount;
+      else if (source === 'Online') bucket.salaryOnline += amount;
+      else bucket.salaryCashInHand += amount;
+    }
     const key = `${date}|${row[PAYMENT_C.EMP_ID] || ''}`;
     paymentsByDateAndEmployee.set(key, (paymentsByDateAndEmployee.get(key) || 0) + amount);
     bonusesByDateAndEmployee.set(key, (bonusesByDateAndEmployee.get(key) || 0) + amountOf(row, PAYMENT_C.BONUS_AMOUNT));
@@ -234,30 +263,52 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
     bucket.cashSales = bucket.sales;
   });
 
+  let runningProfitBalance = 0;
+  let runningCashInHand = 0;
+  let runningOnlineInHand = 0;
   const days = dates.map(date => {
     const bucket = byDate.get(date);
     const salaryGross = grossByDate.get(date) || 0;
     const pettaTotal = pettaByDate.get(date) || 0;
     // Daily-pay staff are settled the same evening, so their day's earning counts as received.
     const salaryReceived = bucket.salaryPaid + (receivedByDate.get(date) || 0);
+    const salaryAutoReceived = receivedByDate.get(date) || 0;
+    bucket.salaryDaySaleCash += salaryAutoReceived;
     // Pending is clamped per employee (see salaryAccrualByDate) so it matches the day popup.
     const salaryPending = pendingByDate.get(date) || 0;
-    const totalCost = bucket.dailyCash + bucket.occasional + salaryPending + bucket.market;
+    // Occasional expenses are paid from accumulated profit, not the day's sales.
+    const totalCost = bucket.dailyCash + salaryPending + bucket.market;
+    const profit = bucket.sales - totalCost;
+    runningCashInHand = round(runningCashInHand + bucket.cashSales - bucket.cashExpenses);
+    runningOnlineInHand = round(runningOnlineInHand + bucket.onlineSales - bucket.onlineExpenses);
+    const profitBalancePayments = bucket.dailyOnline + bucket.occasional + bucket.occasionalCash;
+    runningProfitBalance = round(runningProfitBalance + profit - profitBalancePayments);
     return {
       date,
       sales: round(bucket.sales),
       cashSales: round(bucket.cashSales),
       onlineSales: round(bucket.onlineSales),
       dailyCashExpense: round(bucket.dailyCash),
+      dailyOnlineExpense: round(bucket.dailyOnline),
       occasionalExpense: round(bucket.occasional),
+      occasionalCashExpense: round(bucket.occasionalCash),
+      profitBalancePayments: round(profitBalancePayments),
+      cashExpenses: round(bucket.cashExpenses),
+      onlineExpenses: round(bucket.onlineExpenses),
       marketExpense: round(bucket.market),
       salaryGross: round(salaryGross),
       salaryPaid: round(salaryReceived),
+      salaryDaySaleCash: round(bucket.salaryDaySaleCash),
+      salaryCashInHand: round(bucket.salaryCashInHand),
+      salaryOnline: round(bucket.salaryOnline),
       salaryInExpenses: round(bucket.salaryInExpenses),
       pettaTotal: round(pettaTotal),
       salaryPending: round(salaryPending),
       totalCost: round(totalCost),
-      profit: round(bucket.sales - totalCost),
+      profit: round(profit),
+      profitBalance: runningProfitBalance,
+      cashInHand: runningCashInHand,
+      onlineInHand: runningOnlineInHand,
       expenseRatio: bucket.sales > 0 ? round(totalCost / bucket.sales) : null
     };
   });
@@ -267,18 +318,29 @@ function buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, payme
     cashSales: sum.cashSales + day.cashSales,
     onlineSales: sum.onlineSales + day.onlineSales,
     dailyCashExpense: sum.dailyCashExpense + day.dailyCashExpense,
+    dailyOnlineExpense: sum.dailyOnlineExpense + day.dailyOnlineExpense,
     occasionalExpense: sum.occasionalExpense + day.occasionalExpense,
+    occasionalCashExpense: sum.occasionalCashExpense + day.occasionalCashExpense,
+    profitBalancePayments: sum.profitBalancePayments + day.profitBalancePayments,
+    cashExpenses: sum.cashExpenses + day.cashExpenses,
+    onlineExpenses: sum.onlineExpenses + day.onlineExpenses,
     marketExpense: sum.marketExpense + day.marketExpense,
     salaryGross: sum.salaryGross + day.salaryGross,
     salaryPaid: sum.salaryPaid + day.salaryPaid,
+    salaryDaySaleCash: sum.salaryDaySaleCash + day.salaryDaySaleCash,
+    salaryCashInHand: sum.salaryCashInHand + day.salaryCashInHand,
+    salaryOnline: sum.salaryOnline + day.salaryOnline,
     salaryInExpenses: sum.salaryInExpenses + day.salaryInExpenses,
     pettaTotal: sum.pettaTotal + day.pettaTotal,
     salaryPending: sum.salaryPending + day.salaryPending,
     totalCost: sum.totalCost + day.totalCost,
-    profit: sum.profit + day.profit
+    profit: sum.profit + day.profit,
+    profitBalance: day.profitBalance,
+    cashInHand: day.cashInHand,
+    onlineInHand: day.onlineInHand
   }), {
-    sales: 0, cashSales: 0, onlineSales: 0, dailyCashExpense: 0, occasionalExpense: 0, marketExpense: 0,
-    salaryGross: 0, salaryPaid: 0, salaryInExpenses: 0, pettaTotal: 0, salaryPending: 0, totalCost: 0, profit: 0
+    sales: 0, cashSales: 0, onlineSales: 0, dailyCashExpense: 0, dailyOnlineExpense: 0, occasionalExpense: 0, occasionalCashExpense: 0, profitBalancePayments: 0, cashExpenses: 0, onlineExpenses: 0, marketExpense: 0,
+    salaryGross: 0, salaryPaid: 0, salaryDaySaleCash: 0, salaryCashInHand: 0, salaryOnline: 0, salaryInExpenses: 0, pettaTotal: 0, salaryPending: 0, totalCost: 0, profit: 0, profitBalance: 0, cashInHand: 0, onlineInHand: 0
   });
 
   Object.keys(totals).forEach(key => { totals[key] = round(totals[key]); });
@@ -422,12 +484,13 @@ function buildOccasionalReport({ from, to, expenseRows, typeRows }) {
   const typeNames = new Map((typeRows || []).map(row => [row[TYPE_C.ID] || '', row[TYPE_C.NAME] || '']));
 
   const entries = expenseRows
-    .filter(row => expenseMode(row, typeModes) === 'Occasional' && row[C.DATE] >= from && row[C.DATE] <= to)
+    .filter(row => ['Occasional', 'Occasional Cash'].includes(expenseMode(row, typeModes)) && row[C.DATE] >= from && row[C.DATE] <= to)
     .map(row => ({
       id: row[C.ID],
       date: row[C.DATE],
       category: row[C.CATEGORY] || 'Unknown',
       type: typeNames.get(row[C.TYPE_ID] || '') || 'Unknown',
+      paymentMode: expenseMode(row, typeModes) === 'Occasional Cash' ? 'Cash' : 'Online',
       remarks: row[C.DESCRIPTION] || '',
       amount: round(amountOf(row, C.AMOUNT)),
       submittedBy: row[C.SUBMITTED_BY] || '',

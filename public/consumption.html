@@ -117,6 +117,10 @@
       <div class="p-3 pb-0 small text-muted" id="entryHint">
         <strong>Available Stock</strong> shows incoming − consumed for each quantity. Enter <strong>Used</strong> or <strong>Available</strong> for any row — the other is calculated. Save the row to record it.
       </div>
+      <div class="alert alert-warning mx-3 mt-3 mb-0 py-2" id="priceChangeNotice" role="status" hidden>
+        <div class="fw-semibold"><i class="bi bi-exclamation-triangle me-1"></i>Unit price changes</div>
+        <ul class="small mb-0 mt-1 ps-4" id="priceChangeNoticeList"></ul>
+      </div>
       <div class="table-responsive">
         <table class="table mobile-grid-table align-middle mb-0" id="stockTable">
           <thead>

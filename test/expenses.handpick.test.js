@@ -29,6 +29,37 @@ test('handpick categories start with saved quantities selected, while other cate
   assert.equal(selected.has('milk'), true);
 });
 
+test('employee payments added from Expenses are tagged as Day Sale Cash', async () => {
+  const { context, elements } = page();
+  elements.employeeExpenseForm = { checkValidity: () => true };
+  elements.employeeExpenseEmployee = { value: 'employee-1' };
+  elements.employeeExpenseAmount = { value: '350' };
+  elements.employeeExpenseType = { value: 'type-night' };
+  elements.employeeExpenseRemarks = { value: 'Daily wages' };
+  elements.expDate = { value: '2026-02-02' };
+  elements.btnSaveEmployeeExpense = { disabled: false };
+  vm.runInContext(`
+    expenseEmployees = [{ id: 'employee-1', name: 'Employee' }];
+    captureExpenseDraft = () => ({});
+    loadDateIntoForm = () => {};
+    restoreExpenseDraft = () => {};
+  `, context);
+  const requests = [];
+  context.api = async (method, endpoint, body) => {
+    requests.push({ method, endpoint, body });
+    return endpoint === '/expenses' ? [] : {};
+  };
+  context.showNotification = () => {};
+
+  await context.saveEmployeeExpense();
+
+  assert.equal(requests[0].method, 'POST');
+  assert.equal(requests[0].endpoint, '/payments');
+  assert.equal(requests[0].body.paymentMethod, 'Cash');
+  assert.equal(requests[0].body.paymentSource, 'Day Sale Cash');
+  assert.equal(requests[0].body.addAsExpense, true);
+});
+
 test('picker lists all quantity names and units with current selection', () => {
   const { context, elements } = page();
   const groups = [

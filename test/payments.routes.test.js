@@ -77,6 +77,7 @@ test('a plain payment does not create an expense row', async () => {
 
   assert.equal(res.status, 201);
   assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS).length, 1);
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS)[0][12], 'Day Sale Cash', 'daily-pay employees default to the Day Sale Cash source');
   assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 0);
 });
 
@@ -106,6 +107,8 @@ test('a temporary employee always creates an expense and needs a shift type', as
     expenseTypeId: 'type-morning'
   });
   assert.equal(withShiftType.status, 201);
+  assert.equal(withShiftType.body.data.paymentSource, 'Day Sale Cash');
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS)[0][12], 'Day Sale Cash');
   assert.equal(sheets.getRows(SHEETS.EXPENSES)[0][16], 'Morning');
 });
 
@@ -175,6 +178,96 @@ test('an approved linked expense blocks the payment deletion', async () => {
 test('deleting an unknown payment returns 404', async () => {
   const res = await server.request('DELETE', '/api/payments/missing');
   assert.equal(res.status, 404);
+});
+
+test('salary payment method is persisted and legacy salary rows default to cash', async () => {
+  server.loginAs(SUPERUSER);
+  const saved = await server.request('POST', '/api/payments', {
+    employeeId: 'emp-perm', employeeName: 'Ravi', paymentDate: TODAY, amount: 125, paymentMethod: 'Online'
+  });
+  assert.equal(saved.status, 201);
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS)[0][11], 'Online');
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS)[0][12], 'Online');
+  const read = await server.request('GET', '/api/payments?employeeId=emp-perm');
+  assert.equal(read.body.data[0].paymentMethod, 'Online');
+  assert.equal(read.body.data[0].paymentSource, 'Online');
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [['legacy', 'emp-perm', 'Ravi', TODAY, 25, '', 'Admin', '']]);
+  const legacy = (await server.request('GET', '/api/payments?employeeId=emp-perm')).body.data[0];
+  assert.equal(legacy.paymentMethod, 'Cash');
+  assert.equal(legacy.paymentSource, 'Cash In Hand');
+});
+
+test('salary payment rejects an unsupported payment method', async () => {
+  const result = await server.request('POST', '/api/payments', {
+    employeeId: 'emp-perm', employeeName: 'Ravi', paymentDate: TODAY, amount: 100, paymentMethod: 'Cheque'
+  });
+  assert.equal(result.status, 400);
+});
+
+test('salary payment stores each supported funding source and rejects unknown sources', async () => {
+  for (const [paymentSource, paymentMethod] of [['Day Sale Cash', 'Cash'], ['Cash In Hand', 'Cash'], ['Online', 'Online']]) {
+    const saved = await server.request('POST', '/api/payments', {
+      employeeId: 'emp-perm', employeeName: 'Ravi', paymentDate: TODAY, amount: 125, paymentSource, paymentMethod
+    });
+    assert.equal(saved.status, 201);
+    assert.equal(saved.body.data.paymentSource, paymentSource);
+    assert.equal(saved.body.data.paymentMethod, paymentMethod);
+  }
+  const invalid = await server.request('POST', '/api/payments', {
+    employeeId: 'emp-perm', employeeName: 'Ravi', paymentDate: TODAY, amount: 125, paymentSource: 'Bank Transfer'
+  });
+  assert.equal(invalid.status, 400);
+});
+
+test('editing a salary payment updates its method and linked expense details', async () => {
+  const created = await server.request('POST', '/api/payments', {
+    employeeId: 'emp-perm', employeeName: 'Ravi', paymentDate: TODAY, amount: 125,
+    paymentMethod: 'Cash', remarks: 'First amount', addAsExpense: true, expenseTypeId: 'type-general'
+  });
+  const result = await server.request('PUT', `/api/payments/${created.body.data.id}`, {
+    paymentDate: TODAY, amount: 150.5, paymentMethod: 'Online', remarks: 'Corrected payment'
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.amount, 150.5);
+  assert.equal(result.body.data.paymentMethod, 'Online');
+  assert.equal(result.body.data.paymentSource, 'Online');
+  const paymentRow = sheets.getRows(SHEETS.SALARY_PAYMENTS)[0];
+  const expenseRow = sheets.getRows(SHEETS.EXPENSES)[0];
+  assert.equal(paymentRow[4], 150.5);
+  assert.equal(paymentRow[11], 'Online');
+  assert.equal(expenseRow[1], TODAY);
+  assert.equal(expenseRow[3], 'Corrected payment');
+  assert.equal(expenseRow[4], 150.5);
+});
+
+test('an approved employee expense blocks editing its salary payment', async () => {
+  const created = await server.request('POST', '/api/payments', {
+    employeeId: 'emp-perm', employeeName: 'Ravi', paymentDate: TODAY, amount: 125,
+    addAsExpense: true, expenseTypeId: 'type-general'
+  });
+  const expenses = sheets.getRows(SHEETS.EXPENSES);
+  expenses[0][8] = 'Approved';
+  sheets.setRows(SHEETS.EXPENSES, expenses);
+  const result = await server.request('PUT', `/api/payments/${created.body.data.id}`, {
+    paymentDate: TODAY, amount: 150, paymentMethod: 'Online'
+  });
+  assert.equal(result.status, 409);
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS)[0][4], 125);
+});
+
+test('salary payment edit preserves settlement closing date', async () => {
+  server.loginAs(SUPERUSER);
+  sheets.setRows(SHEETS.EMPLOYEES, [['regular', 'Regular', '', '', '2020-01-01', 100, 0, 'Active', 'false', 'false']]);
+  const created = await server.request('POST', '/api/payments', {
+    employeeId: 'regular', employeeName: 'Regular', paymentDate: TODAY, amount: 500,
+    settlementStart: TODAY, settlementEnd: TODAY
+  });
+  assert.equal(created.status, 201);
+  const result = await server.request('PUT', `/api/payments/${created.body.data.id}`, {
+    paymentDate: '2020-01-04', amount: 500, paymentMethod: 'Online'
+  });
+  assert.equal(result.status, 400);
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS)[0][3], TODAY);
 });
 
 test('settlement ranges persist and are returned on later reads without removing old payments', async () => {

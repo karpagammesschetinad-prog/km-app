@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const { SHEETS, getAllRows, appendRow, deleteRow, findRowById } = require('../services/googleSheets');
+const { SHEETS, getAllRows, appendRow, updateRow, deleteRow, findRowById } = require('../services/googleSheets');
 const { requireAuth } = require('../middleware/authMiddleware');
 
 const EXPENSE_SHEET = SHEETS.EXPENSES;
@@ -9,7 +9,8 @@ const EXPENSE_C = { DATE: 1, CATEGORY: 2, DESCRIPTION: 3, AMOUNT: 4, EMP_ID: 5, 
 const EMPLOYEE_C = { ID: 0, NAME: 1 };
 
 const SHEET = SHEETS.SALARY_PAYMENTS;
-const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7, SETTLEMENT_START: 8, SETTLEMENT_END: 9, BONUS_AMOUNT: 10 };
+const C = { ID: 0, EMP_ID: 1, EMP_NAME: 2, DATE: 3, AMOUNT: 4, REMARKS: 5, CREATED_BY: 6, CREATED_AT: 7, SETTLEMENT_START: 8, SETTLEMENT_END: 9, BONUS_AMOUNT: 10, PAYMENT_METHOD: 11, PAYMENT_SOURCE: 12 };
+const PAYMENT_SOURCES = ['Day Sale Cash', 'Cash In Hand', 'Online'];
 const TYPE_C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5 };
 
 function normalizePaymentShift(value) {
@@ -48,8 +49,18 @@ function rowToObj(row) {
     createdAt:    row[C.CREATED_AT]  || '',
     settlementStart: row[C.SETTLEMENT_START] || legacy?.[1] || '',
     settlementEnd: row[C.SETTLEMENT_END] || legacy?.[2] || '',
-    bonusAmount: parseFloat(row[C.BONUS_AMOUNT]) || 0
+    bonusAmount: parseFloat(row[C.BONUS_AMOUNT]) || 0,
+    paymentMethod: row[C.PAYMENT_METHOD] === 'Online' ? 'Online' : 'Cash',
+    paymentSource: PAYMENT_SOURCES.includes(row[C.PAYMENT_SOURCE])
+      ? row[C.PAYMENT_SOURCE]
+      : (row[C.PAYMENT_METHOD] === 'Online' ? 'Online' : 'Cash In Hand')
   };
+}
+
+function paymentToRow(payment) {
+  return [payment.id, payment.employeeId, payment.employeeName, payment.paymentDate,
+    payment.amount, payment.remarks, payment.createdBy, payment.createdAt,
+    payment.settlementStart, payment.settlementEnd, payment.bonusAmount, payment.paymentMethod, payment.paymentSource];
 }
 
 // GET /api/payments?employeeId=X
@@ -73,6 +84,9 @@ router.get('/', requireAuth, async (req, res) => {
 router.post('/', requireAuth, async (req, res) => {
   try {
     const { employeeId, employeeName, paymentDate, amount, remarks, addAsExpense, expenseTypeId, expenseShift, settlementStart, settlementEnd, bonusAmount = 0 } = req.body;
+    if (req.body.paymentMethod !== undefined && !['Cash', 'Online'].includes(req.body.paymentMethod)) {
+      return res.status(400).json({ success: false, message: 'Payment method must be Cash or Online.' });
+    }
     if (typeof bonusAmount !== 'number' || !Number.isFinite(bonusAmount) || bonusAmount < 0 ||
         Math.abs(bonusAmount * 100 - Math.round(bonusAmount * 100)) > 0.000001) {
       return res.status(400).json({ success: false, message: 'Bonus must be a non-negative amount with up to two decimal places.' });
@@ -93,6 +107,14 @@ router.post('/', requireAuth, async (req, res) => {
     const employeeRows = await getAllRows(SHEETS.EMPLOYEES);
     const employee = employeeRows.find(row => row[EMPLOYEE_C.ID] === employeeId);
     const isTemporaryEmployee = String(employee?.[9] || '').toLowerCase() === 'true';
+    const isDailyPayEmployee = String(employee?.[8] || '').toLowerCase() === 'true';
+    const paymentSource = req.body.paymentSource === undefined
+      ? (req.body.paymentMethod !== undefined
+        ? (req.body.paymentMethod === 'Online' ? 'Online' : 'Cash In Hand')
+        : (isTemporaryEmployee || isDailyPayEmployee ? 'Day Sale Cash' : 'Cash In Hand'))
+      : req.body.paymentSource;
+    if (!PAYMENT_SOURCES.includes(paymentSource)) return res.status(400).json({ success: false, message: 'Payment source must be Day Sale Cash, Cash In Hand, or Online.' });
+    const paymentMethod = paymentSource === 'Online' ? 'Online' : 'Cash';
     if (settlementStart || settlementEnd) {
       if (req.session.user.role !== 'superuser') return res.status(403).json({ success: false, message: 'Only superusers can settle salary periods.' });
       const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
@@ -135,10 +157,11 @@ router.post('/', requireAuth, async (req, res) => {
       createdAt: new Date().toISOString(),
       settlementStart: settlementStart || '',
       settlementEnd: settlementEnd || '',
-      bonusAmount
+      bonusAmount,
+      paymentMethod,
+      paymentSource
     };
-    await appendRow(SHEET, [obj.id, obj.employeeId, obj.employeeName, obj.paymentDate,
-                            obj.amount, obj.remarks, obj.createdBy, obj.createdAt, obj.settlementStart, obj.settlementEnd, obj.bonusAmount]);
+    await appendRow(SHEET, paymentToRow(obj));
 
     // Also record as an expense if cashier confirmed
     if (shouldAddAsExpense) {
@@ -167,6 +190,82 @@ router.post('/', requireAuth, async (req, res) => {
     }
 
     res.status(201).json({ success: true, data: obj });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// PUT /api/payments/:id — correct a previously recorded salary payment.
+router.put('/:id', requireAuth, async (req, res) => {
+  try {
+    const found = await findRowById(SHEET, req.params.id);
+    if (!found) return res.status(404).json({ success: false, message: 'Payment not found.' });
+    const existing = rowToObj(found.row);
+    const user = req.session.user;
+    const paymentDate = req.body.paymentDate;
+    const amount = Number(req.body.amount);
+    if (req.body.paymentMethod !== undefined && !['Cash', 'Online'].includes(req.body.paymentMethod)) {
+      return res.status(400).json({ success: false, message: 'Payment method must be Cash or Online.' });
+    }
+    const paymentSource = req.body.paymentSource === undefined
+      ? (req.body.paymentMethod === undefined || req.body.paymentMethod === existing.paymentMethod
+        ? existing.paymentSource
+        : (req.body.paymentMethod === 'Online' ? 'Online' : 'Cash In Hand'))
+      : req.body.paymentSource;
+    if (!PAYMENT_SOURCES.includes(paymentSource)) {
+      return res.status(400).json({ success: false, message: 'Payment source must be Day Sale Cash, Cash In Hand, or Online.' });
+    }
+    const paymentMethod = paymentSource === 'Online' ? 'Online' : 'Cash';
+    const validDate = typeof paymentDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(paymentDate) &&
+      Number.isFinite(Date.parse(paymentDate)) && new Date(paymentDate).toISOString().slice(0, 10) === paymentDate;
+    if (!validDate || paymentDate > getBusinessDate()) {
+      return res.status(400).json({ success: false, message: 'Payment date must be a valid date no later than today.' });
+    }
+    if (!Number.isFinite(amount) || amount <= 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001 || amount < existing.bonusAmount) {
+      return res.status(400).json({ success: false, message: 'Amount must be positive, have up to two decimal places, and include the recorded bonus.' });
+    }
+    if (!['Cash', 'Online'].includes(paymentMethod)) {
+      return res.status(400).json({ success: false, message: 'Payment method must be Cash or Online.' });
+    }
+    if ((existing.settlementStart || existing.settlementEnd) && user.role !== 'superuser') {
+      return res.status(403).json({ success: false, message: 'Only superusers can edit settlement payments.' });
+    }
+    if (existing.settlementEnd && paymentDate !== existing.paymentDate) {
+      return res.status(400).json({ success: false, message: 'A settlement payment date must remain its closing date.' });
+    }
+    if (user.role !== 'superuser' && (existing.paymentDate !== getBusinessDate() || paymentDate !== getBusinessDate())) {
+      return res.status(403).json({ success: false, message: 'Cashiers can only edit payments dated today.' });
+    }
+
+    const expenseRows = await getAllRows(EXPENSE_SHEET);
+    const linked = expenseRows.map((row, index) => ({ row, index }))
+      .filter(({ row }) => row[EXPENSE_C.PAYMENT_ID] === existing.id ||
+        (!row[EXPENSE_C.PAYMENT_ID] && row[EXPENSE_C.EMP_ID] === existing.employeeId &&
+          row[EXPENSE_C.DATE] === existing.paymentDate &&
+          parseFloat(row[EXPENSE_C.AMOUNT]) === existing.amount &&
+          [existing.employeeName, existing.employeeId].filter(Boolean).includes(row[EXPENSE_C.CATEGORY])));
+    if (linked.some(({ row }) => row[8] === 'Approved' || row[8] === 'AutoApproved')) {
+      return res.status(409).json({ success: false, message: 'Approved employee expenses cannot be edited.' });
+    }
+
+    const updated = {
+      ...existing,
+      paymentDate,
+      amount,
+      paymentMethod,
+      paymentSource,
+      remarks: String(req.body.remarks || '')
+    };
+    await updateRow(SHEET, found.index, paymentToRow(updated));
+    for (const { row, index } of linked) {
+      const expense = [...row];
+      expense[EXPENSE_C.DATE] = updated.paymentDate;
+      expense[EXPENSE_C.CATEGORY] = updated.employeeName || updated.employeeId;
+      expense[EXPENSE_C.DESCRIPTION] = updated.remarks || `Salary payment to ${updated.employeeName || updated.employeeId}`;
+      expense[EXPENSE_C.AMOUNT] = updated.amount;
+      await updateRow(EXPENSE_SHEET, index + 2, expense);
+    }
+    res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

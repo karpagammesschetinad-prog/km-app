@@ -157,6 +157,20 @@ function renderStats() {
   document.getElementById('statOverdrawn').textContent = stockData.filter(row => row.remaining < -0.0001).length;
 }
 
+function renderPriceChangeNotice() {
+  const notice = document.getElementById('priceChangeNotice');
+  const list = document.getElementById('priceChangeNoticeList');
+  if (!notice || !list) return;
+  const changed = stockData.filter(row => row.priceChange);
+  notice.hidden = changed.length === 0;
+  list.innerHTML = changed.map(row => {
+    const change = row.priceChange;
+    const percent = change.changePercent === null ? '' : ` (${change.changePercent > 0 ? '+' : ''}${change.changePercent.toFixed(1)}%)`;
+    const direction = change.change > 0 ? 'increased' : 'decreased';
+    return `<li><strong>${escapeHtml(row.name)}</strong> (${escapeHtml(row.unit || 'unit')}): ${formatCurrency(change.previousPrice)} → ${formatCurrency(change.currentPrice)}${percent} — ${direction} on ${formatDate(change.date)}.</li>`;
+  }).join('');
+}
+
 /* ---------- Stock + entry table ---------- */
 
 function renderStockTable() {
@@ -164,7 +178,11 @@ function renderStockTable() {
   const query = (document.getElementById('stockSearch')?.value || '').toLowerCase().trim();
   const rows = stockData.filter(row =>
     !query || row.name.toLowerCase().includes(query) || (row.categoryName || '').toLowerCase().includes(query));
-  if (!rows.length) { tbody.innerHTML = emptyRow(10, 'No quantities tracked yet.'); return; }
+  if (!rows.length) {
+    tbody.innerHTML = emptyRow(10, 'No quantities tracked yet.');
+    renderPriceChangeNotice();
+    return;
+  }
   const canAdd = canAccess('consumption', 'add');
   // Group rows by parent category so a single Category cell spans all its quantities.
   const groups = new Map();
@@ -180,6 +198,7 @@ function renderStockTable() {
     });
   }
   tbody.innerHTML = html.join('');
+  renderPriceChangeNotice();
   for (const row of rows) attachStockRowHandlers(row.quantityCategoryId);
 }
 
@@ -210,7 +229,7 @@ function renderStockRow(row, canAdd, categoryCell = null) {
   return `
     <tr data-quantity-id="${row.quantityCategoryId}" data-available-before="${availableBefore}">
       ${categoryTd}
-      <td data-label="Quantity"><span class="fw-semibold">${escapeHtml(row.name)}</span>${badge}${disabledNote}</td>
+      <td data-label="Quantity"><span class="fw-semibold">${escapeHtml(row.name)}</span>${badge}${row.priceChange ? '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-1" title="The latest incoming unit price changed">Price changed</span>' : ''}${disabledNote}</td>
       <td data-label="Unit">${escapeHtml(row.unit || '—')}</td>
       <td data-label="Incoming" class="text-end">${formatQuantity(row.incoming)}${row.incomingUnpaid > 0 ? `<div class="small text-muted">unpaid ${formatQuantity(row.incomingUnpaid)}</div>` : ''}</td>
       <td data-label="Consumed" class="text-end">${formatQuantity(row.consumed)}</td>

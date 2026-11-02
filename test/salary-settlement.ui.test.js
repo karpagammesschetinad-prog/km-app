@@ -19,6 +19,7 @@ function createPage(overrides = {}) {
   const elements = {
     settlementStart: { value: '2020-01-03', min: '2020-01-01' },
     settlementEnd: { value: '2020-01-05' },
+    settlementPaymentMethod: { value: 'Day Sale Cash' },
     settlementBonus: { value: '0' },
     settlementForm: { checkValidity: () => true, reportValidity() {} },
     settlementPreview: { innerHTML: '', textContent: '' },
@@ -78,6 +79,14 @@ test('settlement includes opening balance, both date boundaries, petta and exist
   assert.equal(settlement.workedDays, '3.0');
 });
 
+test('salary payment history displays the method and edit action', () => {
+  const { context } = createPage();
+  const html = context.renderPaymentsRows([{ id: 'payment-1', paymentDate: '2020-01-05', amount: 100, paymentMethod: 'Online' }]);
+  assert.match(html, /Paid from/);
+  assert.match(html, /Online/);
+  assert.match(html, /editPayment\('payment-1'\)/);
+});
+
 test('settlement respects full leave, half-day leave and historical salary and petta changes', () => {
   const { context, data } = createPage({ openingBalance: 0 });
   data.leaves.push(
@@ -124,6 +133,8 @@ test('settlement records a payment on closing date and cannot pay the same balan
   assert.equal(posts[0].endpoint, '/payments');
   assert.equal(posts[0].body.paymentDate, '2020-01-05');
   assert.equal(posts[0].body.amount, 550);
+  assert.equal(posts[0].body.paymentMethod, 'Cash');
+  assert.equal(posts[0].body.paymentSource, 'Day Sale Cash');
   assert.equal(posts[0].body.addAsExpense, true);
   assert.equal(posts[0].body.expenseTypeId, 'general');
   assert.match(posts[0].body.remarks, /2020-01-03 to 2020-01-05.*Final payment/);

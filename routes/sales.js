@@ -11,6 +11,8 @@ const TYPE = { ID: 0, WORKFLOW: 7 };
 
 function normalizeExpenseMode(value) {
   const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'occasional cash' || normalized === 'occasional_cash') return 'Occasional Cash';
+  if (normalized === 'day / online' || normalized === 'day online' || normalized === 'daily online' || normalized === 'daily_online') return 'Daily Online';
   if (normalized === 'occasional' || normalized === 'occasional_excluded') return 'Occasional';
   if (normalized === 'daily non cash' || normalized === 'daily_non_cash' || normalized === 'dailycashexcluded') return 'Daily Non Cash';
   return 'Daily Cash';
@@ -25,8 +27,10 @@ function getTypeModeMap(categoryTypes) {
 }
 
 function resolveExpenseMode(row, typeModeMap) {
+  const configuredMode = typeModeMap.get(row[EXPENSE.TYPE_ID] || '');
+  if (configuredMode) return configuredMode;
   if (String(row[EXPENSE.MODE] || '').trim()) return normalizeExpenseMode(row[EXPENSE.MODE]);
-  return typeModeMap.get(row[EXPENSE.TYPE_ID] || '') || 'Daily Cash';
+  return 'Daily Cash';
 }
 
 function normalizeSalesShift(shift) {

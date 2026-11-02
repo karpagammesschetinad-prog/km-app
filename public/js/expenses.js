@@ -83,11 +83,22 @@ function applyQuantityPicker() {
 
 function normalizeWorkflow(value) {
   const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'occasional cash' || normalized === 'occasional_cash') return 'Occasional Cash';
+  if (normalized === 'day / online' || normalized === 'day online' || normalized === 'daily online' || normalized === 'daily_online') return 'Daily Online';
   if (normalized === 'occasional' || normalized === 'occasional_excluded') return 'Occasional';
   if (normalized === 'daily non cash' || normalized === 'daily_non_cash' || normalized === 'dailycashexcluded') return 'Daily Non Cash';
   return 'Daily Cash';
 }
 
+function isOccasionalWorkflow(value) {
+  const workflow = normalizeWorkflow(value);
+  return workflow === 'Occasional' || workflow === 'Occasional Cash';
+}
+
+function isProfitBalanceWorkflow(value) {
+  const workflow = normalizeWorkflow(value);
+  return workflow === 'Daily Online' || workflow === 'Occasional' || workflow === 'Occasional Cash';
+}
 /* ---- Category balance and unit prices ---- */
 
 function categoryBalanceName(value) {
@@ -320,7 +331,7 @@ function renderCategoryBalances() {
     if (!identity.category) return;
     if (selectedCats.length && !selectedCats.some(name => categoryBalanceName(name) === categoryBalanceName(identity.category))) return;
     if (selectedTypes.length && !selectedTypes.includes(identity.typeId)) return;
-    const occasional = normalizeWorkflow(types.get(identity.typeId)?.workflow) === 'Occasional';
+    const occasional = isOccasionalWorkflow(types.get(identity.typeId)?.workflow);
     if (occasional ? !occasionalVisible : !dailyVisible) return;
     categories.set(JSON.stringify([identity.typeId, categoryBalanceName(identity.category)]), identity);
   });
@@ -422,7 +433,16 @@ function refreshCategoryPendingBadges() {
 }
 
 function quantityPriceInputHtml(unitPrice, readOnly, totalAmount = '') {
-  return `<span class="input-group-text">&#8377;/unit</span><input type="number" class="form-control expense-quantity-price" style="max-width:110px" min="0" step="0.01" placeholder="Optional price" aria-label="Price per unit" title="Enter any two values to calculate the blank field" value="${unitPrice > 0 ? unitPrice : ''}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">Total ₹</span><input type="number" class="form-control expense-quantity-total" style="min-width:100px" min="0" step="0.01" placeholder="Total amount" aria-label="Total amount for quantity" value="${escapeHtml(totalAmount ?? '')}"${readOnly ? ' readonly disabled' : ''}>`;
+  return `<span class="input-group-text">&#8377;/unit</span><input type="number" class="form-control expense-quantity-price" style="max-width:110px" min="0" step="0.01" placeholder="Optional price" aria-label="Price per unit" title="Previous price is suggested when available and can be edited. Enter any two values to calculate the blank field." value="${unitPrice > 0 ? unitPrice : ''}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">Total ₹</span><input type="number" class="form-control expense-quantity-total" style="min-width:100px" min="0" step="0.01" placeholder="Total amount" aria-label="Total amount for quantity" value="${escapeHtml(totalAmount ?? '')}"${readOnly ? ' readonly disabled' : ''}>`;
+}
+
+function prefillOnSpotUnitPrice(group) {
+  const name = group?.querySelector('.expense-quantity-name')?.value.trim();
+  const unit = group?.querySelector('.expense-quantity-unit')?.value || '';
+  const price = group?.querySelector('.expense-quantity-price');
+  if (!name || !unit || !price || price.value) return;
+  const previous = previousUnitPrice({ name, unit, date: getSelectedExpenseDate() });
+  if (previous) price.value = String(previous);
 }
 
 function updateQuantityValue(group, changedInput = null) {
@@ -478,6 +498,26 @@ const today = getLocalDateKey();
 function getSelectedExpenseDate() {
   const value = document.getElementById('expDate')?.value;
   return value && value <= today ? value : today;
+}
+
+function previousUnitPrice({ quantityCategoryId = '', name = '', unit = '', typeId = '', category = '', date = getSelectedExpenseDate(), excludeExpenseId = '' } = {}) {
+  const normalized = value => String(value || '').trim().toLowerCase();
+  const expenseById = new Map(allExpenses.map(expense => [expense.id, expense]));
+  const configuredId = quantityCategoryId && !String(quantityCategoryId).startsWith('onspot:');
+  const candidates = allExpenseQuantities.map(quantity => {
+    const expense = expenseById.get(quantity.expenseId);
+    const price = parseFloat(quantity.unitPrice) || 0;
+    if (!expense || !price || quantity.sourceReceiptId || quantity.expenseId === excludeExpenseId || expense.date >= date) return null;
+    if (typeId && expense.typeId !== typeId) return null;
+    if (category && normalized(expense.category) !== normalized(category)) return null;
+    if (configuredId
+      ? quantity.quantityCategoryId !== quantityCategoryId
+      : normalized(quantity.name) !== normalized(name) || normalized(quantity.unit) !== normalized(unit)) return null;
+    return { price, date: expense.date, updatedAt: quantity.updatedAt || quantity.createdAt || '' };
+  }).filter(Boolean).sort((first, second) =>
+    second.date.localeCompare(first.date) || String(second.updatedAt).localeCompare(String(first.updatedAt))
+  );
+  return candidates[0]?.price || '';
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -582,6 +622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ['quantityInputsBody', 'occasionalQuantityBody'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', event => {
       const group = event.target.closest?.('.quantity-price-group');
+      if (event.target.matches?.('.expense-quantity-name, .expense-quantity-unit')) prefillOnSpotUnitPrice(group);
       if (group) updateQuantityValue(group, event.target);
       const row = event.target.closest?.('tr[data-expense-amount]');
       if (row) updateQuantityRowSummary(row);
@@ -643,7 +684,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     ]);
     loadDateIntoForm(today);
     renderUnpaidQuantities();
-    if (!allCategoryTypes.some(type => type.status === 'Active' && normalizeWorkflow(type.workflow) === 'Occasional')) {
+    if (!allCategoryTypes.some(type => type.status === 'Active' && isOccasionalWorkflow(type.workflow))) {
       document.getElementById('btnOccasionalExpense').style.display = 'none';
     }
   } catch (err) {
@@ -667,7 +708,7 @@ async function openEmployeeExpenseModal() {
     .filter(employee => employee.status === 'Active')
     .map(employee => `<option value="${employee.id}">${escapeHtml(employee.name)}</option>`).join('');
   typeSelect.innerHTML = '<option value="">— Select Expense Type —</option>' + allCategoryTypes
-    .filter(type => type.status === 'Active' && normalizeWorkflow(type.workflow) !== 'Occasional')
+    .filter(type => type.status === 'Active' && !isOccasionalWorkflow(type.workflow))
     .map(type => `<option value="${type.id}">${escapeHtml(type.name)}</option>`).join('');
   const form = document.getElementById('employeeExpenseForm');
   form.reset();
@@ -678,14 +719,14 @@ function openOccasionalExpenseModal() {
   const form = document.getElementById('occasionalExpenseForm');
   form.reset();
   editingOccasionalExpenseId = null;
-  document.getElementById('occasionalExpenseModalTitle').textContent = 'Add Occasional Expense';
+  document.getElementById('occasionalExpenseModalTitle').textContent = 'Add Occasional / Online Expense';
   document.getElementById('btnSaveOccasionalExpense').innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Expense';
   const selectedDate = getSelectedExpenseDate();
   document.getElementById('occasionalExpenseDate').value = selectedDate;
   document.getElementById('occasionalExpenseDate').max = today;
   const typeSelect = document.getElementById('occasionalExpenseType');
   typeSelect.innerHTML = '<option value="">— Select Expense Type —</option>' + allCategoryTypes
-    .filter(type => type.status === 'Active' && normalizeWorkflow(type.workflow) === 'Occasional')
+    .filter(type => type.status === 'Active' && isOccasionalWorkflow(type.workflow))
     .map(type => `<option value="${type.id}">${escapeHtml(type.displayText || type.name)}</option>`).join('');
   populateOccasionalCategories();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('occasionalExpenseModal')).show();
@@ -715,7 +756,7 @@ async function saveOccasionalExpense() {
     };
     await api(editingOccasionalExpenseId ? 'PUT' : 'POST', editingOccasionalExpenseId ? `/expenses/occasional/${editingOccasionalExpenseId}` : '/expenses/occasional', payload);
     bootstrap.Modal.getInstance(document.getElementById('occasionalExpenseModal')).hide();
-    showNotification(editingOccasionalExpenseId ? 'Occasional expense updated.' : 'Occasional expense saved.');
+    showNotification(editingOccasionalExpenseId ? 'Occasional / Online expense updated.' : 'Occasional / Online expense saved.');
     allExpenses = await api('GET', '/expenses');
     allExpenseQuantities = await api('GET', '/expenses/quantities');
     renderOccasionalExpenses();
@@ -809,14 +850,14 @@ function renderOccasionalExpenses() {
   const dateLabel = document.getElementById('occasionalExpensesDateLabel');
   if (dateLabel) dateLabel.textContent = `— ${formatDate(selectedDate)}`;
   const typeNames = new Map(allCategoryTypes.map(type => [type.id, type.displayText || type.name]));
-  const entries = allExpenses.filter(expense => expense.mode === 'Occasional' && expense.date === selectedDate);
+  const entries = allExpenses.filter(expense => isOccasionalWorkflow(expense.mode) && expense.date === selectedDate);
   const occasionalTotal = entries.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
   const occasionalTotalEl = document.getElementById('occasionalExpensesTotal');
   if (occasionalTotalEl) occasionalTotalEl.textContent = formatCurrency(occasionalTotal);
   const canEdit = canAccess('expenses', 'add');
   body.innerHTML = entries.length ? entries.map(expense => `<tr>
-    <td data-label="Date">${formatDate(expense.date)}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}</td><td data-label="Type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Remarks" class="text-muted">${escapeHtml(expense.description || '—')}</td><td data-label="Amount" class="text-end fw-semibold">${formatCurrency(expense.amount)}</td><td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}${expense.approvedBy ? `<div class="text-muted" style="font-size:.75rem">approved by ${escapeHtml(expense.approvedBy)}${expense.approvedAt ? ` · ${formatDate(expense.approvedAt)}` : ''}</div>` : ''}</td><td data-label="Actions" class="text-center">${canEdit && expense.approvalStatus !== 'Approved' && expense.approvalStatus !== 'AutoApproved' ? `<button type="button" class="btn btn-sm btn-outline-secondary btn-action me-1" title="Edit occasional expense" onclick="editOccasionalExpense('${expense.id}')"><i class="bi bi-pencil"></i></button><button type="button" class="btn btn-sm btn-outline-danger btn-action" title="Delete occasional expense" onclick="deleteOccasionalExpense('${expense.id}')"><i class="bi bi-trash"></i></button>` : ''}</td>
-  </tr>`).join('') : emptyRow(7, 'No occasional expenses recorded for this date.');
+    <td data-label="Date">${formatDate(expense.date)}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}</td><td data-label="Type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Remarks" class="text-muted">${escapeHtml(expense.description || '—')}</td><td data-label="Amount" class="text-end fw-semibold">${formatCurrency(expense.amount)}</td><td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}${expense.approvedBy ? `<div class="text-muted" style="font-size:.75rem">approved by ${escapeHtml(expense.approvedBy)}${expense.approvedAt ? ` · ${formatDate(expense.approvedAt)}` : ''}</div>` : ''}</td><td data-label="Actions" class="text-center">${canEdit && expense.approvalStatus !== 'Approved' && expense.approvalStatus !== 'AutoApproved' ? `<button type="button" class="btn btn-sm btn-outline-secondary btn-action me-1" title="Edit occasional / online expense" onclick="editOccasionalExpense('${expense.id}')"><i class="bi bi-pencil"></i></button><button type="button" class="btn btn-sm btn-outline-danger btn-action" title="Delete occasional / online expense" onclick="deleteOccasionalExpense('${expense.id}')"><i class="bi bi-trash"></i></button>` : ''}</td>
+  </tr>`).join('') : emptyRow(7, 'No occasional / online expenses recorded for this date.');
   renderOccasionalQuantityInputs(entries, typeNames, canEdit);
   renderReceiptsOnDate(document.getElementById('receiptsOnDateOccasional'), selectedDate, true);
   refreshCategoryPendingBadges();
@@ -833,14 +874,18 @@ function renderOccasionalQuantityInputs(entries, typeNames, canEdit) {
     const selected = selectedQuantityFields(category, pickerKey, saved);
     const readOnly = !canEdit || expense.approvalStatus === 'Approved' || expense.approvalStatus === 'AutoApproved';
     const fields = definitions.length ? definitions.map(quantity => {
-      const amount = saved.find(item => item.quantityCategoryId === quantity.id)?.amount ?? (quantity.defaultQuantity ?? '');
-      const unitPrice = saved.find(item => item.quantityCategoryId === quantity.id)?.unitPrice || 0;
-      const totalAmount = saved.find(item => item.quantityCategoryId === quantity.id)?.totalAmount ?? '';
+      const savedQuantity = saved.find(item => item.quantityCategoryId === quantity.id);
+      const amount = savedQuantity?.amount ?? (quantity.defaultQuantity ?? '');
+      const unitPrice = savedQuantity?.unitPrice || previousUnitPrice({
+        quantityCategoryId: quantity.id, name: quantity.name, unit: quantity.unit,
+        typeId: expense.typeId, category: expense.category, date: selectedDate, excludeExpenseId: expense.id
+      });
+      const totalAmount = savedQuantity?.totalAmount ?? '';
       return `<div class="input-group input-group-sm mb-2 quantity-price-group configured-quantity-field"${selected && !selected.has(quantity.id) ? ' hidden' : ''} style="max-width:760px"><span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span><input type="number" class="form-control occasional-tab-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${amount}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">${escapeHtml(quantity.unit)}</span>${quantityPriceInputHtml(unitPrice, readOnly, totalAmount)}</div>`;
     }).join('') : '';
     const custom = saved.filter(quantity => !definitions.some(item => item.id === quantity.quantityCategoryId) && !quantity.sourceReceiptId);
     const linked = saved.filter(quantity => quantity.sourceReceiptId);
-    const customFields = `<div class="occasional-onspot-quantity-fields">${custom.map(quantity => onSpotQuantityInput(quantity, 'occasional-onspot-quantity')).join('')}</div>`;
+    const customFields = `<div class="occasional-onspot-quantity-fields">${custom.map(quantity => onSpotQuantityInput(quantity, 'occasional-onspot-quantity', { typeId: expense.typeId, category: expense.category, date: selectedDate, excludeExpenseId: expense.id })).join('')}</div>`;
     const linkedByReceipt = new Map();
     linked.forEach(quantity => {
       if (!linkedByReceipt.has(quantity.sourceReceiptId)) linkedByReceipt.set(quantity.sourceReceiptId, []);
@@ -854,12 +899,12 @@ function renderOccasionalQuantityInputs(entries, typeNames, canEdit) {
     const addButton = readOnly ? '' : '<button type="button" class="btn btn-sm btn-outline-primary" onclick="addOccasionalOnSpotQuantity(this)"><i class="bi bi-plus-lg me-1"></i>Add Quantity</button>';
     const action = !readOnly ? `<button type="button" class="btn btn-sm btn-primary" title="Save quantities" onclick="saveOccasionalQuantities('${expense.id}', this)"><i class="bi bi-check-lg"></i></button>` : '';
     return `<tr data-occasional-expense-id="${expense.id}" data-picker-key="${escapeHtml(pickerKey)}" data-picker-category="${escapeHtml(expense.category)}" data-expense-amount="${parseFloat(expense.amount) || 0}"><td data-label="Category type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}<div class="text-muted small">${formatCurrency(expense.amount)}</div></td><td data-label="Quantities">${quantityPickerButton(category, readOnly)}${fields}${customFields}${addButton}${linkedFields}<div class="quantity-row-summary small text-muted mt-1"></div></td><td data-label="Actions" class="text-center">${action}</td></tr>`;
-  }).join('') : emptyRow(4, 'No occasional expenses recorded for this date.');
+  }).join('') : emptyRow(4, 'No occasional / online expenses recorded for this date.');
   refreshQuantityValues(body);
 }
 
 async function saveOccasionalQuantities(id, button) {
-  const expense = allExpenses.find(item => item.id === id && item.mode === 'Occasional');
+  const expense = allExpenses.find(item => item.id === id && isOccasionalWorkflow(item.mode));
   const row = button.closest('tr');
   if (!expense || !row) return;
   button.disabled = true;
@@ -882,7 +927,7 @@ async function saveOccasionalQuantities(id, button) {
     allExpenses = await api('GET', '/expenses');
     allExpenseQuantities = await api('GET', '/expenses/quantities');
     renderOccasionalExpenses();
-    showNotification('Occasional quantities updated.');
+    showNotification('Occasional / Online quantities updated.');
   } catch (err) {
     showNotification('Quantity update failed: ' + err.message, 'danger');
     button.disabled = false;
@@ -890,14 +935,14 @@ async function saveOccasionalQuantities(id, button) {
 }
 
 function editOccasionalExpense(id) {
-  const expense = allExpenses.find(entry => entry.id === id && entry.mode === 'Occasional');
+  const expense = allExpenses.find(entry => entry.id === id && isOccasionalWorkflow(entry.mode));
   if (!expense) return;
   editingOccasionalExpenseId = id;
-  document.getElementById('occasionalExpenseModalTitle').textContent = 'Edit Occasional Expense';
+  document.getElementById('occasionalExpenseModalTitle').textContent = 'Edit Occasional / Online Expense';
   document.getElementById('occasionalExpenseDate').value = expense.date;
   const typeSelect = document.getElementById('occasionalExpenseType');
   typeSelect.innerHTML = '<option value="">— Select Expense Type —</option>' + allCategoryTypes
-    .filter(type => type.status === 'Active' && normalizeWorkflow(type.workflow) === 'Occasional')
+    .filter(type => type.status === 'Active' && isOccasionalWorkflow(type.workflow))
     .map(type => `<option value="${type.id}">${escapeHtml(type.displayText || type.name)}</option>`).join('');
   typeSelect.value = expense.typeId;
   populateOccasionalCategories();
@@ -909,10 +954,10 @@ function editOccasionalExpense(id) {
 }
 
 async function deleteOccasionalExpense(id) {
-  if (!id || !confirm('Delete this occasional expense?')) return;
+  if (!id || !confirm('Delete this occasional / online expense?')) return;
   try {
     await api('DELETE', '/expenses/' + encodeURIComponent(id));
-    showNotification('Occasional expense deleted.');
+    showNotification('Occasional / Online expense deleted.');
     allExpenses = await api('GET', '/expenses');
     renderOccasionalExpenses();
     loadDateIntoForm(document.getElementById('expDate').value);
@@ -987,6 +1032,8 @@ async function saveEmployeeExpense() {
       employeeName: employee.name,
       paymentDate: document.getElementById('expDate').value,
       amount: parseFloat(document.getElementById('employeeExpenseAmount').value),
+      paymentMethod: 'Cash',
+      paymentSource: 'Day Sale Cash',
       remarks: document.getElementById('employeeExpenseRemarks').value.trim(),
       addAsExpense: true,
       expenseTypeId: document.getElementById('employeeExpenseType').value
@@ -1011,7 +1058,7 @@ function loadDateIntoForm(date) {
     return loadDateIntoForm(today);
   }
   const existing = getExistingForDate(date);
-  onSpotEntriesForDate = allExpenses.filter(e => e.mode !== 'Occasional' && e.date === date && e.onSpot && !e.employeeId);
+  onSpotEntriesForDate = allExpenses.filter(e => !isOccasionalWorkflow(e.mode) && e.date === date && e.onSpot && !e.employeeId);
   const hasData = Object.keys(existing).length > 0;
   const isToday = date === today;
 
@@ -1034,10 +1081,10 @@ function loadDateIntoForm(date) {
 
   renderOccasionalExpenses();
 
-  const remarkRow = allExpenses.find(e => e.mode !== 'Occasional' && e.date === date && e.description);
+  const remarkRow = allExpenses.find(e => !isOccasionalWorkflow(e.mode) && e.date === date && e.description);
   document.getElementById('expRemarks').value = remarkRow ? remarkRow.description : '';
 
-  const dailyRows = allExpenses.filter(e => e.mode !== 'Occasional' && e.date === date && !e.employeeId);
+  const dailyRows = allExpenses.filter(e => !isOccasionalWorkflow(e.mode) && e.date === date && !e.employeeId);
   const editableRows = dailyRows.filter(e => e.approvalStatus === 'Rejected' || e.approvalStatus === 'Pending');
   const editableCategories = new Set(editableRows.map(e => e.category));
   const editableTypeIds = new Set([...new Set(dailyRows.map(e => e.typeId))].filter(typeId =>
@@ -1054,7 +1101,7 @@ function loadDateIntoForm(date) {
   const approvalDetail = approvers.length ? ` <em class="text-muted small">— approved by ${approvers.map(escapeHtml).join(', ')}${latestApproval ? ` on ${formatDate(latestApproval)}` : ''}</em>` : '';
 
   // Show rejection notice if cashier sees a rejected date
-  const rejectedRow = allExpenses.find(e => e.mode !== 'Occasional' && e.date === date && e.approvalStatus === 'Rejected');
+  const rejectedRow = allExpenses.find(e => !isOccasionalWorkflow(e.mode) && e.date === date && e.approvalStatus === 'Rejected');
   const noticeEl = document.getElementById('rejectionNotice');
   if (rejectedRow && !isSuperUser()) {
     noticeEl.innerHTML =
@@ -1099,7 +1146,7 @@ function updateDateStatusColor(date) {
   const input = document.getElementById('expDate');
   if (!input) return;
   input.classList.remove('expense-date-input-approved', 'expense-date-input-rejected', 'expense-date-input-neutral');
-  const statuses = allExpenses.filter(expense => expense.mode !== 'Occasional' && expense.date === date).map(expense => expense.approvalStatus);
+  const statuses = allExpenses.filter(expense => !isOccasionalWorkflow(expense.mode) && expense.date === date).map(expense => expense.approvalStatus);
   const status = statuses.includes('Rejected') ? 'rejected' : statuses.includes('Pending') ? 'pending' :
     statuses.some(value => value === 'Approved' || value === 'AutoApproved') ? 'approved' : 'neutral';
   input.classList.add(`expense-date-input-${status}`);
@@ -1146,7 +1193,7 @@ function renderExpenseDatePicker() {
 
 function getExistingForDate(date) {
   const map = {};
-  allExpenses.filter(e => e.mode !== 'Occasional' && e.date === date).forEach(e => {
+  allExpenses.filter(e => !isOccasionalWorkflow(e.mode) && e.date === date).forEach(e => {
     if (e.category && !e.onSpot) map[e.category] = (map[e.category] || 0) + (parseFloat(e.amount) || 0);
   });
   return map;
@@ -1158,7 +1205,7 @@ function buildCategoryInputs(existingMap, isReadOnly, editableCategories = null,
   existingMap = existingMap || {};
   const typeById = new Map(allCategoryTypes.map(t => [t.id, t]));
   const active = allCategories
-    .filter(c => c.status === 'Active' && normalizeWorkflow(typeById.get(c.typeId)?.workflow || 'Daily Cash') !== 'Occasional')
+    .filter(c => c.status === 'Active' && !isOccasionalWorkflow(typeById.get(c.typeId)?.workflow || 'Daily Cash'))
     .sort((a, b) => a.sortOrder - b.sortOrder);
   const container = document.getElementById('categoryInputs');
 
@@ -1171,14 +1218,14 @@ function buildCategoryInputs(existingMap, isReadOnly, editableCategories = null,
     ? ' readonly disabled style="font-size:1rem;background:#f8f9fa"' : ' style="font-size:1rem"';
   const legacyType = allCategoryTypes.find(t => t.name === 'General') || allCategoryTypes.find(t => t.sortOrder === 1) || allCategoryTypes[0] || { id: '', name: 'General', sortOrder: 0 };
   const grouped = new Map();
-  const currentDailyRows = allExpenses.filter(entry => entry.mode !== 'Occasional' &&
+  const currentDailyRows = allExpenses.filter(entry => !isOccasionalWorkflow(entry.mode) &&
     entry.date === document.getElementById('expDate').value && !entry.employeeId);
   active.forEach(c => {
     const type = typeById.get(c.typeId) || legacyType;
     if (!grouped.has(type.id)) grouped.set(type.id, { type, categories: [] });
     grouped.get(type.id).categories.push(c);
   });
-  allExpenses.filter(e => e.mode !== 'Occasional' && e.date === document.getElementById('expDate').value && e.employeeId && !e.onSpot).forEach(entry => {
+  allExpenses.filter(e => !isOccasionalWorkflow(e.mode) && e.date === document.getElementById('expDate').value && e.employeeId && !e.onSpot).forEach(entry => {
     const type = typeById.get(entry.typeId) || legacyType;
     if (!grouped.has(type.id)) grouped.set(type.id, { type, categories: [] });
     grouped.get(type.id).salaryEntries = grouped.get(type.id).salaryEntries || [];
@@ -1222,14 +1269,17 @@ function buildCategoryInputs(existingMap, isReadOnly, editableCategories = null,
   const orderedGroups = [...grouped.values()].sort((a, b) => a.type.sortOrder - b.type.sortOrder);
   const cashGroups = orderedGroups.filter(group => normalizeWorkflow(group.type.workflow || 'Daily Cash') === 'Daily Cash');
   const nonCashGroups = orderedGroups.filter(group => normalizeWorkflow(group.type.workflow || 'Daily Cash') === 'Daily Non Cash');
+  const dailyOnlineGroups = orderedGroups.filter(group => normalizeWorkflow(group.type.workflow || 'Daily Cash') === 'Daily Online');
   const cashCards = renderCards(cashGroups);
   const nonCashCards = renderCards(nonCashGroups);
+  const dailyOnlineCards = renderCards(dailyOnlineGroups);
   const sectionMarkup =
-    (cashCards ? '<section class="mb-3"><div class="d-flex align-items-center justify-content-between mb-2"><div class="small fw-semibold text-muted">Against Daily Cash Sale</div><div class="small fw-semibold text-primary" id="dailyCashSectionTotal">₹0</div></div>' + cashCards + '</section>' : '') +
-    (nonCashCards ? '<section class="mb-2"><div class="small fw-semibold text-muted mb-2">Not Against Daily Cash Sale</div>' + nonCashCards + '</section>' : '');
+    (cashCards ? '<section class="mb-3"><div class="d-flex align-items-center justify-content-between mb-2"><div class="small fw-semibold text-muted">Day / Sale</div><div class="small fw-semibold text-primary" id="dailyCashSectionTotal">₹0</div></div>' + cashCards + '</section>' : '') +
+    (dailyOnlineCards ? '<section class="mb-3"><div class="small fw-semibold text-info mb-2">Day / Online · received daily; paid from profit balance</div>' + dailyOnlineCards + '</section>' : '') +
+    (nonCashCards ? '<section class="mb-2"><div class="small fw-semibold text-muted mb-2">Previous Day / Sale</div>' + nonCashCards + '</section>' : '');
 
   // Show read-only entries for categories not in the active list (e.g. employee salary payments)
-  const salaryNames = new Set(allExpenses.filter(e => e.mode !== 'Occasional' && e.date === document.getElementById('expDate').value && e.employeeId).map(e => e.category));
+  const salaryNames = new Set(allExpenses.filter(e => !isOccasionalWorkflow(e.mode) && e.date === document.getElementById('expDate').value && e.employeeId).map(e => e.category));
   const extraItems = Object.keys(existingMap)
     .filter(k => !active.some(c => c.name === k) && !salaryNames.has(k) && existingMap[k] > 0)
     .map(k => {
@@ -1260,13 +1310,17 @@ function addOnSpotRow(button) {
   row.querySelector('.onspot-name').focus();
 }
 
-function onSpotQuantityInput(quantity = {}, inputClass = 'expense-quantity') {
+function onSpotQuantityInput(quantity = {}, inputClass = 'expense-quantity', priceContext = {}) {
   const unit = quantity.unit || 'Count';
   const name = escapeHtml(quantity.name || unit);
   const amount = quantity.amount || '';
   const quantityCategoryId = escapeHtml(quantity.quantityCategoryId || '');
+  const savedUnitPrice = parseFloat(quantity.unitPrice) || 0;
+  const unitPrice = savedUnitPrice || (priceContext.preserveBlankPrice ? '' : previousUnitPrice({
+    quantityCategoryId, name: quantity.name || unit, unit, ...priceContext
+  }));
   return `<div class="input-group input-group-sm mb-2 onspot-quantity quantity-price-group" style="max-width:760px"><input type="text" class="form-control expense-quantity-name" style="max-width:180px" value="${name}" placeholder="Quantity"><input type="number" class="form-control ${inputClass}" data-quantity-category-id="${quantityCategoryId}" data-name="${name}" data-unit="${unit}" min="0" step="0.01" value="${amount}"><select class="form-select expense-quantity-unit" style="max-width:80px" data-prev-unit="${unit}" onchange="syncOnSpotQuantityName(this)">${['KG', 'Grams', 'Litre', 'Count'].map(option => `<option${unit === option ? ' selected' : ''}>${option}</option>`).join('')}
-    </select>${quantityPriceInputHtml(parseFloat(quantity.unitPrice) || 0, false, quantity.totalAmount ?? '')}<button type="button" class="btn btn-outline-danger" title="Delete quantity" aria-label="Delete quantity" onclick="deleteOnSpotQuantity(this)"><i class="bi bi-trash"></i></button></div>`;
+    </select>${quantityPriceInputHtml(unitPrice, false, quantity.totalAmount ?? '')}<button type="button" class="btn btn-outline-danger" title="Delete quantity" aria-label="Delete quantity" onclick="deleteOnSpotQuantity(this)"><i class="bi bi-trash"></i></button></div>`;
 }
 
 // Keeps the name in sync with the selected unit until the user overrides it with a custom label.
@@ -1344,7 +1398,7 @@ function renderUnpaidQuantities() {
   }
   body.innerHTML = rows.map(receipt => {
     const workflow = typeWorkflows.get(receipt.typeId) || 'Daily Cash';
-    const modeLabel = workflow === 'Occasional' ? 'Occasional' : 'Daily';
+    const modeLabel = workflow === 'Occasional Cash' ? 'Occasional / Cash · Profit Balance' : workflow === 'Occasional' ? 'Occasional / Online · Profit Balance' : 'Daily';
     const pendingForReceipt = [...pendingUnpaidLinks.values()].filter(link => link.receiptId === receipt.id);
     const pendingSum = pendingForReceipt.reduce((sum, link) => sum + (parseFloat(link.amount) || 0), 0);
     const linkedNote = pendingForReceipt.length
@@ -1373,7 +1427,7 @@ function renderUnpaidQuantities() {
     </div>` : '';
     return `<tr>
       <td data-label="Received">${formatDate(receipt.receivedDate)}</td>
-      <td data-label="Mode"><span class="badge ${modeLabel === 'Occasional' ? 'bg-info-subtle text-info border border-info-subtle' : 'bg-primary-subtle text-primary border border-primary-subtle'}">${modeLabel}</span></td>
+      <td data-label="Mode"><span class="badge ${isOccasionalWorkflow(workflow) ? 'bg-info-subtle text-info border border-info-subtle' : 'bg-primary-subtle text-primary border border-primary-subtle'}">${modeLabel}</span></td>
       <td data-label="Category type">${escapeHtml(typeNames.get(receipt.typeId) || 'Unknown')}</td>
       <td data-label="Category">${escapeHtml(receipt.category)}</td>
       <td data-label="Items" class="small">${items}</td>
@@ -1391,7 +1445,7 @@ function renderReceiptsOnDate(container, date, occasional = false) {
   const typeWorkflows = new Map(allCategoryTypes.map(type => [type.id, normalizeWorkflow(type.workflow)]));
   const receipts = allUnpaidQuantities.filter(receipt =>
     receipt.receivedDate === date &&
-    ((typeWorkflows.get(receipt.typeId) === 'Occasional') === !!occasional));
+    (isOccasionalWorkflow(typeWorkflows.get(receipt.typeId)) === !!occasional));
   if (!receipts.length) { container.innerHTML = ''; return; }
   container.innerHTML = `<div class="border rounded p-2">
     <div class="small text-muted mb-2"><i class="bi bi-box-seam me-1"></i>Received on ${formatDate(date)}${occasional ? ' (occasional)' : ''}</div>
@@ -1642,9 +1696,15 @@ function renderQuantityInputs() {
 
     const fields = defined.map(quantity => {
       const draft = drafts.get(`${rowKey}|${quantity.id}`);
-      const value = draft ? draft.amount : (saved.find(item => item.quantityCategoryId === quantity.id)?.amount ?? (quantity.defaultQuantity ?? ''));
-      const unitPrice = draft ? parseFloat(draft.unitPrice) || 0 : (saved.find(item => item.quantityCategoryId === quantity.id)?.unitPrice || 0);
-      const totalAmount = draft ? draft.totalAmount : (saved.find(item => item.quantityCategoryId === quantity.id)?.totalAmount ?? '');
+      const savedQuantity = saved.find(item => item.quantityCategoryId === quantity.id);
+      const value = draft ? draft.amount : (savedQuantity?.amount ?? (quantity.defaultQuantity ?? ''));
+      const unitPrice = draft
+        ? (draft.unitPrice === '' ? '' : parseFloat(draft.unitPrice) || 0)
+        : (savedQuantity?.unitPrice || previousUnitPrice({
+          quantityCategoryId: quantity.id, name: quantity.name, unit: quantity.unit,
+          typeId, category: name, date: getSelectedExpenseDate(), excludeExpenseId: input.dataset.id
+        }));
+      const totalAmount = draft ? draft.totalAmount : (savedQuantity?.totalAmount ?? '');
       return `<div class="input-group input-group-sm mb-2 quantity-price-group configured-quantity-field"${selected && !selected.has(quantity.id) ? ' hidden' : ''} style="max-width:560px">
         <span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span>
         <input type="number" class="form-control expense-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${value}"${readOnly}>
@@ -1657,7 +1717,7 @@ function renderQuantityInputs() {
     const customList = renderedRowKeys.has(rowKey) ? (customDrafts.get(rowKey) || []) : customSaved;
     let customFields;
     if (onSpot) {
-      customFields = `<div class="onspot-quantity-fields">${customList.map(quantity => onSpotQuantityInput(quantity)).join('')}</div>${readOnly ? '' : '<button type="button" class="btn btn-sm btn-outline-primary" onclick="addOnSpotQuantity(this)"><i class="bi bi-plus-lg me-1"></i>Add Quantity</button>'}`;
+      customFields = `<div class="onspot-quantity-fields">${customList.map(quantity => onSpotQuantityInput(quantity, 'expense-quantity', { typeId, category: name, date: getSelectedExpenseDate(), excludeExpenseId: input.dataset.id, preserveBlankPrice: renderedRowKeys.has(rowKey) })).join('')}</div>${readOnly ? '' : '<button type="button" class="btn btn-sm btn-outline-primary" onclick="addOnSpotQuantity(this)"><i class="bi bi-plus-lg me-1"></i>Add Quantity</button>'}`;
     } else if (customSaved.length) {
       // Linked receivable quantities shown read-only next to configured fields so partial payments are visible on this day.
       const byReceipt = new Map();
@@ -1712,7 +1772,7 @@ async function save(options = {}) {
   const date = document.getElementById('expDate').value;
   if (!date) { if (!silent) showNotification('Please select a date.', 'warning'); return; }
   if (date > today) { if (!silent) showNotification('Future dates cannot be saved.', 'warning'); return; }
-  const dailyRows = allExpenses.filter(e => e.mode !== 'Occasional' && e.date === date && !e.employeeId);
+  const dailyRows = allExpenses.filter(e => !isOccasionalWorkflow(e.mode) && e.date === date && !e.employeeId);
   if (dailyRows.length && dailyRows.every(e => e.approvalStatus === 'Approved' || e.approvalStatus === 'AutoApproved')) {
     if (!silent) showNotification('Approved dates cannot be edited.', 'warning');
     loadDateIntoForm(date);
@@ -1800,7 +1860,7 @@ function openRejectModal(date, mode = 'Daily') {
   document.getElementById('rejectReason').value = '';
   const typeNames = new Map(allCategoryTypes.map(type => [type.id, type.displayText || type.name]));
   const rows = allExpenses.filter(expense => expense.date === date && !expense.employeeId &&
-    (mode === 'Occasional' ? expense.mode === 'Occasional' : expense.mode !== 'Occasional') && expense.approvalStatus !== 'Rejected');
+    (mode === 'Occasional' ? isOccasionalWorkflow(expense.mode) : !isOccasionalWorkflow(expense.mode)) && expense.approvalStatus !== 'Rejected');
   const groups = new Map();
   rows.forEach(expense => {
     if (!expense.category) return;
@@ -1811,11 +1871,11 @@ function openRejectModal(date, mode = 'Daily') {
   // A type is "missing" when no expense (of any status) was recorded for it on this date.
   const dateTypeIds = new Set(allExpenses
     .filter(expense => expense.date === date && !expense.employeeId && expense.typeId &&
-      (mode === 'Occasional' ? expense.mode === 'Occasional' : expense.mode !== 'Occasional'))
+      (mode === 'Occasional' ? isOccasionalWorkflow(expense.mode) : !isOccasionalWorkflow(expense.mode)))
     .map(expense => expense.typeId));
   const missingTypes = allCategoryTypes
     .filter(type => type.status === 'Active' && !dateTypeIds.has(type.id) &&
-      (mode === 'Occasional' ? normalizeWorkflow(type.workflow) === 'Occasional' : normalizeWorkflow(type.workflow) !== 'Occasional'))
+      (mode === 'Occasional' ? isOccasionalWorkflow(type.workflow) : !isOccasionalWorkflow(type.workflow)))
     .sort((first, second) => (first.sortOrder || 0) - (second.sortOrder || 0));
   const groupsHtml = [...groups.entries()].map(([typeName, entries]) => `
     <div class="border rounded p-2 mb-2">
@@ -1874,8 +1934,8 @@ function buildCatFilterChips() {
   const showOccasional = isReportSectionVisible('occasionalReportSection');
   const types = allCategoryTypes
     .filter(type => type.status === 'Active' &&
-      ((showDaily && normalizeWorkflow(type.workflow) !== 'Occasional') ||
-        (showOccasional && normalizeWorkflow(type.workflow) === 'Occasional')))
+      ((showDaily && !isOccasionalWorkflow(type.workflow)) ||
+        (showOccasional && isOccasionalWorkflow(type.workflow))))
     .sort((first, second) => (first.sortOrder || 0) - (second.sortOrder || 0));
 
   typeContainer.innerHTML = types.map(type => `<button type="button" class="btn btn-sm btn-outline-secondary type-chip"
@@ -1961,10 +2021,10 @@ function renderSummary() {
   };
 
   const source = reportExpenseRows || allExpenses;
-  const occasionalEntries = source.filter(e => e.mode === 'Occasional' && matchesFilters(e));
+  const occasionalEntries = source.filter(e => isOccasionalWorkflow(e.mode) && matchesFilters(e));
   if (occasionalVisible) renderOccasionalSummary(occasionalEntries);
 
-  const filtered = source.filter(e => e.mode !== 'Occasional' && matchesFilters(e));
+  const filtered = source.filter(e => !isOccasionalWorkflow(e.mode) && matchesFilters(e));
   const reportEntries = [
     ...(dailyVisible ? filtered : []),
     ...(occasionalVisible ? occasionalEntries : [])
@@ -2166,7 +2226,7 @@ function renderOccasionalSummary(entries) {
       <td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}${expense.approvedBy ? `<div class="text-muted" style="font-size:.75rem">approved by ${escapeHtml(expense.approvedBy)}${expense.approvedAt ? ` · ${formatDate(expense.approvedAt)}` : ''}</div>` : ''}</td>
       <td data-label="Amount" class="text-end fw-semibold text-nowrap">${formatCurrency(expense.amount)}</td>
     </tr>`;
-  }).join('') : emptyRow(6, 'No occasional expenses in this range.');
+  }).join('') : emptyRow(6, 'No occasional / online expenses in this range.');
 
   tfoot.innerHTML = sorted.length
     ? `<tr style="background:#f0f9ff;border-top:2px solid #bae6fd;">

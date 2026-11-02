@@ -195,16 +195,18 @@ function renderTypes() {
   const body = document.getElementById('typeBody');
   if (!body) return;
   const workflowBadge = workflow => {
-    if (workflow === 'Occasional') return '<span class="badge bg-info-subtle text-info border border-info-subtle">Occasional / Non-cash</span>';
-    if (workflow === 'Daily Non Cash') return '<span class="badge bg-warning-subtle text-warning border border-warning-subtle">Daily / Non-cash</span>';
-    return '<span class="badge bg-primary-subtle text-primary border border-primary-subtle">Daily / Cash</span>';
+    if (workflow === 'Occasional Cash') return '<span class="badge bg-warning-subtle text-warning border border-warning-subtle">Occasional / Cash · Profit Balance</span>';
+    if (workflow === 'Daily Online') return '<span class="badge bg-info-subtle text-info border border-info-subtle">Day / Online · Profit Balance</span>';
+    if (workflow === 'Occasional') return '<span class="badge bg-info-subtle text-info border border-info-subtle">Occasional / Online · Profit Balance</span>';
+    if (workflow === 'Daily Non Cash') return '<span class="badge bg-warning-subtle text-warning border border-warning-subtle">Previous Day / Sale</span>';
+    return '<span class="badge bg-primary-subtle text-primary border border-primary-subtle">Day / Sale</span>';
   };
   body.innerHTML = allTypes.map(t => `<tr>
-    <td data-label="Order">${t.sortOrder}</td><td data-label="Internal name" class="fw-semibold">${t.name}</td><td data-label="Display text">${t.displayText || t.name}</td><td data-label="Workflow">${workflowBadge(t.workflow)}</td>
+    <td data-label="Order">${t.sortOrder}</td><td data-label="Internal name" class="fw-semibold">${t.name}</td><td data-label="Display text">${t.displayText || t.name}</td><td data-label="Workflow">${workflowBadge(t.workflow)}</td><td data-label="Cash enabled">${t.cashEnabled ? '<span class="badge bg-success-subtle text-success border border-success-subtle">Yes</span>' : '<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">No</span>'}</td>
     <td data-label="Access">${t.accessMode === 'Limited' ? '<span class="badge bg-warning-subtle text-warning border border-warning-subtle">Limited</span>' : '<span class="badge bg-success-subtle text-success border border-success-subtle">All users</span>'}</td>
     <td data-label="Users">${t.accessMode === 'Limited' ? (t.allowedUserIds.map(id => (allUsers.find(u => u.id === id) || {}).displayName || id).join(', ') || 'None') : 'Everyone'}</td>
     <td data-label="Actions"><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-primary btn-action" onclick="openTypeEdit('${t.id}')" title="Edit"><i class="bi bi-pencil"></i></button><button class="btn btn-sm btn-outline-danger btn-action" onclick="removeType('${t.id}')" title="Delete"><i class="bi bi-trash"></i></button></div></td>
-  </tr>`).join('') || emptyRow(7, 'No category types yet.');
+  </tr>`).join('') || emptyRow(8, 'No category types yet.');
 }
 
 function setupTypeModal() {
@@ -213,6 +215,7 @@ function setupTypeModal() {
     document.getElementById('typeForm').reset();
     document.getElementById('typeModalTitle').textContent = 'Add Category Type';
     document.getElementById('typeOrder').value = allTypes.length + 1;
+    document.getElementById('typeCashEnabled').checked = true;
     renderTypeUsers([]); toggleTypeUsers();
     bootstrap.Modal.getOrCreateInstance(document.getElementById('typeModal')).show();
   });
@@ -236,6 +239,7 @@ function openTypeEdit(id) {
   document.getElementById('typeOrder').value = type.sortOrder;
   document.getElementById('typeStatus').value = type.status;
   document.getElementById('typeWorkflow').value = type.workflow || 'Daily Cash';
+  document.getElementById('typeCashEnabled').checked = type.cashEnabled !== false;
   document.getElementById('typeAccess').value = type.accessMode;
   renderTypeUsers(type.allowedUserIds); toggleTypeUsers();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('typeModal')).show();
@@ -248,6 +252,7 @@ async function saveType() {
     sortOrder: parseInt(document.getElementById('typeOrder').value) || 1,
     status: document.getElementById('typeStatus').value,
     workflow: document.getElementById('typeWorkflow').value,
+    cashEnabled: document.getElementById('typeCashEnabled').checked,
     accessMode: document.getElementById('typeAccess').value,
     allowedUserIds: [...document.querySelectorAll('.type-user-check:checked')].map(el => el.value)
   };

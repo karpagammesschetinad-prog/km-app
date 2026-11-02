@@ -175,6 +175,10 @@
       </div>
       <div class="modal-body p-0">
         <div class="p-3 border-bottom bg-light d-flex align-items-end gap-3 flex-wrap">
+          <div class="form-check" id="consolidatedPendingOption" hidden>
+            <input class="form-check-input" type="checkbox" id="daySalaryConsolidatedPending">
+            <label class="form-check-label small fw-semibold" for="daySalaryConsolidatedPending">Consolidated pending — all active employees</label>
+          </div>
           <div>
             <label class="form-label mb-1 small fw-semibold">Start date</label>
             <input type="date" class="form-control form-control-sm" id="daySalaryStartDate" style="width:160px">
@@ -199,7 +203,7 @@
         </div>
         <div class="table-responsive">
           <table class="table mobile-grid-table mb-0">
-            <thead><tr>
+            <thead id="daySalaryHead"><tr>
               <th>Employee</th><th>Type</th><th class="text-end">Salary Earned</th><th class="text-end">Petta</th>
               <th class="text-end">Salary Received</th><th class="text-end">Pending Salary</th>
             </tr></thead>

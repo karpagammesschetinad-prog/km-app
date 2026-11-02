@@ -50,7 +50,7 @@
       </div>
       <div class="table-responsive">
         <table class="table mobile-grid-table">
-          <thead><tr><th>Order</th><th>Internal Name</th><th>Display Text</th><th>Workflow</th><th>Access</th><th>Users</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Order</th><th>Internal Name</th><th>Display Text</th><th>Workflow</th><th>Cash enabled</th><th>Access</th><th>Users</th><th>Actions</th></tr></thead>
           <tbody id="typeBody"></tbody>
         </table>
       </div>
@@ -170,10 +170,19 @@
       <div class="col-md-6">
         <label class="form-label">Expense Behavior</label>
         <select class="form-select" id="typeWorkflow">
-          <option value="Daily Cash">Daily Expenses Against Daily Cash Sale</option>
-          <option value="Daily Non Cash">Daily Expenses Not Against Daily Cash Sale</option>
-          <option value="Occasional">Occasional Expenses Not Against Daily Cash Sale</option>
+          <option value="Daily Cash">Day / Sale</option>
+          <option value="Daily Online">Day / Online (paid from profit balance)</option>
+          <option value="Daily Non Cash">Previous Day / Sale</option>
+          <option value="Occasional">Occasional / Online (paid from profit balance)</option>
+          <option value="Occasional Cash">Occasional / Cash (paid from profit balance)</option>
         </select>
+      </div>
+      <div class="col-12">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="typeCashEnabled" checked>
+          <label class="form-check-label" for="typeCashEnabled">Cash enabled</label>
+          <div class="form-text">Deduct expenses in this category type from the Profit &amp; Loss cash-in-hand calculation.</div>
+        </div>
       </div>
       <div class="col-12"><label class="form-label">Access</label><select class="form-select" id="typeAccess"><option value="All">All users with expense access</option><option value="Limited">Limited users only</option></select></div>
       <div class="col-12" id="typeUsersWrap"><label class="form-label">Allowed Users</label><div id="typeUsers" class="row g-2"></div></div>

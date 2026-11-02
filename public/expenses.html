@@ -41,7 +41,7 @@
       <i class="bi bi-person-plus me-1"></i>Add Employee Expense
     </button>
     <button class="btn btn-outline-primary btn-sm" id="btnOccasionalExpense">
-      <i class="bi bi-calendar-plus me-1"></i>Add Occasional Expenses
+      <i class="bi bi-calendar-plus me-1"></i>Add Occasional / Online Expenses
     </button>
     <button class="btn btn-outline-primary btn-sm su-only" id="btnReport">
       <i class="bi bi-bar-chart-line me-1"></i>Report
@@ -151,7 +151,7 @@
     <div class="row justify-content-center mt-3">
       <div class="col-12 col-lg-10 col-xl-8">
         <div class="card-panel">
-          <div class="card-panel-header"><h6 class="card-panel-title">Occasional Expenses <span class="text-muted small fw-normal" id="occasionalExpensesDateLabel"></span></h6><div class="d-flex align-items-center gap-2"><span class="text-muted small">Not deducted from daily cash sales</span><span class="badge bg-info-subtle text-info border border-info-subtle" id="occasionalExpensesTotal">₹0</span></div></div>
+          <div class="card-panel-header"><h6 class="card-panel-title">Occasional Expenses (Cash &amp; Online) <span class="text-muted small fw-normal" id="occasionalExpensesDateLabel"></span></h6><div class="d-flex align-items-center gap-2"><span class="text-muted small">Paid from profit balance</span><span class="badge bg-info-subtle text-info border border-info-subtle" id="occasionalExpensesTotal">₹0</span></div></div>
           <ul class="nav nav-tabs px-3 pt-3" role="tablist"><li class="nav-item" role="presentation"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#occasionalExpensesPane" type="button" role="tab"><i class="bi bi-receipt me-1"></i>Expenses</button></li><li class="nav-item" role="presentation"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#occasionalQuantitiesPane" type="button" role="tab"><i class="bi bi-box-seam me-1"></i>Quantities</button></li></ul>
           <div class="tab-content"><div class="tab-pane fade show active" id="occasionalExpensesPane" role="tabpanel"><div class="table-responsive"><table class="table mobile-grid-table mb-0"><thead><tr><th>Date</th><th>Category</th><th>Type</th><th>Remarks</th><th class="text-end">Amount</th><th>Status</th><th style="width:90px"></th></tr></thead><tbody id="occasionalExpenseBody"></tbody></table></div></div><div class="tab-pane fade" id="occasionalQuantitiesPane" role="tabpanel"><div class="table-responsive"><table class="table mobile-grid-table mb-0"><thead><tr><th>Category Type</th><th>Category</th><th>Quantities</th><th style="width:80px"></th></tr></thead><tbody id="occasionalQuantityBody"></tbody></table></div><div id="receiptsOnDateOccasional" class="px-3 pb-3"></div></div></div>
         </div>
@@ -201,6 +201,9 @@
               <input type="number" class="form-control" id="employeeExpenseAmount" min="0.01" step="0.01" required>
             </div>
             <div class="col-12">
+              <div class="form-text"><i class="bi bi-cash me-1"></i>Payment method: Cash</div>
+            </div>
+            <div class="col-12">
               <label class="form-label">Expense Type <span class="text-danger">*</span></label>
               <select class="form-select" id="employeeExpenseType" required></select>
             </div>
@@ -223,7 +226,7 @@
 <!-- Occasional expense modal -->
 <div class="modal fade" id="occasionalExpenseModal" tabindex="-1">
   <div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title" id="occasionalExpenseModalTitle"><i class="bi bi-calendar-plus me-2"></i>Add Occasional Expense</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-header"><h5 class="modal-title" id="occasionalExpenseModalTitle"><i class="bi bi-calendar-plus me-2"></i>Add Occasional / Online Expense</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body"><form id="occasionalExpenseForm" novalidate><div class="row g-3">
       <div class="col-md-6"><label class="form-label">Date</label><input type="date" class="form-control" id="occasionalExpenseDate" readonly required><div class="form-text">Uses the date selected on the expenses screen.</div></div>
       <div class="col-md-6"><label class="form-label">Expense Type <span class="text-danger">*</span></label><select class="form-select" id="occasionalExpenseType" required></select></div>
@@ -262,7 +265,7 @@
                 <i class="bi bi-cash-coin me-1"></i>Daily
               </button>
               <button class="btn btn-sm btn-outline-secondary" id="btnToggleOccasional" title="Toggle occasional expenses">
-                <i class="bi bi-calendar-plus me-1"></i>Occasional
+                <i class="bi bi-calendar-plus me-1"></i>Occasional / Online
               </button>
             </div>
             <div class="w-100"></div>
@@ -362,7 +365,7 @@
         <!-- Occasional expenses, kept out of the daily cash totals above -->
         <div class="p-3 border-top" id="occasionalReportSection" style="display:none">
           <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-            <h6 class="mb-0"><i class="bi bi-calendar-plus me-2"></i>Occasional Expenses (date-wise)</h6>
+            <h6 class="mb-0"><i class="bi bi-calendar-plus me-2"></i>Occasional / Online Expenses (date-wise)</h6>
             <span class="badge bg-info-subtle text-info border border-info-subtle" id="occasionalReportSummary">₹0</span>
           </div>
           <div class="table-responsive">

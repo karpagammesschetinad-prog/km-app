@@ -241,9 +241,44 @@ test('the row summary compares received value with the expense amount without de
 test('the price input is labelled for assistive technology and lockable', () => {
   const { context } = createPage();
   assert.match(context.quantityPriceInputHtml(52.5, false), /aria-label="Price per unit"[^>]*value="52.5"/);
+  assert.doesNotMatch(context.quantityPriceInputHtml(52.5, false), /readonly disabled/);
+  assert.match(context.quantityPriceInputHtml(52.5, false), /Previous price is suggested when available and can be edited/);
   assert.match(context.quantityPriceInputHtml(0, true), /value=""[^>]* readonly disabled/);
   assert.doesNotMatch(context.quantityPriceInputHtml(52.5, false), /quantity-value/);
   assert.match(context.quantityPriceInputHtml(52.5, false), /expense-quantity-total/);
+});
+
+test('quantity price suggestion uses the latest earlier saved price for the same quantity and unit', () => {
+  const { context, elements, set } = createPage();
+  elements.expDate = { value: '2026-02-03' };
+  set('allExpenses', [
+    milk('old-price', '2026-02-01'),
+    milk('latest-price', '2026-02-02'),
+    milk('other-type', '2026-02-02', 100, { typeId: 'type-b' }),
+    milk('current-day', '2026-02-03')
+  ]);
+  set('allExpenseQuantities', [
+    { expenseId: 'old-price', quantityCategoryId: 'q-volume', name: 'Volume', unit: 'Litre', amount: 10, unitPrice: 40 },
+    { expenseId: 'latest-price', quantityCategoryId: 'q-volume', name: 'Volume', unit: 'Litre', amount: 10, unitPrice: 55 },
+    { expenseId: 'latest-price', quantityCategoryId: 'q-weight', name: 'Weight', unit: 'KG', amount: 2, unitPrice: 80 },
+    { expenseId: 'other-type', quantityCategoryId: 'q-volume', name: 'Volume', unit: 'Litre', amount: 10, unitPrice: 99 },
+    { expenseId: 'current-day', quantityCategoryId: 'q-volume', name: 'Volume', unit: 'Litre', amount: 10, unitPrice: 66 }
+  ]);
+
+  assert.equal(context.previousUnitPrice({ quantityCategoryId: 'q-volume', name: 'Volume', unit: 'Litre', typeId: 'type-a', category: 'Milk' }), 55);
+  assert.equal(context.previousUnitPrice({ quantityCategoryId: 'q-weight', name: 'Weight', unit: 'KG', typeId: 'type-a', category: 'Milk' }), 80);
+  assert.equal(context.previousUnitPrice({ quantityCategoryId: 'onspot:type-a:Volume', name: 'Volume', unit: 'KG', typeId: 'type-a', category: 'Milk' }), '');
+});
+
+test('on-spot quantity input prepopulates the prior price and remains editable', () => {
+  const { context, elements, set } = createPage();
+  elements.expDate = { value: '2026-02-03' };
+  set('allExpenses', [milk('previous', '2026-02-02')]);
+  set('allExpenseQuantities', [{ expenseId: 'previous', name: 'Green leaves', unit: 'KG', amount: 2, unitPrice: 30 }]);
+  const html = context.onSpotQuantityInput({ name: 'Green leaves', unit: 'KG' }, 'expense-quantity', { typeId: 'type-a', category: 'Milk' });
+  assert.match(html, /aria-label="Price per unit"[^>]*value="30"(?![^>]*readonly)/);
+  const clearedDraft = context.onSpotQuantityInput({ name: 'Green leaves', unit: 'KG' }, 'expense-quantity', { typeId: 'type-a', category: 'Milk', preserveBlankPrice: true });
+  assert.match(clearedDraft, /aria-label="Price per unit"[^>]*value=""/);
 });
 
 test('on-spot quantity offers and retains the selected Grams unit', () => {

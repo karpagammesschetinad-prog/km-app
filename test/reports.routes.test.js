@@ -122,7 +122,9 @@ test('each expense mode lands on its own line', async () => {
   assert.equal(day.dailyCashExpense, 100);
   assert.equal(day.occasionalExpense, 50);
   assert.equal(day.marketExpense, 200);
-  assert.equal(day.totalCost, 350);
+  assert.equal(day.totalCost, 300, 'daily cash and market are operating costs; occasional is excluded');
+  assert.equal(day.profit, 1700);
+  assert.equal(day.profitBalance, 1650, 'occasional payout reduces the accumulated profit balance');
 });
 
 test('salary accrues day-wise and reports paid, petta and pending', async () => {
@@ -158,13 +160,18 @@ test('daily-pay staff are settled the same day and count as salary received', as
     employeeRow({ id: 'emp-daily', name: 'Daily', dailyPay: 'true', perDay: 400, petta: 50 })
   ]);
   sheets.setRows(SHEETS.SALES_ENTRIES, [entryRow({ amount: 3000 })]);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'daily-salary-expense', category: 'Daily', employeeId: 'emp-daily', amount: 350 })
+  ]);
 
   const day = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.days[0];
   assert.equal(day.salaryGross, 400);
   assert.equal(day.salaryPaid, 350, 'no payment recorded, so the day earning (400 - 50 petta) is received');
+  assert.equal(day.salaryDaySaleCash, 350, 'automatic Daily Pay salary is classified as Day Sale Cash');
+  assert.equal(day.cashExpenses, 350, 'automatic Daily Pay salary is deducted from the cash balance');
   assert.equal(day.salaryPending, 0, 'daily-pay staff are settled the same evening');
-  assert.equal(day.totalCost, 0, 'received salary is not a pending cost');
-  assert.equal(day.profit, 3000);
+  assert.equal(day.totalCost, 350, 'the recorded expense is counted once; salary received does not add a second cost');
+  assert.equal(day.profit, 2650);
 });
 
 test('a recorded payment for a daily-pay employee is not double counted', async () => {
@@ -178,6 +185,43 @@ test('a recorded payment for a daily-pay employee is not double counted', async 
   const day = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.days[0];
   assert.equal(day.salaryPaid, 350, 'the recorded payment is the received amount, not payment + earning');
   assert.equal(day.salaryPending, 0);
+  assert.equal(day.cashExpenses, 0, 'salary payment rows alone do not reduce cash when the expense is tracked separately');
+});
+
+test('salary received is split by Day Sale Cash, Cash In Hand, Online, and auto-settled daily pay', async () => {
+  sheets.setRows(SHEETS.EMPLOYEES, [employeeRow({ id: 'daily', name: 'Daily', dailyPay: 'true', perDay: 400, petta: 50 })]);
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [
+    ['sale-cash', 'regular-1', 'Cash from sales', '2026-02-02', 100, '', '', '', '', '', 0, 'Cash', 'Day Sale Cash'],
+    ['cash-in-hand', 'regular-2', 'Cash in hand', '2026-02-02', 200, '', '', '', '', '', 0, 'Cash', 'Cash In Hand'],
+    ['online', 'regular-3', 'Online', '2026-02-02', 300, '', '', '', '', '', 0, 'Online', 'Online']
+  ]);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'day-sale-cash-expense', date: '2026-02-02', category: 'Cash from sales', employeeId: 'regular-1', paymentId: 'sale-cash', amount: 100 }),
+    expenseRow({ id: 'cash-in-hand-expense', date: '2026-02-02', category: 'Cash in hand', employeeId: 'regular-2', paymentId: 'cash-in-hand', amount: 200 }),
+    expenseRow({ id: 'online-salary-expense', date: '2026-02-02', category: 'Online', employeeId: 'regular-3', paymentId: 'online', typeId: 'type-occasional', amount: 300 }),
+    expenseRow({ id: 'daily-pay-expense', date: '2026-02-02', category: 'Daily', employeeId: 'daily', amount: 350 })
+  ]);
+  const day = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.days[0];
+  assert.equal(day.salaryPaid, 950);
+  assert.equal(day.salaryDaySaleCash, 450);
+  assert.equal(day.salaryCashInHand, 200);
+  assert.equal(day.salaryOnline, 300);
+  assert.equal(day.cashExpenses, 650);
+  assert.equal(day.onlineExpenses, 300);
+});
+
+test('legacy salary payments linked to Expenses are shown as Day Sale Cash, not Cash In Hand', async () => {
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [
+    ['legacy-expense-pay', 'emp-legacy', 'Employee', '2026-02-02', 500, '', '', '', '', '', 0, 'Cash']
+  ]);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'legacy-expense', date: '2026-02-02', category: 'Employee', employeeId: 'emp-legacy', paymentId: 'legacy-expense-pay', amount: 500 })
+  ]);
+
+  const day = (await server.request('GET', url('2026-02-02', '2026-02-02'))).body.data.days[0];
+  assert.equal(day.salaryDaySaleCash, 500);
+  assert.equal(day.salaryCashInHand, 0);
+  assert.equal(day.cashExpenses, 500, 'the linked expense is counted once for Cash In Hand');
 });
 
 test('pending is clamped per employee so an advance does not cancel another dues', async () => {
@@ -209,7 +253,7 @@ test('an employee on full-day leave contributes no salary and no petta', async (
   assert.equal(day.salaryPending, 500, '700 - 200 petta for the working employee');
 });
 
-test('profit follows sales - expenses - salary line - market', async () => {
+test('operating profit excludes occasional payouts and profit balance deducts them', async () => {
   sheets.setRows(SHEETS.EMPLOYEES, [employeeRow()]);
   sheets.setRows(SHEETS.SALES_ENTRIES, [
     entryRow({ id: 'cash', amount: 4000 }),
@@ -232,8 +276,144 @@ test('profit follows sales - expenses - salary line - market', async () => {
   assert.equal(day.occasionalExpense, 150);
   assert.equal(day.marketExpense, 400);
   assert.equal(day.salaryPending, 100, 'salary 500 - petta 100 - received 300');
-  assert.equal(day.totalCost, 1550);
-  assert.equal(day.profit, 3450, '5000 - 900 - 150 - 100 - 400');
+  assert.equal(day.totalCost, 1400, 'operating cost excludes occasional expenses');
+  assert.equal(day.profit, 3600, '5000 - 900 - 100 - 400');
+  assert.equal(day.profitBalance, 3450, 'operating profit less occasional payout');
+});
+
+test('occasional expense on a no-sales day reduces carried profit balance, not daily profit', async () => {
+  sheets.setRows(SHEETS.SALES_ENTRIES, [entryRow({ date: '2026-02-01', amount: 1000 })]);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'daily', date: '2026-02-01', amount: 200 }),
+    expenseRow({ id: 'occasional', date: '2026-02-02', typeId: 'type-occasional', mode: 'Occasional', amount: 300 })
+  ]);
+  const { days, totals } = (await server.request('GET', url('2026-02-01', '2026-02-02'))).body.data;
+  assert.equal(days[0].profit, 800);
+  assert.equal(days[0].profitBalance, 800);
+  assert.equal(days[1].sales, 0);
+  assert.equal(days[1].totalCost, 0);
+  assert.equal(days[1].profit, 0);
+  assert.equal(days[1].profitBalance, 500);
+  assert.equal(totals.profit, 800);
+  assert.equal(totals.profitBalance, 500);
+});
+
+test('Day Online and Occasional Cash reduce profit balance but not operating profit', async () => {
+  sheets.setRows(SHEETS.EXPENSE_CATEGORY_TYPES, [
+    ...CATEGORY_TYPES,
+    ['type-day-online', 'Online stock', 4, 'Active', 'All', '', 'Online Stock', 'Daily Online'],
+    ['type-occ-cash', 'Cash occasional', 5, 'Active', 'All', '', 'Cash Occasional', 'Occasional Cash']
+  ]);
+  sheets.setRows(SHEETS.SALES_ENTRIES, [
+    entryRow({ id: 'day-one-cash', date: '2026-02-02', paymentType: 'Cash', amount: 1200 }),
+    entryRow({ id: 'day-one-online', date: '2026-02-02', paymentType: 'Card', amount: 800 }),
+    entryRow({ id: 'day-two', date: '2026-02-03', amount: 1000 })
+  ]);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'daily-cash', date: '2026-02-02', amount: 100 }),
+    expenseRow({ id: 'daily-online', date: '2026-02-02', typeId: 'type-day-online', mode: 'Daily Online', amount: 200 }),
+    expenseRow({ id: 'occasional-online', date: '2026-02-02', typeId: 'type-occasional', mode: 'Occasional', amount: 300 }),
+    expenseRow({ id: 'occasional-cash', date: '2026-02-02', typeId: 'type-occ-cash', mode: 'Occasional Cash', amount: 400 }),
+    expenseRow({ id: 'second-daily', date: '2026-02-03', amount: 200 })
+  ]);
+  const { days, totals } = (await server.request('GET', url('2026-02-02', '2026-02-03'))).body.data;
+  assert.equal(days[0].dailyCashExpense, 100);
+  assert.equal(days[0].dailyOnlineExpense, 200);
+  assert.equal(days[0].occasionalExpense, 300);
+  assert.equal(days[0].occasionalCashExpense, 400);
+  assert.equal(days[0].totalCost, 100);
+  assert.equal(days[0].profit, 1900);
+  assert.equal(days[0].profitBalancePayments, 900);
+  assert.equal(days[0].profitBalance, 1000);
+  assert.equal(days[1].profit, 800);
+  assert.equal(days[1].profitBalance, 1800);
+  assert.equal(totals.profitBalancePayments, 900);
+});
+
+test('Profit & Loss applies the current category workflow to existing expense records', async () => {
+  sheets.setRows(SHEETS.EXPENSE_CATEGORY_TYPES, [
+    ...CATEGORY_TYPES,
+    ['type-renamed', 'Renamed workflow', 4, 'Active', 'All', '', 'Online Stock', 'Daily Online']
+  ]);
+  sheets.setRows(SHEETS.SALES_ENTRIES, [entryRow({ id: 'sale', date: '2026-10-19', amount: 1000 })]);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'reclassified', date: '2026-10-19', typeId: 'type-renamed', mode: 'Daily Non Cash', amount: 250 })
+  ]);
+
+  const { days, totals } = (await server.request('GET', url('2026-10-19', '2026-10-19'))).body.data;
+  assert.equal(days[0].marketExpense, 0, 'old saved mode must not retain previous-day attribution');
+  assert.equal(days[0].dailyOnlineExpense, 250, 'the current Day / Online workflow is used');
+  assert.equal(days[0].profit, 1000, 'Day / Online is not charged to operating profit');
+  assert.equal(days[0].profitBalance, 750, 'Day / Online reduces the profit balance');
+  assert.equal(totals.profitBalancePayments, 250);
+});
+
+test('cash in hand subtracts only expenses configured as cash enabled', async () => {
+  sheets.setRows(SHEETS.EXPENSE_CATEGORY_TYPES, [
+    ['type-cash', 'Day Sale', 1, 'Active', 'All', '', 'Day Sale', 'Daily Cash', 'TRUE'],
+    ['type-online', 'Online', 2, 'Active', 'All', '', 'Online', 'Daily Online', 'FALSE'],
+    ['type-cash-online', 'Cash purchase', 3, 'Active', 'All', '', 'Cash purchase', 'Daily Online', 'TRUE']
+  ]);
+  sheets.setRows(SHEETS.SALES_ENTRIES, [
+    entryRow({ id: 'cash-day-one', date: '2026-02-01', paymentType: 'Cash', amount: 1000 }),
+    entryRow({ id: 'online-day-one', date: '2026-02-01', paymentType: 'Card', amount: 500 }),
+    entryRow({ id: 'cash-day-two', date: '2026-02-02', paymentType: 'Cash', amount: 300 })
+  ]);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'day-sale', date: '2026-02-01', typeId: 'type-cash', mode: 'Daily Cash', amount: 100 }),
+    expenseRow({ id: 'online-only', date: '2026-02-01', typeId: 'type-online', mode: 'Daily Online', amount: 250 }),
+    expenseRow({ id: 'cash-enabled-online-workflow', date: '2026-02-01', typeId: 'type-cash-online', mode: 'Daily Online', amount: 50 }),
+    expenseRow({ id: 'cash-salary-expense', date: '2026-02-02', category: 'Cash employee', employeeId: 'employee-cash', paymentId: 'salary-cash', typeId: 'type-cash', amount: 100 }),
+    expenseRow({ id: 'online-salary-expense', date: '2026-02-02', category: 'Online employee', employeeId: 'employee-online', paymentId: 'salary-online', typeId: 'type-online', amount: 200 })
+  ]);
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [
+    ['salary-cash', 'employee-cash', 'Cash employee', '2026-02-02', 100, '', '', '', '', '', 0, 'Cash'],
+    ['salary-online', 'employee-online', 'Online employee', '2026-02-02', 200, '', '', '', '', '', 0, 'Online']
+  ]);
+  const { days, totals } = (await server.request('GET', url('2026-02-01', '2026-02-02'))).body.data;
+  assert.equal(days[0].cashExpenses, 150, 'cash-enabled expenses reduce cash');
+  assert.equal(days[0].onlineExpenses, 250);
+  assert.equal(days[0].cashInHand, 850);
+  assert.equal(days[0].onlineInHand, 250);
+  assert.equal(days[0].salaryCashInHand, 0);
+  assert.equal(days[1].cashInHand, 1050);
+  assert.equal(days[1].onlineExpenses, 200, 'the recorded online salary expense reduces online balance');
+  assert.equal(days[1].onlineInHand, 50);
+  assert.equal(days[1].salaryDaySaleCash, 100, 'legacy cash payments linked to Expenses are classified as Day Sale Cash');
+  assert.equal(days[1].salaryCashInHand, 0);
+  assert.equal(days[1].salaryOnline, 200);
+  assert.equal(days[1].salaryPaid, 300);
+  assert.equal(totals.cashExpenses, 250);
+  assert.equal(totals.onlineExpenses, 450);
+  assert.equal(totals.cashInHand, 1050);
+  assert.equal(totals.onlineInHand, 50);
+  assert.equal(days[0].profitBalance, 1100, 'online workflow reduces profit balance independently of cash enablement');
+});
+
+test('previous day cash-enabled expenses reduce cash in hand on the funding day', async () => {
+  sheets.setRows(SHEETS.EXPENSE_CATEGORY_TYPES, [
+    ['type-prev', 'Previous Day Cash', 1, 'Active', 'All', '', 'Previous Day Cash', 'Daily Non Cash', 'TRUE']
+  ]);
+  sheets.setRows(SHEETS.SALES_ENTRIES, [entryRow({ date: '2026-02-01', paymentType: 'Cash', amount: 1000 })]);
+  sheets.setRows(SHEETS.EXPENSES, [expenseRow({ id: 'prev-purchase', date: '2026-02-02', typeId: 'type-prev', mode: 'Daily Non Cash', amount: 250 })]);
+  const day = (await server.request('GET', url('2026-02-01', '2026-02-02'))).body.data.days[0];
+  assert.equal(day.marketExpense, 250);
+  assert.equal(day.cashExpenses, 250);
+  assert.equal(day.cashInHand, 750);
+});
+
+test('Occasional report includes both cash and online occasional workflows', async () => {
+  sheets.setRows(SHEETS.EXPENSE_CATEGORY_TYPES, [
+    ...CATEGORY_TYPES,
+    ['type-occ-cash', 'Cash occasional', 5, 'Active', 'All', '', 'Cash Occasional', 'Occasional Cash']
+  ]);
+  sheets.setRows(SHEETS.EXPENSES, [
+    expenseRow({ id: 'online', date: '2026-02-02', typeId: 'type-occasional', mode: 'Occasional', amount: 100 }),
+    expenseRow({ id: 'cash', date: '2026-02-02', category: 'Snacks', typeId: 'type-occ-cash', mode: 'Occasional Cash', amount: 50 })
+  ]);
+  const res = await server.request('GET', '/api/reports/occasional?from=2026-02-01&to=2026-02-03');
+  assert.equal(res.body.data.entries.length, 2);
+  assert.deepEqual(res.body.data.entries.map(entry => entry.paymentMode).sort(), ['Cash', 'Online']);
 });
 
 test('paying arrears does not make a day look more profitable', async () => {

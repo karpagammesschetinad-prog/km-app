@@ -619,6 +619,21 @@ test('occasional expense is stored with Occasional mode', async () => {
   assert.equal(rows[0][3], 'fan');
 });
 
+test('Occasional Cash workflow uses the occasional expense entry flow and preserves its mode', async () => {
+  sheets.setRows(SHEETS.EXPENSE_CATEGORY_TYPES, [
+    ...CATEGORY_TYPES,
+    ['type-occ-cash', 'Cash occasional', 4, 'Active', 'All', '', 'Cash Occasional', 'Occasional Cash']
+  ]);
+  sheets.setRows(SHEETS.EXPENSE_CATEGORIES, [...CATEGORIES,
+    ['cat-cash-snack', 'Snack', 4, 'Active', 'type-occ-cash']
+  ]);
+  const res = await server.request('POST', '/api/expenses/occasional', {
+    date: '2026-01-05', category: 'Snack', typeId: 'type-occ-cash', amount: 40
+  });
+  assert.equal(res.status, 201);
+  assert.equal(sheets.getRows(SHEETS.EXPENSES)[0][17], 'Occasional Cash');
+});
+
 test('an occasional expense is updated in place while pending', async () => {
   sheets.setRows(SHEETS.EXPENSES, [expenseRow({ id: 'occ-1', category: 'Repair', typeId: 'type-occasional', mode: 'Occasional', amount: 400 })]);
 

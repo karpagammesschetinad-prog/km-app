@@ -8,23 +8,30 @@ const SHEET = SHEETS.EXPENSE_CATEGORIES;
 const TYPE_SHEET = SHEETS.EXPENSE_CATEGORY_TYPES;
 const QUANTITY_SHEET = SHEETS.EXPENSE_QUANTITY_CATEGORIES;
 const C = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, TYPE_ID: 4, EXCLUDE_CASH: 5, OPENING_BALANCE: 6, BALANCE_UPDATED_BY: 7, BALANCE_UPDATED_AT: 8, HANDPICK_QUANTITIES: 9 };
-const T = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, DISPLAY_TEXT: 6, WORKFLOW: 7 };
+const T = { ID: 0, NAME: 1, ORDER: 2, STATUS: 3, ACCESS_MODE: 4, ALLOWED_USERS: 5, DISPLAY_TEXT: 6, WORKFLOW: 7, CASH_ENABLED: 8 };
 const Q = { ID: 0, CATEGORY_ID: 1, NAME: 2, UNIT: 3, ORDER: 4, STATUS: 5, AUTO_CONSUME: 6, DEFAULT_QUANTITY: 7 };
 const EXPENSE_C = { CATEGORY: 2, EMPLOYEE_ID: 5, TYPE_ID: 13, ON_SPOT: 14 };
 const QUANTITY_UNITS = new Set(['KG', 'Grams', 'Litre', 'Count']);
 
 function normalizeWorkflow(value) {
   const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'occasional cash' || normalized === 'occasional_cash') return 'Occasional Cash';
+  if (normalized === 'day / online' || normalized === 'day online' || normalized === 'daily online' || normalized === 'daily_online') return 'Daily Online';
   if (normalized === 'occasional' || normalized === 'occasional_excluded') return 'Occasional';
   if (normalized === 'daily non cash' || normalized === 'daily_non_cash' || normalized === 'dailycashexcluded') return 'Daily Non Cash';
   return 'Daily Cash';
 }
 
 function typeRowToObj(row) {
+  const workflow = normalizeWorkflow(row[T.WORKFLOW]);
+  const cashEnabled = row[T.CASH_ENABLED] === undefined || row[T.CASH_ENABLED] === ''
+    ? ['Daily Cash', 'Daily Non Cash', 'Occasional Cash'].includes(workflow)
+    : String(row[T.CASH_ENABLED]).toLowerCase() === 'true';
   return {
     id: row[T.ID] || '', name: row[T.NAME] || '', displayText: row[T.DISPLAY_TEXT] || row[T.NAME] || '', sortOrder: parseInt(row[T.ORDER]) || 0,
     status: row[T.STATUS] || 'Active', accessMode: row[T.ACCESS_MODE] === 'Limited' ? 'Limited' : 'All',
-    workflow: normalizeWorkflow(row[T.WORKFLOW]),
+    workflow,
+    cashEnabled,
     allowedUserIds: String(row[T.ALLOWED_USERS] || '').split(',').map(v => v.trim()).filter(Boolean)
   };
 }
@@ -277,8 +284,9 @@ router.post('/types', requireSuperUser, async (req, res) => {
     const { name, displayText, sortOrder, status = 'Active', accessMode = 'All', allowedUserIds = [], workflow = 'Daily Cash' } = req.body;
     if (!name || !String(name).trim()) return res.status(400).json({ success: false, message: 'Type name is required.' });
     const rows = await getAllRows(TYPE_SHEET);
-    const obj = { id: uuidv4(), name: String(name).trim(), displayText: String(displayText || name).trim(), sortOrder: parseInt(sortOrder) || rows.length + 1, status, accessMode: accessMode === 'Limited' ? 'Limited' : 'All', allowedUserIds: Array.isArray(allowedUserIds) ? allowedUserIds : [], workflow: normalizeWorkflow(workflow) };
-    await appendRow(TYPE_SHEET, [obj.id, obj.name, obj.sortOrder, obj.status, obj.accessMode, obj.allowedUserIds.join(','), obj.displayText || obj.name, obj.workflow]);
+    const normalizedWorkflow = normalizeWorkflow(workflow);
+    const obj = { id: uuidv4(), name: String(name).trim(), displayText: String(displayText || name).trim(), sortOrder: parseInt(sortOrder) || rows.length + 1, status, accessMode: accessMode === 'Limited' ? 'Limited' : 'All', allowedUserIds: Array.isArray(allowedUserIds) ? allowedUserIds : [], workflow: normalizedWorkflow, cashEnabled: req.body.cashEnabled === undefined ? ['Daily Cash', 'Daily Non Cash', 'Occasional Cash'].includes(normalizedWorkflow) : req.body.cashEnabled === true };
+    await appendRow(TYPE_SHEET, [obj.id, obj.name, obj.sortOrder, obj.status, obj.accessMode, obj.allowedUserIds.join(','), obj.displayText || obj.name, obj.workflow, obj.cashEnabled ? 'TRUE' : 'FALSE']);
     res.status(201).json({ success: true, data: obj });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -290,7 +298,8 @@ router.put('/types/:id', requireSuperUser, async (req, res) => {
     const existing = typeRowToObj(found.row);
     const updated = { ...existing, ...req.body, id: existing.id, accessMode: req.body.accessMode === 'Limited' ? 'Limited' : (req.body.accessMode || existing.accessMode), allowedUserIds: Array.isArray(req.body.allowedUserIds) ? req.body.allowedUserIds : existing.allowedUserIds };
     updated.workflow = normalizeWorkflow(updated.workflow);
-    await updateRow(TYPE_SHEET, found.index, [updated.id, updated.name, parseInt(updated.sortOrder) || existing.sortOrder, updated.status, updated.accessMode, updated.allowedUserIds.join(','), updated.displayText || updated.name, updated.workflow]);
+    updated.cashEnabled = req.body.cashEnabled === undefined ? existing.cashEnabled : req.body.cashEnabled === true;
+    await updateRow(TYPE_SHEET, found.index, [updated.id, updated.name, parseInt(updated.sortOrder) || existing.sortOrder, updated.status, updated.accessMode, updated.allowedUserIds.join(','), updated.displayText || updated.name, updated.workflow, updated.cashEnabled ? 'TRUE' : 'FALSE']);
     if (updated.name !== existing.name) {
       const expenseRows = await getAllRows(SHEETS.EXPENSES);
       for (let index = 0; index < expenseRows.length; index++) {

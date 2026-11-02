@@ -449,7 +449,7 @@ function renderSalesExpenseChart(expenses, salesHistory = [], referenceDate = ne
     return { label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), key };
   });
   const sumFor = (dayKey, isOccasional) => expenses
-    .filter(expense => expense.date === dayKey && (expense.mode === 'Occasional') === isOccasional)
+    .filter(expense => expense.date === dayKey && (['Occasional', 'Occasional Cash'].includes(expense.mode)) === isOccasional)
     .reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
   const expenseData = days.map(day => sumFor(day.key, false));
   const occasionalData = days.map(day => sumFor(day.key, true));
@@ -468,7 +468,7 @@ function renderSalesExpenseChart(expenses, salesHistory = [], referenceDate = ne
         borderRadius: 6,
         borderSkipped: false
       }, {
-        label: 'Occasional',
+        label: 'Occasional / Online + Cash',
         data: occasionalData,
         backgroundColor: 'rgba(14,165,233,.55)',
         borderRadius: 6,

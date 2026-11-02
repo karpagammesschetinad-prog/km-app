@@ -39,7 +39,7 @@ const EXPENSE_COLUMNS = {
 
 const CATEGORY_TYPE_COLUMNS = {
   ID: 'ID', NAME: 'Name', ORDER: 'SortOrder', STATUS: 'Status',
-  ACCESS_MODE: 'AccessMode', ALLOWED_USERS: 'AllowedUserIDs', WORKFLOW: 'ExpenseWorkflow'
+  ACCESS_MODE: 'AccessMode', ALLOWED_USERS: 'AllowedUserIDs', WORKFLOW: 'ExpenseWorkflow', CASH_ENABLED: 'CashEnabled'
 };
 
 const USER_COLUMNS = {
@@ -64,7 +64,7 @@ const CASES = [
     columns: {
       ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', DATE: 'PaymentDate',
       AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt',
-      SETTLEMENT_START: 'SettlementStart', SETTLEMENT_END: 'SettlementEnd', BONUS_AMOUNT: 'BonusAmount'
+      SETTLEMENT_START: 'SettlementStart', SETTLEMENT_END: 'SettlementEnd', BONUS_AMOUNT: 'BonusAmount', PAYMENT_METHOD: 'PaymentMethod', PAYMENT_SOURCE: 'PaymentSource'
     }
   },
   {
@@ -156,7 +156,7 @@ const CASES = [
     file: 'reports.js', constant: 'PAYMENT_C', sheet: 'SALARY_PAYMENTS',
     columns: {
       ID: 'ID', EMP_ID: 'EmployeeID', EMP_NAME: 'EmployeeName', DATE: 'PaymentDate',
-      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt', BONUS_AMOUNT: 'BonusAmount'
+      AMOUNT: 'Amount', REMARKS: 'Remarks', CREATED_BY: 'CreatedBy', CREATED_AT: 'CreatedAt', BONUS_AMOUNT: 'BonusAmount', PAYMENT_METHOD: 'PaymentMethod', PAYMENT_SOURCE: 'PaymentSource'
     }
   },
   {

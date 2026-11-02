@@ -5,23 +5,92 @@ let occasionalData = null;
 let plChart = null;
 
 // Sub-column counts per collapsible group in the daily breakdown table.
-const COLUMN_GROUPS = { sales: 2, expenses: 2, salary: 3 };
-const BASE_COLUMN_COUNT = 7;
+const COLUMN_GROUPS = { sales: 2, expenses: 4, salary: 3, salarySources: 3 };
+const BASE_COLUMN_COUNT = 8;
 const expandedColumnGroups = new Set();
+let activePLFormula = null;
+const PL_FORMULAS = {
+  cashInHand: {
+    title: 'Cash In Hand calculation',
+    formula: 'Previous day Cash In Hand + Cash Sales − Cash-enabled Expenses.',
+    groups: ['sales', 'expenses'],
+    columns: ['salesTotal', 'expensesTotal', 'market', 'cashInHand']
+  },
+  onlineBalance: {
+    title: 'Online Balance calculation',
+    formula: 'Previous day Online Balance + Online Sales − Online Expenses.',
+    groups: ['sales', 'expenses'],
+    columns: ['salesTotal', 'expensesTotal', 'onlineBalance']
+  },
+  profit: {
+    title: 'Profit calculation',
+    formula: 'Sales − Day / Sale expenses − (Salary − Petta − Received) − Market.',
+    groups: ['expenses', 'salary'],
+    columns: ['salesTotal', 'expensesTotal', 'market', 'profit']
+  },
+  profitBalance: {
+    title: 'Profit Balance calculation',
+    formula: 'Previous day Profit Balance + Profit − Day / Online − Occasional / Online − Occasional / Cash.',
+    groups: ['expenses', 'salary'],
+    columns: ['expensesTotal', 'profit', 'profitBalance']
+  }
+};
+
+function showPLFormula(key) {
+  const definition = PL_FORMULAS[key];
+  if (!definition) return;
+  activePLFormula = key;
+  expandedColumnGroups.clear();
+  definition.groups.forEach(group => expandedColumnGroups.add(group));
+  const panel = document.getElementById('plFormulaPanel');
+  document.getElementById('plFormulaTitle').textContent = definition.title;
+  document.getElementById('plFormulaText').textContent = definition.formula;
+  panel.hidden = false;
+  applyColumnGroups();
+}
+
+function resetPLView() {
+  activePLFormula = null;
+  expandedColumnGroups.clear();
+  const panel = document.getElementById('plFormulaPanel');
+  if (panel) panel.hidden = true;
+  applyColumnGroups();
+}
 
 function plColumnCount() {
-  return BASE_COLUMN_COUNT + [...expandedColumnGroups].reduce((sum, key) => sum + (COLUMN_GROUPS[key] || 0), 0);
+  return BASE_COLUMN_COUNT +
+    (expandedColumnGroups.has('sales') ? COLUMN_GROUPS.sales : 0) +
+    (expandedColumnGroups.has('expenses') ? COLUMN_GROUPS.expenses : 0) +
+    (expandedColumnGroups.has('salary') ? COLUMN_GROUPS.salary : 0) +
+    (expandedColumnGroups.has('salary') && expandedColumnGroups.has('salarySources') ? COLUMN_GROUPS.salarySources : 0);
 }
 
 function applyColumnGroups() {
   document.querySelectorAll('#plTable [data-col-group]').forEach(cell => {
-    cell.classList.toggle('d-none', !expandedColumnGroups.has(cell.dataset.colGroup));
+    const group = cell.dataset.colGroup;
+    const visible = group === 'salarySources'
+      ? expandedColumnGroups.has('salary') && expandedColumnGroups.has('salarySources')
+      : expandedColumnGroups.has(group);
+    cell.classList.toggle('d-none', !visible);
   });
   document.querySelectorAll('#plTable [data-toggle-group]').forEach(header => {
     const icon = header.querySelector('i');
     if (!icon) return;
     const expanded = expandedColumnGroups.has(header.dataset.toggleGroup);
     icon.className = `bi ${expanded ? 'bi-dash-square' : 'bi-plus-square'} ms-1 small`;
+  });
+  const formula = PL_FORMULAS[activePLFormula];
+  document.querySelectorAll('#plTable [data-col-group], #plTable [data-formula-column]').forEach(cell => {
+    const column = cell.dataset.formulaColumn;
+    const group = cell.dataset.colGroup;
+    const highlighted = !!formula && (
+      formula.columns.includes(column) ||
+      (group && (group === 'salarySources' ? formula.groups.includes('salary') : formula.groups.includes(group)))
+    );
+    cell.classList.toggle('pl-formula-highlight', highlighted);
+  });
+  document.querySelectorAll('#plTable [data-formula]').forEach(header => {
+    header.classList.toggle('pl-formula-active', header.dataset.formula === activePLFormula);
   });
 }
 
@@ -58,11 +127,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.querySelectorAll('#plTable [data-toggle-group]').forEach(header => {
     header.addEventListener('click', () => {
       const group = header.dataset.toggleGroup;
-      if (expandedColumnGroups.has(group)) expandedColumnGroups.delete(group);
+      if (expandedColumnGroups.has(group)) {
+        expandedColumnGroups.delete(group);
+        if (group === 'salary') expandedColumnGroups.delete('salarySources');
+      }
       else expandedColumnGroups.add(group);
       applyColumnGroups();
     });
   });
+  document.querySelectorAll('#plTable [data-formula]').forEach(header => {
+    header.addEventListener('click', () => showPLFormula(header.dataset.formula));
+    header.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      showPLFormula(header.dataset.formula);
+    });
+  });
+  document.getElementById('btnResetPLView').addEventListener('click', resetPLView);
 
   await loadReport();
 });
@@ -107,16 +188,20 @@ function card(title, value, tone, hint) {
 }
 
 function renderSummary(totals) {
-  const expenses = totals.dailyCashExpense + totals.occasionalExpense;
+  const expenses = totals.dailyCashExpense + totals.dailyOnlineExpense + totals.occasionalExpense + totals.occasionalCashExpense;
   document.getElementById('summaryCards').innerHTML =
     card('Total Sales', formatCurrency(totals.sales), 'primary',
       `Cash ${formatCurrency(totals.cashSales)} · Online ${formatCurrency(totals.onlineSales)}`) +
     card('Expenses', formatCurrency(expenses), 'warning',
-      `Daily cash ${formatCurrency(totals.dailyCashExpense)} · Occasional ${formatCurrency(totals.occasionalExpense)}`) +
+      `Day / Sale ${formatCurrency(totals.dailyCashExpense)} · Day / Online ${formatCurrency(totals.dailyOnlineExpense)} · Occasional / Online ${formatCurrency(totals.occasionalExpense)} · Occasional / Cash ${formatCurrency(totals.occasionalCashExpense)}`) +
     card('Pending Salary', formatCurrency(totals.salaryPending), 'info',
-      `Salary ${formatCurrency(totals.salaryGross)} − petta ${formatCurrency(totals.pettaTotal)} − received ${formatCurrency(totals.salaryPaid)}`) +
-    card(totals.profit >= 0 ? 'Profit' : 'Loss', formatCurrency(totals.profit), totals.profit >= 0 ? 'success' : 'danger',
-      `Market ${formatCurrency(totals.marketExpense)}${totals.margin === null ? '' : ` · Margin ${totals.margin}%`}`);
+      `Salary ${formatCurrency(totals.salaryGross)} − petta ${formatCurrency(totals.pettaTotal)} − received ${formatCurrency(totals.salaryPaid)} · Day Sale Cash ${formatCurrency(totals.salaryDaySaleCash)} · Cash In Hand ${formatCurrency(totals.salaryCashInHand)} · Online ${formatCurrency(totals.salaryOnline)}`) +
+    card('Cash In Hand', formatCurrency(totals.cashInHand), totals.cashInHand >= 0 ? 'primary' : 'danger',
+      `Cash sales ${formatCurrency(totals.cashSales)} − cash expenses ${formatCurrency(totals.cashExpenses)} · Range balance`) +
+    card('Online Balance', formatCurrency(totals.onlineInHand), totals.onlineInHand >= 0 ? 'info' : 'danger',
+      `Online sales ${formatCurrency(totals.onlineSales)} − online expenses ${formatCurrency(totals.onlineExpenses)} · Range balance`) +
+    card(totals.profitBalance >= 0 ? 'Profit Balance' : 'Profit Balance (Advance)', formatCurrency(totals.profitBalance), totals.profitBalance >= 0 ? 'success' : 'danger',
+      `Operating profit ${formatCurrency(totals.profit)} · Paid from profit ${formatCurrency(totals.profitBalancePayments)}${totals.margin === null ? '' : ` · Margin ${totals.margin}%`}`);
 }
 
 function renderChart(days) {
@@ -139,39 +224,55 @@ function renderChart(days) {
 
 function renderTable(days, totals) {
   const body = document.getElementById('plBody');
-  const rows = days.filter(day => day.sales || day.totalCost);
+  const rows = days.filter(day => day.sales || day.totalCost || day.profitBalancePayments);
   body.innerHTML = rows.length ? rows.map(day => `<tr>
     <td data-label="Date" class="text-nowrap">${formatDate(day.date)}</td>
-    <td data-label="Sales" class="text-end fw-semibold">${formatCurrency(day.sales)}</td>
+    <td data-label="Sales" data-formula-column="salesTotal" class="text-end fw-semibold">${formatCurrency(day.sales)}</td>
     <td data-label="Cash" class="text-end" data-col-group="sales">${formatCurrency(day.cashSales)}</td>
     <td data-label="Online" class="text-end" data-col-group="sales">${formatCurrency(day.onlineSales)}</td>
-    <td data-label="Expenses" class="text-end">${formatCurrency(day.dailyCashExpense + day.occasionalExpense)}</td>
+    <td data-label="Expenses" class="text-end" data-formula-column="expensesTotal">${formatCurrency(day.dailyCashExpense + day.dailyOnlineExpense + day.occasionalExpense + day.occasionalCashExpense)}</td>
     <td data-label="Daily Cash Exp" class="text-end" data-col-group="expenses">${formatCurrency(day.dailyCashExpense)}</td>
-    <td data-label="Occasional" class="text-end" data-col-group="expenses">${formatCurrency(day.occasionalExpense)}</td>
+    <td data-label="Day / Online" class="text-end" data-col-group="expenses">${formatCurrency(day.dailyOnlineExpense)}</td>
+    <td data-label="Occasional / Online" class="text-end" data-col-group="expenses">${formatCurrency(day.occasionalExpense)}</td>
+    <td data-label="Occasional / Cash" class="text-end" data-col-group="expenses">${formatCurrency(day.occasionalCashExpense)}</td>
     <td data-label="Pending Salary" class="text-end">${formatCurrency(day.salaryPending)}</td>
     <td data-label="Salary" class="text-end" data-col-group="salary">${formatCurrency(day.salaryGross)}</td>
     <td data-label="Received" class="text-end" data-col-group="salary">${formatCurrency(day.salaryPaid)}</td>
+    <td data-label="Day Sale Cash" class="text-end" data-col-group="salarySources">${formatCurrency(day.salaryDaySaleCash)}</td>
+    <td data-label="Cash In Hand" class="text-end" data-col-group="salarySources">${formatCurrency(day.salaryCashInHand)}</td>
+    <td data-label="Online Paid" class="text-end" data-col-group="salarySources">${formatCurrency(day.salaryOnline)}</td>
     <td data-label="Petta" class="text-end" data-col-group="salary">${formatCurrency(day.pettaTotal)}</td>
-    <td data-label="Market (from this day's cash)" class="text-end">${formatCurrency(day.marketExpense)}</td>
-    <td data-label="Total Cost" class="text-end">${formatCurrency(day.totalCost)}</td>
-    <td data-label="Profit" class="text-end fw-semibold ${day.profit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(day.profit)}</td>
+    <td data-label="Market" class="text-end" data-formula-column="market">${formatCurrency(day.marketExpense)}</td>
+    <td data-label="Operating Cost" class="text-end">${formatCurrency(day.totalCost)}</td>
+    <td data-label="Cash In Hand" data-formula-column="cashInHand" class="text-end fw-semibold ${day.cashInHand >= 0 ? 'text-primary' : 'text-danger'}">${formatCurrency(day.cashInHand)}</td>
+    <td data-label="Online Balance" data-formula-column="onlineBalance" class="text-end fw-semibold ${day.onlineInHand >= 0 ? 'text-info' : 'text-danger'}">${formatCurrency(day.onlineInHand)}</td>
+    <td data-label="Profit" data-formula-column="profit" class="text-end fw-semibold ${day.profit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(day.profit)}</td>
+    <td data-label="Profit Balance" data-formula-column="profitBalance" class="text-end fw-semibold ${day.profitBalance >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(day.profitBalance)}</td>
   </tr>`).join('') : emptyRow(plColumnCount(), 'No sales or costs in this range.');
 
   document.getElementById('plFoot').innerHTML = rows.length ? `<tr class="fw-bold" style="background:#f0f9ff">
     <td>Total</td>
-    <td class="text-end">${formatCurrency(totals.sales)}</td>
+    <td class="text-end" data-formula-column="salesTotal">${formatCurrency(totals.sales)}</td>
     <td class="text-end" data-col-group="sales">${formatCurrency(totals.cashSales)}</td>
     <td class="text-end" data-col-group="sales">${formatCurrency(totals.onlineSales)}</td>
-    <td class="text-end">${formatCurrency(totals.dailyCashExpense + totals.occasionalExpense)}</td>
+    <td class="text-end" data-formula-column="expensesTotal">${formatCurrency(totals.dailyCashExpense + totals.dailyOnlineExpense + totals.occasionalExpense + totals.occasionalCashExpense)}</td>
     <td class="text-end" data-col-group="expenses">${formatCurrency(totals.dailyCashExpense)}</td>
+    <td class="text-end" data-col-group="expenses">${formatCurrency(totals.dailyOnlineExpense)}</td>
     <td class="text-end" data-col-group="expenses">${formatCurrency(totals.occasionalExpense)}</td>
+    <td class="text-end" data-col-group="expenses">${formatCurrency(totals.occasionalCashExpense)}</td>
     <td class="text-end">${formatCurrency(totals.salaryPending)}</td>
     <td class="text-end" data-col-group="salary">${formatCurrency(totals.salaryGross)}</td>
     <td class="text-end" data-col-group="salary">${formatCurrency(totals.salaryPaid)}</td>
+    <td class="text-end" data-col-group="salarySources">${formatCurrency(totals.salaryDaySaleCash)}</td>
+    <td class="text-end" data-col-group="salarySources">${formatCurrency(totals.salaryCashInHand)}</td>
+    <td class="text-end" data-col-group="salarySources">${formatCurrency(totals.salaryOnline)}</td>
     <td class="text-end" data-col-group="salary">${formatCurrency(totals.pettaTotal)}</td>
-    <td class="text-end">${formatCurrency(totals.marketExpense)}</td>
+    <td class="text-end" data-formula-column="market">${formatCurrency(totals.marketExpense)}</td>
     <td class="text-end">${formatCurrency(totals.totalCost)}</td>
-    <td class="text-end ${totals.profit >= 0 ? 'text-success' : 'text-danger'}">${formatCurrency(totals.profit)}</td>
+    <td class="text-end ${totals.cashInHand >= 0 ? 'text-primary' : 'text-danger'}" data-formula-column="cashInHand">${formatCurrency(totals.cashInHand)}</td>
+    <td class="text-end ${totals.onlineInHand >= 0 ? 'text-info' : 'text-danger'}" data-formula-column="onlineBalance">${formatCurrency(totals.onlineInHand)}</td>
+    <td class="text-end ${totals.profit >= 0 ? 'text-success' : 'text-danger'}" data-formula-column="profit">${formatCurrency(totals.profit)}</td>
+    <td class="text-end ${totals.profitBalance >= 0 ? 'text-success' : 'text-danger'}" data-formula-column="profitBalance">${formatCurrency(totals.profitBalance)}</td>
   </tr>` : '';
 
   applyColumnGroups();
@@ -197,31 +298,32 @@ function renderOccasional(data) {
   body.innerHTML = data.entries.length ? data.entries.map(entry => {
     // A subtotal row opens each new date so the day-wise capture is easy to scan.
     const header = entry.date === lastDate ? '' : `<tr class="table-light fw-semibold">
-      <td colspan="6">${formatDate(entry.date)}</td>
+      <td colspan="7">${formatDate(entry.date)}</td>
       <td class="text-end">${formatCurrency(totalsByDate.get(entry.date).amount)}</td></tr>`;
     lastDate = entry.date;
     return header + `<tr>
       <td data-label="Date" class="text-nowrap">${formatDate(entry.date)}</td>
       <td data-label="Category" class="fw-semibold">${escapeHtml(entry.category)}</td>
       <td data-label="Type">${escapeHtml(entry.type)}</td>
+      <td data-label="Payment">${escapeHtml(entry.paymentMode || 'Online')}</td>
       <td data-label="Remarks" class="text-muted">${escapeHtml(entry.remarks || '—')}</td>
       <td data-label="Submitted By">${escapeHtml(entry.submittedBy || '—')}</td>
       <td data-label="Status">${statusBadge(entry.approvalStatus)}</td>
       <td data-label="Amount" class="text-end fw-semibold">${formatCurrency(entry.amount)}</td>
     </tr>`;
-  }).join('') : emptyRow(7, 'No occasional expenses in this range.');
+  }).join('') : emptyRow(8, 'No occasional expenses in this range.');
 
   document.getElementById('occasionalFoot').innerHTML = data.entries.length
-    ? `<tr class="fw-bold" style="background:#f0f9ff"><td colspan="6">Total</td><td class="text-end">${formatCurrency(data.totals.amount)}</td></tr>`
+    ? `<tr class="fw-bold" style="background:#f0f9ff"><td colspan="7">Total</td><td class="text-end">${formatCurrency(data.totals.amount)}</td></tr>`
     : '';
 }
 
 function exportOccasionalCsv() {
   if (!occasionalData) return showNotification('Run the report first.', 'warning');
-  const headers = ['Date', 'Category', 'Type', 'Remarks', 'Submitted By', 'Status', 'Amount'];
+  const headers = ['Date', 'Category', 'Type', 'Payment Mode', 'Remarks', 'Submitted By', 'Status', 'Amount'];
   const cell = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
   const lines = [headers.join(',')].concat(occasionalData.entries.map(entry => [
-    entry.date, cell(entry.category), cell(entry.type), cell(entry.remarks),
+    entry.date, cell(entry.category), cell(entry.type), entry.paymentMode || 'Online', cell(entry.remarks),
     cell(entry.submittedBy), entry.approvalStatus, entry.amount
   ].join(',')));
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -307,10 +409,10 @@ function renderAnalytics(analytics) {
 
 function exportCsv() {
   if (!reportData) return showNotification('Run the report first.', 'warning');
-  const headers = ['Date', 'Sales', 'Cash Sales', 'Online Sales', 'Daily Cash Expense', 'Occasional', 'Salary', 'Salary Received', 'Petta', 'Pending Salary', 'Market', 'Total Cost', 'Profit'];
+  const headers = ['Date', 'Sales', 'Cash Sales', 'Online Sales', 'Day / Sale', 'Day / Online', 'Occasional / Online', 'Occasional / Cash', 'Salary', 'Salary Received', 'Salary Paid from Day Sale Cash', 'Salary Paid from Cash In Hand', 'Salary Paid Online', 'Petta', 'Pending Salary', 'Market', 'Operating Cost', 'Cash In Hand', 'Online Balance', 'Operating Profit', 'Profit Balance'];
   const lines = [headers.join(',')].concat(reportData.days.map(day => [
-    day.date, day.sales, day.cashSales, day.onlineSales, day.dailyCashExpense, day.occasionalExpense,
-    day.salaryGross, day.salaryPaid, day.pettaTotal, day.salaryPending, day.marketExpense, day.totalCost, day.profit
+    day.date, day.sales, day.cashSales, day.onlineSales, day.dailyCashExpense, day.dailyOnlineExpense, day.occasionalExpense, day.occasionalCashExpense,
+    day.salaryGross, day.salaryPaid, day.salaryDaySaleCash, day.salaryCashInHand, day.salaryOnline, day.pettaTotal, day.salaryPending, day.marketExpense, day.totalCost, day.cashInHand, day.onlineInHand, day.profit, day.profitBalance
   ].join(',')));
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');

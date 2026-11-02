@@ -155,7 +155,16 @@ function setupDaySalaryModal() {
   const endDateInput = document.getElementById('daySalaryEndDate');
   const employeeOptions = document.getElementById('daySalaryEmployeeOptions');
   const employeeSearch = document.getElementById('daySalaryEmployeeSearch');
+  const consolidated = document.getElementById('daySalaryConsolidatedPending');
+  // Historical payment endpoints only return a complete ledger for superusers.
+  document.getElementById('consolidatedPendingOption').hidden = !isSuperUser();
+  consolidated.addEventListener('change', () => {
+    startDateInput.disabled = consolidated.checked;
+    document.getElementById('daySalaryEmployeeButton').disabled = consolidated.checked;
+    renderDaySalary();
+  });
   button.addEventListener('click', async () => {
+    daySalaryData = null;
     const today = dayKeyOf(new Date());
     if (!startDateInput.value) startDateInput.value = today;
     if (!endDateInput.value) endDateInput.value = today;
@@ -179,9 +188,8 @@ function setupDaySalaryModal() {
 function populateDaySalaryEmployees(options) {
   const selectedIds = new Set(Array.from(options.querySelectorAll('input:checked'), input => input.value));
   options.innerHTML = allEmployees
-    .filter(employee => employee.status === 'Active')
     .sort((first, second) => first.name.localeCompare(second.name))
-    .map(employee => `<label class="dropdown-item-text d-flex align-items-center gap-2 py-1"><input class="form-check-input day-salary-employee-check m-0" type="checkbox" value="${employee.id}"${selectedIds.has(employee.id) ? ' checked' : ''}><span>${escapeHtml(employee.name)}</span></label>`)
+    .map(employee => `<label class="dropdown-item-text d-flex align-items-center gap-2 py-1"><input class="form-check-input day-salary-employee-check m-0" type="checkbox" value="${employee.id}"${selectedIds.has(employee.id) ? ' checked' : ''}><span>${escapeHtml(employee.name)}${employee.status === 'Active' ? '' : ' (Inactive)'}</span></label>`)
     .join('');
   updateDaySalaryEmployeeButton();
 }
@@ -217,11 +225,12 @@ async function renderDaySalary() {
   const startDate = document.getElementById('daySalaryStartDate').value;
   const endDate = document.getElementById('daySalaryEndDate').value;
   const selectedEmployeeIds = selectedDaySalaryEmployeeIds();
+  const consolidated = !!document.getElementById('daySalaryConsolidatedPending')?.checked && isSuperUser();
   if (!body || !startDate || !endDate) return;
   body.innerHTML = loadingRow(6);
   foot.innerHTML = '';
 
-  if (startDate > endDate) {
+  if (!consolidated && startDate > endDate) {
     body.innerHTML = emptyRow(6, 'Start date must be on or before end date.');
     document.getElementById('daySalaryTotals').textContent = '';
     return;
@@ -241,6 +250,11 @@ async function renderDaySalary() {
     return;
   }
 
+  if (consolidated) {
+    renderConsolidatedPending(endDate);
+    return;
+  }
+  document.getElementById('daySalaryHead').innerHTML = '<tr><th>Employee</th><th>Type</th><th class="text-end">Salary Earned</th><th class="text-end">Petta</th><th class="text-end">Salary Received</th><th class="text-end">Pending Salary</th></tr>';
   const { rows, totals } = salarySummaryData(startDate, endDate, selectedEmployeeIds);
 
   if (!rows.length) {
@@ -274,10 +288,55 @@ async function renderDaySalary() {
   </tr>`;
 }
 
+function consolidatedPendingSalaryData(endDate) {
+  const end = new Date(`${endDate}T00:00:00`);
+  const rows = allEmployees.filter(employee => employee.status === 'Active' && employee.startDate && employee.startDate <= endDate)
+    .map(employee => {
+      const salary = calculateEmployeeDetailSalary({
+        employee,
+        leaves: employeeLeaves.filter(item => item.employeeId === employee.id),
+        payments: daySalaryData.payments.filter(item => item.employeeId === employee.id),
+        pettaHistory: daySalaryData.petta.filter(item => item.employeeId === employee.id),
+        salaryHistory: daySalaryData.salaryHistory.filter(item => item.employeeId === employee.id),
+        start: new Date(`${employee.startDate}T00:00:00`), end
+      });
+      return {
+        id: employee.id, name: employee.name,
+        type: employee.temporaryEmployee ? 'Dynamic / Temporary' : (employee.dailySalaryEnabled ? 'Daily Pay' : 'Regular'),
+        opening: employee.temporaryEmployee || employee.dailySalaryEnabled ? 0 : (parseFloat(employee.openingBalance) || 0),
+        earned: salary.earnedSalary, received: salary.totalPaid,
+        pending: Math.round((salary.balance + Number.EPSILON) * 100) / 100
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  const totals = rows.reduce((sum, row) => ({
+    opening: sum.opening + row.opening, earned: sum.earned + row.earned, received: sum.received + row.received,
+    pending: sum.pending + Math.max(0, row.pending), advance: sum.advance + Math.max(0, -row.pending)
+  }), { opening: 0, earned: 0, received: 0, pending: 0, advance: 0 });
+  return { rows, totals };
+}
+
+function renderConsolidatedPending(endDate) {
+  const { rows, totals } = consolidatedPendingSalaryData(endDate);
+  document.getElementById('daySalaryHead').innerHTML = '<tr><th>Employee</th><th>Type</th><th class="text-end">Opening Balance</th><th class="text-end">Net Salary Earned</th><th class="text-end">Salary Received</th><th class="text-end">Pending / Advance</th></tr>';
+  document.getElementById('daySalaryTotals').textContent = `${rows.length} active employees · Through ${formatDate(endDate)} · Pending ${formatCurrency(totals.pending)} · Advances ${formatCurrency(totals.advance)} · Includes opening balances and all earlier payments; start date and employee selection are ignored.`;
+  document.getElementById('daySalaryBody').innerHTML = rows.length ? rows.map(row => `<tr>
+    <td data-label="Employee"><a href="/employee-detail.html?id=${encodeURIComponent(row.id)}">${escapeHtml(row.name)}</a></td>
+    <td data-label="Type">${row.type}</td>
+    <td data-label="Opening Balance" class="text-end">${formatCurrency(row.opening)}</td>
+    <td data-label="Net Salary Earned" class="text-end">${formatCurrency(row.earned)}</td>
+    <td data-label="Salary Received" class="text-end">${formatCurrency(row.received)}</td>
+    <td data-label="Pending / Advance" class="text-end"><span class="badge bg-${row.pending > 0 ? 'danger' : row.pending < 0 ? 'warning' : 'success'}-subtle text-dark">${formatCurrency(Math.abs(row.pending))} ${row.pending > 0 ? 'Pending' : row.pending < 0 ? 'Advance' : 'Settled'}</span></td>
+  </tr>`).join('') : emptyRow(6, 'No active employees as of this date.');
+  document.getElementById('daySalaryFoot').innerHTML = `<tr class="fw-bold"><td colspan="2">Total pending (advances shown separately)</td><td class="text-end">${formatCurrency(totals.opening)}</td><td class="text-end">${formatCurrency(totals.earned)}</td><td class="text-end">${formatCurrency(totals.received)}</td><td class="text-end">${formatCurrency(totals.pending)}</td></tr>`;
+}
+
 function salarySummaryData(startDate, endDate, selectedIds) {
   const dates = dateRange(startDate, endDate);
+  const paidEmployeeIds = new Set((daySalaryData?.payments || [])
+    .filter(payment => String(payment.paymentDate || '').slice(0, 10) >= startDate && String(payment.paymentDate || '').slice(0, 10) <= endDate)
+    .map(payment => payment.employeeId));
   const rows = allEmployees
-    .filter(employee => employee.status === 'Active' && String(employee.startDate || '') <= endDate &&
+    .filter(employee => (employee.status === 'Active' || paidEmployeeIds.has(employee.id)) && String(employee.startDate || '') <= endDate &&
       (!selectedIds.size || selectedIds.has(employee.id)))
     .map(employee => salaryRangeRow(employee, dates))
     .filter(row => row.working)
@@ -440,9 +499,11 @@ function salaryRangeRow(employee, dates) {
   return {
     id: employee.id,
     name: employee.name,
-    type: temporary ? 'Temporary' : (employee.dailySalaryEnabled ? 'Daily salary' : 'Regular'),
+    type: String(employee.status || 'Active').toLowerCase() !== 'active'
+      ? 'Inactive · payment only'
+      : (temporary ? 'Temporary' : (employee.dailySalaryEnabled ? 'Daily salary' : 'Regular')),
     temporary,
-    working: temporary ? dailyRows.some(row => row.working) : workingDays > 0 || dailyRows.some(row => row.bonusAmount > 0),
+    working: temporary ? dailyRows.some(row => row.working) : workingDays > 0 || dailyRows.some(row => row.bonusAmount > 0 || row.working || row.received > 0),
     workingDays,
     earned: temporary ? dailyRows.reduce((sum, row) => sum + row.received, 0) : dailyRows.reduce((sum, row) => sum + (row.perDay * row.worked) + row.bonusAmount, 0),
     petta: temporary ? 0 : dailyRows.reduce((sum, row) => sum + (row.petta * row.worked), 0),
@@ -469,6 +530,14 @@ function daySalaryRow(employee, dateKey) {
   const bonusAmount = payments
     .filter(payment => String(payment.paymentDate || '').slice(0, 10) === dateKey)
     .reduce((sum, payment) => sum + (parseFloat(payment.bonusAmount) || 0), 0);
+
+  if (String(employee.status || 'Active').toLowerCase() !== 'active') {
+    return {
+      id: employee.id, name: employee.name, type: 'Inactive · payment only',
+      temporary: !!employee.temporaryEmployee, working: received > 0 || bonusAmount > 0,
+      worked: 0, perDay: 0, bonusAmount, petta: 0, received, pending: 0
+    };
+  }
 
   if (employee.temporaryEmployee) {
     return {

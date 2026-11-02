@@ -207,7 +207,7 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Record Salary Payment</h5>
+        <h5 class="modal-title" id="paymentModalTitle">Record Salary Payment</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
@@ -220,6 +220,10 @@
             <div class="col-md-6">
               <label class="form-label">Amount (₹) <span class="text-danger">*</span></label>
               <input type="number" class="form-control" id="payAmount" required min="1" step="0.01">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="payMethod">Paid from <span class="text-danger">*</span></label>
+              <select class="form-select" id="payMethod" required><option value="Day Sale Cash">Day Sale Cash</option><option value="Cash In Hand">Cash In Hand</option><option value="Online" selected>Online</option></select>
             </div>
             <div class="col-12">
               <label class="form-label">Remarks</label>
@@ -270,6 +274,10 @@
             <div class="col-md-6">
               <label class="form-label" for="settlementEnd">Closing Date <span class="text-danger">*</span></label>
               <input type="date" class="form-control" id="settlementEnd" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="settlementPaymentMethod">Settlement paid from <span class="text-danger">*</span></label>
+              <select class="form-select" id="settlementPaymentMethod" required><option value="Day Sale Cash">Day Sale Cash</option><option value="Cash In Hand">Cash In Hand</option><option value="Online" selected>Online</option></select>
             </div>
             <div class="col-12">
               <div class="alert alert-info small mb-0">Both dates are included. Earlier pending salary or advance is carried into this period. The settlement payment is recorded on the closing date. Employment remains active and salary continues after that date.</div>
