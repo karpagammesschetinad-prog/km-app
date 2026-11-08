@@ -595,6 +595,7 @@ function setupModals() {
   document.getElementById('settlementStart').addEventListener('change', updateSettlementPreview);
   document.getElementById('settlementEnd').addEventListener('change', updateSettlementPreview);
   document.getElementById('settlementBonus').addEventListener('input', updateSettlementPreview);
+  document.getElementById('settlementAction')?.addEventListener('change', updateSettlementPreview);
   document.getElementById('settlementAddAsExpense').addEventListener('change', () => {
     const enabled = document.getElementById('settlementAddAsExpense').checked;
     document.getElementById('settlementExpenseTypeWrap').hidden = !enabled;
@@ -660,14 +661,16 @@ function setupModals() {
 function canSettleSalary() {
   // Other users only receive today's payments, which is not enough to settle historical balances.
   return isSuperUser() && canAccess('employees', 'payments') &&
-    !!empData && !empData.temporaryEmployee && !empData.dailySalaryEnabled;
+    !!empData;
 }
 
-function salarySettlement(startKey, endKey, bonusAmount = 0) {
-  if (!canSettleSalary()) throw new Error('Period settlement is available to superusers for regular employees only.');
+function salarySettlement(startKey, endKey, bonusAmount = 0, action = 'carry') {
+  if (!canSettleSalary()) throw new Error('Period settlement is available to superusers only.');
+  if (!['carry', 'pay'].includes(action)) throw new Error('Choose a valid settlement action.');
   if (!Number.isFinite(bonusAmount) || bonusAmount < 0 || Math.abs(bonusAmount * 100 - Math.round(bonusAmount * 100)) > 0.000001) {
     throw new Error('Bonus must be a non-negative amount with up to two decimal places.');
   }
+  const dailyPay = !!(empData.temporaryEmployee || empData.dailySalaryEnabled);
   const validDate = key => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
     const date = parseDateOnly(key);
@@ -682,20 +685,24 @@ function salarySettlement(startKey, endKey, bonusAmount = 0) {
   const salary = calcSalary(parseDateOnly(startKey), parseDateOnly(endKey));
   const round = amount => Math.round((amount + Number.EPSILON) * 100) / 100;
   return {
-    startKey, endKey,
+    startKey, endKey, action: dailyPay ? 'carry' : action,
     opening: round(salary.periods[0]?.opening || 0),
     workedDays: salary.workedDays,
     earned: round(salary.earnedSalary),
     bonusAmount,
     paid: round(salary.totalPaid),
     balance: round(salary.balance),
-    paymentDue: round(Math.max(0, salary.balance) + bonusAmount)
+    paymentDue: dailyPay ? bonusAmount : round((action === 'pay' ? Math.max(0, salary.balance) : 0) + bonusAmount)
   };
 }
 
 function openSalarySettlement() {
   if (!canSettleSalary()) return;
   document.getElementById('settlementForm').reset();
+  const dailyPay = !!(empData.temporaryEmployee || empData.dailySalaryEnabled);
+  const action = document.getElementById('settlementAction');
+  if (action) { action.value = 'carry'; action.disabled = dailyPay; }
+  document.getElementById('settlementBonus').disabled = false;
   const today = dateKey(new Date());
   const start = document.getElementById('settlementStart');
   const end = document.getElementById('settlementEnd');
@@ -722,7 +729,7 @@ function updateSettlementPreview() {
   const button = document.getElementById('btnSaveSettlement');
   button.disabled = true;
   try {
-    const settlement = salarySettlement(start.value, end.value, Number(document.getElementById('settlementBonus').value));
+    const settlement = salarySettlement(start.value, end.value, Number(document.getElementById('settlementBonus').value), document.getElementById('settlementAction')?.value || 'carry');
     const needsPayment = settlement.paymentDue > 0;
     const expenseToggle = document.getElementById('settlementAddAsExpense');
     const expenseType = document.getElementById('settlementExpenseType');
@@ -738,11 +745,11 @@ function updateSettlementPreview() {
       [`Salary earned (${settlement.workedDays} days worked, after petta)`, settlement.earned],
       ['Settlement bonus (additional payout)', settlement.bonusAmount],
       ['Already paid in this period', settlement.paid],
-      [settlement.balance < 0 ? 'Salary advance carried forward (unchanged by bonus)' : 'Salary payment due (excluding bonus)', Math.abs(settlement.balance)],
+      [settlement.balance < 0 ? 'Salary advance carried forward (unchanged by bonus)' : (settlement.action === 'carry' ? 'Unpaid salary carried forward' : 'Salary payment due (excluding bonus)'), Math.abs(settlement.balance)],
       ['Total settlement payment due (including bonus)', settlement.paymentDue]
     ];
     preview.innerHTML = rows.map(([label, amount]) => `<div class="d-flex justify-content-between gap-3 border-bottom py-2"><span>${label}</span><strong>${formatCurrency(amount)}</strong></div>`).join('') +
-      (!needsPayment ? '<div class="text-muted small mt-2">No new payment is needed. Close this period with zero payment; any remaining advance carries into the next period.</div>' : '');
+      (!needsPayment ? '<div class="text-muted small mt-2">Close this period without another salary payment. Unpaid pending salary or advance carries into the latest period. Daily-pay staff remain settled.</div>' : '');
     button.innerHTML = !needsPayment ? '<i class="bi bi-check2-circle me-1"></i>Close Period Without Payment' : '<i class="bi bi-check2-circle me-1"></i>Record Settlement Payment';
     button.disabled = savingSettlement;
   } catch (err) {
@@ -756,7 +763,7 @@ async function saveSalarySettlement() {
   if (!form.checkValidity()) { form.reportValidity(); return; }
   let selected;
   try {
-    selected = salarySettlement(document.getElementById('settlementStart').value, document.getElementById('settlementEnd').value, Number(document.getElementById('settlementBonus').value));
+    selected = salarySettlement(document.getElementById('settlementStart').value, document.getElementById('settlementEnd').value, Number(document.getElementById('settlementBonus').value), document.getElementById('settlementAction')?.value || 'carry');
   } catch (err) {
     showNotification(err.message, 'danger');
     return;
@@ -776,7 +783,7 @@ async function saveSalarySettlement() {
       api('GET', `/payments?employeeId=${empId}`), api('GET', `/petta?employeeId=${empId}`),
       api('GET', `/salary-history?employeeId=${empId}`)
     ]);
-    const fresh = salarySettlement(selected.startKey, selected.endKey, selected.bonusAmount);
+    const fresh = salarySettlement(selected.startKey, selected.endKey, selected.bonusAmount, selected.action);
     if (JSON.stringify(fresh) !== JSON.stringify(selected)) {
       showNotification('Salary data changed. Review the updated settlement before saving again.', 'warning');
       return;

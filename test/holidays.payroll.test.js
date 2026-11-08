@@ -89,7 +89,7 @@ test('settlement and PDF use holiday-aware carry-forward and summary totals', ()
   context.isSuperUser = () => true;
   context.canAccess = () => true;
   vm.runInContext('empData = testEmployee; empLeaves = testLeaves;', context);
-  const settlement = context.salarySettlement('2026-01-01', '2026-01-04', 50);
+  const settlement = context.salarySettlement('2026-01-01', '2026-01-04', 50, 'pay');
   assert.equal(settlement.balance, 80);
   assert.equal(settlement.paymentDue, 130);
   const directory = page('employee-salary.js', 'employees.js');

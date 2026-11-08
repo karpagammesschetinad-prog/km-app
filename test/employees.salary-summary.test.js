@@ -112,6 +112,16 @@ test('salary summary keeps active employees with payments on a full-leave day', 
   assert.equal(result.totals.received, 4000);
 });
 
+test('dynamic bonus-only day is received but never counted as an extra work day', () => {
+  const { context, employee } = createSummary({ temporaryEmployee: true });
+  vm.runInContext("daySalaryData.payments = [{ employeeId: 'employee-1', paymentDate: '2026-01-03', amount: 100, bonusAmount: 100 }];", context);
+  const row = context.salaryRangeRow(employee, ['2026-01-03']);
+  assert.equal(row.workingDays, 0);
+  assert.equal(row.received, 100);
+  assert.equal(row.earned, 100);
+  assert.equal(row.pending, 0);
+});
+
 test('consolidated pending includes opening balance, historical rates, bonuses and earlier payments', () => {
   const { context, employee } = createSummary({ status: 'Active', openingBalance: 500 });
   context.testEmployees = [employee];

@@ -132,6 +132,31 @@ test('PDF shows carried advance immediately after closing through today', () => 
   assert.match(context.employeeDetailPdfHtml([employees[0]], data), /INR 320.00 Advance/);
 });
 
+test('PDF carries pending salary into the latest period after a zero-payment closure today', () => {
+  const { context, employees, data } = createPage('2026-01-03');
+  data.payments = [{ employeeId: 'alice', paymentDate: '2026-01-03', amount: 0, settlementStart: '2026-01-02', settlementEnd: '2026-01-03' }];
+  const result = context.employeeDetailExportData(employees[0], data);
+  assert.equal(context.dayKeyOf(result.start), '2026-01-04');
+  assert.equal(result.salary.balance, 380);
+  assert.match(context.employeeDetailPdfHtml([employees[0]], data), /INR 380.00 Pending/);
+});
+
+test('PDF archives daily-pay and dynamic daily-pay records without duplicating work days or payments', () => {
+  for (const flags of [{ dailySalaryEnabled: true }, { temporaryEmployee: true }]) {
+    const { context, employees, data } = createPage('2026-01-03');
+    Object.assign(employees[0], flags);
+    data.payments = [
+      { employeeId: 'alice', paymentDate: '2026-01-02', amount: 100 },
+      { employeeId: 'alice', paymentDate: '2026-01-03', amount: 0, settlementStart: '2026-01-02', settlementEnd: '2026-01-03' }
+    ];
+    const result = context.employeeDetailExportData(employees[0], data);
+    assert.equal(result.salary.balance, 0);
+    assert.equal(result.salary.totalDays, '0.0');
+    assert.equal(result.salary.totalPaid, 0);
+    assert.equal(context.dayKeyOf(result.start), '2026-01-04');
+  }
+});
+
 test('directory selection exports only checked employees and loads fresh detail data', async () => {
   const page = createPage();
   page.select(['alice', 'inactive']);

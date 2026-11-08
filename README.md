@@ -16,6 +16,17 @@ A full-stack web app for **expense tracking** and **employee salary management**
 
 ## Restaurant holidays and payroll
 
+**Employee period settlements:** Settle Period defaults to **Close period and carry
+unpaid balance forward**. Regular employees retain unpaid salary or advance in
+the latest period, including immediately after closing through today. Daily-pay
+and dynamic daily-pay staff can archive periods with no additional salary payment
+and remain settled; optional bonuses are paid separately in full for these staff
+too. Bonus-only and zero-payment closure records are not extra dynamic work days or
+expenses. For regular employees, **Pay pending salary now** remains available for
+an actual payout. Optional employee bonuses are paid separately in full
+and do not offset carried pending/advance balances. Historical records remain in
+View history; payments can still be recorded separately in the new period.
+
 Open **Settings → Restaurant Holidays** as a superuser. Enter the first and last
 closed dates (both included) and a festival/closure reason. Use the history table
 to edit or delete a closure. Overlapping dates are rejected.

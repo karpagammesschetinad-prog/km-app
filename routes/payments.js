@@ -128,8 +128,11 @@ router.post('/', requireAuth, async (req, res) => {
         Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
       if (!validDate(settlementStart) || !validDate(settlementEnd) || settlementStart > settlementEnd ||
           settlementEnd !== paymentDate || settlementEnd > getBusinessDate() || !employee ||
-          settlementStart < employee[4] || isTemporaryEmployee || String(employee[8]).toLowerCase() === 'true') {
+          settlementStart < employee[4]) {
         return res.status(400).json({ success: false, message: 'Invalid settlement period or employee.' });
+      }
+      if ((isTemporaryEmployee || isDailyPayEmployee) && paymentAmount !== bonusAmount) {
+        return res.status(400).json({ success: false, message: 'Daily-pay and dynamic daily-pay settlements can pay only the additional bonus, not another salary payment.' });
       }
       const previous = (await getAllRows(SHEET)).filter(row => row[C.EMP_ID] === employeeId).map(rowToObj);
       if (previous.some(payment => payment.settlementEnd && settlementStart <= payment.settlementEnd)) {
@@ -137,7 +140,7 @@ router.post('/', requireAuth, async (req, res) => {
       }
     }
     const resolvedExpenseShift = normalizePaymentShift(expenseShift);
-    const shouldAddAsExpense = paymentAmount > 0 && (!!addAsExpense || isTemporaryEmployee);
+    const shouldAddAsExpense = paymentAmount > 0 && (!!addAsExpense || (isTemporaryEmployee && !isSettlement));
     let resolvedExpenseTypeId = expenseTypeId || '';
     let resolvedShift = resolvedExpenseShift;
     if (shouldAddAsExpense) {
@@ -148,8 +151,8 @@ router.post('/', requireAuth, async (req, res) => {
       }
       const type = typeRows.find(row => row[TYPE_C.ID] === resolvedExpenseTypeId);
       if (!type || !canUseExpenseType(type, req.session.user)) return res.status(403).json({ success: false, message: 'You do not have access to this expense category type.' });
-      if (isTemporaryEmployee && !resolvedShift) resolvedShift = normalizePaymentShift(type[TYPE_C.NAME]);
-      if (isTemporaryEmployee && !resolvedShift) {
+      if (isTemporaryEmployee && !isSettlement && !resolvedShift) resolvedShift = normalizePaymentShift(type[TYPE_C.NAME]);
+      if (isTemporaryEmployee && !isSettlement && !resolvedShift) {
         return res.status(400).json({ success: false, message: 'Select a Morning, Afternoon, or Night expense type for temporary employee payments.' });
       }
     }
@@ -191,7 +194,7 @@ router.post('/', requireAuth, async (req, res) => {
         resolvedExpenseTypeId,              // CategoryTypeID
         '',                                // IsOnSpot
         obj.id,                            // PaymentID
-        isTemporaryEmployee ? resolvedShift : '' // Shift
+        isTemporaryEmployee && !isSettlement ? resolvedShift : '' // Shift
       ];
       await appendRow(EXPENSE_SHEET, expenseRow);
     }
@@ -211,6 +214,9 @@ router.put('/:id', requireAuth, async (req, res) => {
     const user = req.session.user;
     const paymentDate = req.body.paymentDate;
     const amount = Number(req.body.amount);
+    if (existing.amount === 0 && existing.settlementEnd) {
+      return res.status(409).json({ success: false, message: 'A period-only closure cannot be edited into a payment. Record a separate salary payment instead.' });
+    }
     if (req.body.paymentMethod !== undefined && !['Cash', 'Online'].includes(req.body.paymentMethod)) {
       return res.status(400).json({ success: false, message: 'Payment method must be Cash or Online.' });
     }
@@ -239,6 +245,13 @@ router.put('/:id', requireAuth, async (req, res) => {
     }
     if (existing.settlementEnd && paymentDate !== existing.paymentDate) {
       return res.status(400).json({ success: false, message: 'A settlement payment date must remain its closing date.' });
+    }
+    if (existing.settlementEnd) {
+      const employee = (await getAllRows(SHEETS.EMPLOYEES)).find(row => row[0] === existing.employeeId);
+      const dailyPay = String(employee?.[8]).toLowerCase() === 'true' || String(employee?.[9]).toLowerCase() === 'true';
+      if (dailyPay && amount !== existing.bonusAmount) {
+        return res.status(400).json({ success: false, message: 'Daily-pay settlement payments must remain equal to their recorded bonus.' });
+      }
     }
     if (user.role !== 'superuser' && (existing.paymentDate !== getBusinessDate() || paymentDate !== getBusinessDate())) {
       return res.status(403).json({ success: false, message: 'Cashiers can only edit payments dated today.' });

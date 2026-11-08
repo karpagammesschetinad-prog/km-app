@@ -20,6 +20,7 @@ function createPage(overrides = {}) {
     settlementStart: { value: '2020-01-03', min: '2020-01-01' },
     settlementEnd: { value: '2020-01-05' },
     settlementPaymentMethod: { value: 'Day Sale Cash' },
+    settlementAction: { value: 'pay' },
     settlementBonus: { value: '0' },
     settlementForm: { checkValidity: () => true, reportValidity() {} },
     settlementPreview: { innerHTML: '', textContent: '' },
@@ -194,10 +195,12 @@ test('settlement validates required dates, order, employment start and future da
   }
 });
 
-test('settlement is restricted to regular employees with full payment history access', () => {
+test('settlement supports all employee types with full payment history access', () => {
   for (const employee of [{ temporaryEmployee: true }, { dailySalaryEnabled: true }]) {
     const { context } = createPage(employee);
-    assert.equal(context.canSettleSalary(), false);
+    assert.equal(context.canSettleSalary(), true);
+    assert.equal(context.salarySettlement('2020-01-01', '2020-01-05').paymentDue, 0);
+    assert.equal(context.salarySettlement('2020-01-01', '2020-01-05', 50).paymentDue, 50);
   }
   const { context } = createPage();
   context.isSuperUser = () => false;
@@ -206,6 +209,82 @@ test('settlement is restricted to regular employees with full payment history ac
   context.isSuperUser = () => true;
   context.canAccess = () => false;
   assert.equal(context.canSettleSalary(), false);
+});
+
+test('closing pending salary carries dues immediately and across repeated periods without paying twice', async () => {
+  const { context, data, posts, elements } = createPage();
+  elements.settlementAction = { value: 'carry' };
+  const RealDate = Date;
+  context.Date = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : ['2020-01-05T12:00:00'])); }
+  };
+  context.updateSettlementPreview();
+  assert.match(elements.settlementPreview.innerHTML, /Unpaid salary carried forward/);
+  await context.saveSalarySettlement();
+  assert.equal(posts[0].body.amount, 0);
+  assert.equal(posts[0].body.addAsExpense, false);
+  let view = context.employeePeriodView();
+  assert.equal(context.calcSalary(view.start, view.end).balance, 550);
+  assert.equal(context.calcSalary(view.start, context.parseDateOnly('2020-01-06')).periods[0].opening, 550);
+  data.payments.push({ paymentDate: '2020-01-06', amount: 50 });
+  context.Date = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : ['2020-01-07T12:00:00'])); }
+  };
+  elements.settlementStart.value = '2020-01-06';
+  elements.settlementEnd.value = '2020-01-07';
+  elements.settlementBonus.value = '100';
+  await context.saveSalarySettlement();
+  assert.equal(posts[1].body.amount, 100, 'only the additional bonus is paid');
+  view = context.employeePeriodView();
+  assert.equal(context.calcSalary(view.start, view.end).balance, 680);
+  assert.equal(context.calcSalary(view.start, context.parseDateOnly('2020-01-08')).periods[0].opening, 680);
+});
+
+test('daily and dynamic daily pay close into history without an extra payment or work day', async () => {
+  for (const flags of [{ dailySalaryEnabled: true }, { temporaryEmployee: true }]) {
+    const { context, data, posts } = createPage(flags);
+    data.payments.push({ id: 'paid', paymentDate: '2020-01-04', amount: 200 });
+    await context.saveSalarySettlement();
+    assert.equal(posts[0].body.amount, 0);
+    assert.equal(posts[0].body.addAsExpense, false);
+    const view = context.employeePeriodView();
+    assert.equal(context.dateKey(view.start), '2020-01-06');
+    assert.equal(context.calcSalary(view.start, view.end).balance, 0);
+    const history = context.calcSalary(context.parseDateOnly('2020-01-03'), context.parseDateOnly('2020-01-05'));
+    assert.equal(history.balance, 0);
+    if (flags.temporaryEmployee) {
+      assert.equal(history.totalDays, '1.0');
+      assert.equal(history.totalPaid, 200);
+      assert.equal(history.periods.length, 1);
+    }
+  }
+});
+
+test('daily-pay and dynamic employees receive an additional settlement bonus without another salary payment', async () => {
+  for (const flags of [{ dailySalaryEnabled: true }, { temporaryEmployee: true }]) {
+    const { context, data, elements, posts } = createPage(flags);
+    data.payments.push({ paymentDate: '2020-01-04', amount: 200 });
+    elements.settlementBonus.value = '100';
+    elements.settlementAction.value = 'carry';
+    context.updateSettlementPreview();
+    assert.equal(elements.settlementExpenseType.required, true);
+    await context.saveSalarySettlement();
+    assert.equal(posts[0].body.amount, 100);
+    assert.equal(posts[0].body.bonusAmount, 100);
+    assert.equal(posts[0].body.addAsExpense, true);
+    const history = context.calcSalary(context.parseDateOnly('2020-01-03'), context.parseDateOnly('2020-01-05'));
+    assert.equal(history.balance, 0);
+    assert.equal(history.totalBonus, 100);
+    if (flags.temporaryEmployee) {
+      assert.equal(history.totalDays, '1.0');
+      assert.equal(history.totalPaid, 300);
+      assert.equal(history.periods.find(period => period.paid === 100).workedDays, 0);
+    } else {
+      assert.equal(history.totalPaid, 370, 'three daily net salaries plus the additional bonus');
+    }
+    const view = context.employeePeriodView();
+    assert.equal(context.calcSalary(view.start, view.end).balance, 0);
+  }
 });
 
 test('settlement records a payment on closing date and cannot pay the same balance twice', async () => {

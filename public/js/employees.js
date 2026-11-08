@@ -541,7 +541,7 @@ function daySalaryRow(employee, dateKey) {
   if (employee.temporaryEmployee) {
     return {
       id: employee.id, name: employee.name, type: 'Temporary', temporary: true,
-      working: received > 0, worked: received > 0 ? 1 : 0, perDay: 0, petta: 0, received, pending: 0
+      working: received > 0, worked: received > bonusAmount ? 1 : 0, perDay: 0, bonusAmount, petta: 0, received, pending: 0
     };
   }
 

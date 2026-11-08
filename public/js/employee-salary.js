@@ -17,13 +17,16 @@ function calculateEmployeeDetailSalary({ employee, leaves = [], payments = [], p
     paymentDays.set(date, day);
   });
   if (employee.temporaryEmployee) {
-    const periods = [...paymentDays.entries()].filter(([date]) => (!start || dateOnly(date) >= start) && (!end || dateOnly(date) <= end))
+    // Zero-payment closures are archive markers, not extra dynamic work days.
+    const periods = [...paymentDays.entries()].filter(([date, day]) => day.paid > 0 && (!start || dateOnly(date) >= start) && (!end || dateOnly(date) <= end))
       .sort(([a], [b]) => a.localeCompare(b)).map(([date, day]) => ({
         start: dateOnly(date), end: dateOnly(date), petta: employee.dailySalaryEnabled ? parseFloat(employee.dailyPetta) || 0 : 0,
-        totalDays: 1, leaveDays: 0, workedDays: 1, earned: day.paid, paid: day.paid, opening: 0, closing: 0
+        totalDays: day.paid > day.bonus ? 1 : 0, leaveDays: 0, workedDays: day.paid > day.bonus ? 1 : 0, earned: day.paid, paid: day.paid, opening: 0, closing: 0
       }));
     const totalPaid = periods.reduce((sum, period) => sum + period.paid, 0);
-    return { totalDays: periods.length.toFixed(1), leaveDays: '0.0', workedDays: periods.length.toFixed(1), earnedSalary: totalPaid, totalPaid, balance: 0, currentPetta: employee.dailySalaryEnabled ? parseFloat(employee.dailyPetta) || 0 : 0, periods };
+    const workedDays = periods.reduce((sum, period) => sum + period.workedDays, 0);
+    const totalBonus = [...paymentDays.entries()].filter(([date]) => (!start || dateOnly(date) >= start) && (!end || dateOnly(date) <= end)).reduce((sum, [, day]) => sum + day.bonus, 0);
+    return { totalDays: workedDays.toFixed(1), leaveDays: '0.0', workedDays: workedDays.toFixed(1), earnedSalary: totalPaid, totalBonus, totalPaid, balance: 0, currentPetta: employee.dailySalaryEnabled ? parseFloat(employee.dailyPetta) || 0 : 0, periods };
   }
   const calculationStart = employeeStart > start ? employeeStart : start;
   if (!employeeStart || !start || !end) {

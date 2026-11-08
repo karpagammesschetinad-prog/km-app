@@ -95,12 +95,53 @@ test('zero-payment closures retain settlement role, employee and date validation
   assert.equal((await server.request('POST', '/api/payments', payload)).status, 403);
   server.loginAs(SUPERUSER);
   for (const changes of [
-    { employeeId: 'emp-temp' }, { settlementStart: 'invalid' }, { settlementEnd: '' },
+    { settlementStart: 'invalid' }, { settlementEnd: '' },
     { employeeId: 'missing' }, { amount: -1 }, { amount: 'invalid' }
   ]) {
     assert.equal((await server.request('POST', '/api/payments', { ...payload, ...changes })).status, 400);
   }
   assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS).length, 0);
+});
+
+test('daily-pay and dynamic staff archive periods with zero payment and no new expense', async () => {
+  server.loginAs(SUPERUSER);
+  for (const employeeId of ['emp-perm', 'emp-temp']) {
+    const payload = { employeeId, paymentDate: TODAY, amount: 0, settlementStart: TODAY, settlementEnd: TODAY, addAsExpense: true };
+    assert.equal((await server.request('POST', '/api/payments', { ...payload, amount: 100 })).status, 400);
+    assert.equal((await server.request('POST', '/api/payments', { ...payload, amount: 150, bonusAmount: 100 })).status, 400);
+    const result = await server.request('POST', '/api/payments', payload);
+    assert.equal(result.status, 201);
+    assert.equal(result.body.data.amount, 0);
+    assert.equal((await server.request('PUT', '/api/payments/' + result.body.data.id, { paymentDate: TODAY, amount: 100 })).status, 409);
+    assert.equal((await server.request('POST', '/api/payments', payload)).status, 409);
+  }
+  assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 0);
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS).length, 2);
+});
+
+test('daily and dynamic settlement bonuses pay only the award and optionally mirror it as an expense', async () => {
+  server.loginAs(SUPERUSER);
+  for (const employeeId of ['emp-perm', 'emp-temp']) {
+    const payload = { employeeId, paymentDate: TODAY, amount: 125.5, bonusAmount: 125.5, settlementStart: TODAY, settlementEnd: TODAY, addAsExpense: true, expenseTypeId: 'type-general' };
+    const result = await server.request('POST', '/api/payments', payload);
+    assert.equal(result.status, 201);
+    assert.equal(result.body.data.amount, 125.5);
+    assert.equal(result.body.data.bonusAmount, 125.5);
+    assert.equal((await server.request('PUT', '/api/payments/' + result.body.data.id, { paymentDate: TODAY, amount: 200 })).status, 400);
+    assert.equal((await server.request('POST', '/api/payments', payload)).status, 409);
+  }
+  const expenses = sheets.getRows(SHEETS.EXPENSES);
+  assert.equal(expenses.length, 2);
+  expenses.forEach(row => { assert.equal(row[4], 125.5); assert.equal(row[16], ''); });
+});
+
+test('dynamic settlement bonus does not force a new shift expense', async () => {
+  server.loginAs(SUPERUSER);
+  const result = await server.request('POST', '/api/payments', {
+    employeeId: 'emp-temp', paymentDate: TODAY, amount: 100, bonusAmount: 100, settlementStart: TODAY, settlementEnd: TODAY
+  });
+  assert.equal(result.status, 201);
+  assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 0);
 });
 
 test('a cashier can only record payments dated today', async () => {
