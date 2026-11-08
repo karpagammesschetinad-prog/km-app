@@ -151,36 +151,26 @@ async function loadEmployeeStatusOnDemand() {
       const rateFor = dayKey => revisions.reduce((rate, record) =>
         record.effectiveDate <= dayKey ? (parseFloat(record.amount) || 0) : rate, parseFloat(emp.perDaySalary) || 0);
       const start = new Date(Math.max(new Date(emp.startDate).getTime(), fyStart.getTime()));
-      const totalDays = Math.max(0, (fyEnd - start) / 86400000);
-      const leaveDays = leaves.reduce((sum, leave) => {
+      const localKey = day => `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+      const nonWorking = dayKey => Math.min(1, leaves.reduce((sum, leave) => {
         const span = leaveDateSpan(leave, now);
-        if (!span) return sum;
-        const spanStart = new Date(Math.max(new Date(`${span.startKey}T00:00:00`).getTime(), start.getTime()));
-        const spanEnd = new Date(Math.min(new Date(`${span.endKey}T00:00:00`).getTime(), fyEnd.getTime()));
-        if (spanEnd < spanStart) return sum;
-        const covered = Math.floor((spanEnd - spanStart) / 86400000) + 1;
-        return sum + covered * span.fraction;
-      }, 0);
-      const workedDays = Math.max(0, totalDays - leaveDays);
-      // Revisions split the year into rate spans, so the earned amount is weighted by each span's share of worked days.
-      const earned = totalDays > 0
-        ? [...Array(Math.ceil(totalDays)).keys()].reduce((sum, offset) => {
-          const day = new Date(start.getTime() + offset * 86400000);
-          return sum + (rateFor(day.toISOString().slice(0, 10)) - emp.dailyPetta);
-        }, 0) * (workedDays / Math.ceil(totalDays))
-        : 0;
+        return sum + (span && dayKey >= span.startKey && dayKey <= span.endKey ? span.fraction : 0);
+      }, 0));
+      // Apply closures on their actual dates; overlapping personal leave must not
+      // deduct twice or spread a holiday across days with different salary rates.
+      let earned = 0;
+      for (let day = new Date(start); day <= fyEnd; day.setDate(day.getDate() + 1)) {
+        const dayKey = localKey(day);
+        earned += (1 - nonWorking(dayKey)) * (rateFor(dayKey) - (parseFloat(emp.dailyPetta) || 0));
+      }
       const periodPayments = payments.filter(payment => new Date(`${payment.paymentDate}T00:00:00`) >= start && new Date(`${payment.paymentDate}T00:00:00`) <= fyEnd);
       const paid = periodPayments.reduce((sum, payment) => sum + payment.amount, 0);
       const bonus = periodPayments.reduce((sum, payment) => sum + (parseFloat(payment.bonusAmount) || 0), 0);
       let carriedBalance = parseFloat(emp.openingBalance) || 0;
       for (let day = new Date(emp.startDate); day < fyStart; day.setDate(day.getDate() + 1)) {
-        const dayKey = day.toISOString().slice(0, 10);
-        const leave = leaves.some(item => {
-          const span = leaveDateSpan(item, now);
-          return span && dayKey >= span.startKey && dayKey <= span.endKey;
-        });
+        const dayKey = localKey(day);
         const dayPaid = payments.filter(payment => payment.paymentDate === dayKey).reduce((sum, payment) => sum + (parseFloat(payment.amount) || 0) - (parseFloat(payment.bonusAmount) || 0), 0);
-        carriedBalance += (leave ? 0 : (rateFor(dayKey) - emp.dailyPetta)) - dayPaid;
+        carriedBalance += (1 - nonWorking(dayKey)) * (rateFor(dayKey) - (parseFloat(emp.dailyPetta) || 0)) - dayPaid;
       }
       const balance = carriedBalance + earned + bonus - paid;
       const onLeave = leaves.some(leave => new Date(leave.startDateTime) <= now && (!leave.endDateTime || now <= new Date(leave.endDateTime)));

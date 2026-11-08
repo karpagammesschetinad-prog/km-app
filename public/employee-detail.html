@@ -280,13 +280,13 @@
               <select class="form-select" id="settlementPaymentMethod" required><option value="Day Sale Cash">Day Sale Cash</option><option value="Cash In Hand">Cash In Hand</option><option value="Online" selected>Online</option></select>
             </div>
             <div class="col-12">
-              <div class="alert alert-info small mb-0">Both dates are included. Earlier pending salary or advance is carried into this period. The settlement payment is recorded on the closing date. Employment remains active and salary continues after that date.</div>
+              <div class="alert alert-info small mb-0">Both dates are included. Earlier pending salary or advance is carried into this period. If salary is due, the settlement payment is recorded on the closing date. Otherwise the period closes with zero payment and any remaining advance carries forward. Employment remains active and salary continues after that date.</div>
             </div>
             <div class="col-12" id="settlementPreview" aria-live="polite"></div>
             <div class="col-md-6">
               <label class="form-label" for="settlementBonus">Settlement Bonus (₹) <span class="text-muted">(optional)</span></label>
               <input type="number" class="form-control" id="settlementBonus" min="0" step="0.01" value="0" aria-describedby="settlementBonusHelp">
-              <div class="form-text" id="settlementBonusHelp">Added to earnings and the settlement payment, and saved in history.</div>
+              <div class="form-text" id="settlementBonusHelp">Paid as an additional award and saved in history. The full bonus is paid even when salary is in advance; it does not reduce the salary advance carried forward.</div>
             </div>
             <div class="col-12">
               <label class="form-label" for="settlementRemarks">Remarks</label>

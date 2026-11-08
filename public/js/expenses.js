@@ -866,6 +866,7 @@ function renderOccasionalExpenses() {
 function renderOccasionalQuantityInputs(entries, typeNames, canEdit) {
   const body = document.getElementById('occasionalQuantityBody');
   if (!body) return;
+  const selectedDate = getSelectedExpenseDate();
   body.innerHTML = entries.length ? entries.map(expense => {
     const category = allCategories.find(item => item.id && item.typeId === expense.typeId && item.name === expense.category);
     const definitions = category ? allQuantityCategories.filter(item => item.categoryId === category.id) : [];

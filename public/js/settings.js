@@ -1,4 +1,158 @@
 let paymentTypes = [];
+let restaurantHolidays = [];
+let holidayEditingId = null;
+let holidayBusy = false;
+let holidaysInitialized = false;
+
+function escapeHolidayText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[char]));
+}
+
+function renderRestaurantHolidays() {
+  const history = document.getElementById('holidayHistory');
+  const records = [...restaurantHolidays].sort((a, b) =>
+    String(b.startDate).localeCompare(String(a.startDate)) ||
+    String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  history.innerHTML = records.length ? records.map(record => {
+    const id = escapeHolidayText(record.id);
+    const dates = record.startDate === record.endDate ? escapeHolidayText(record.startDate) :
+      `${escapeHolidayText(record.startDate)} <span class="text-muted">→</span> ${escapeHolidayText(record.endDate)}`;
+    const label = escapeHolidayText(`${record.startDate} to ${record.endDate}: ${record.reason}`);
+    const disabled = holidayBusy ? ' disabled' : '';
+    return `<tr><td class="small text-nowrap">${dates}</td><td class="small text-break">${escapeHolidayText(record.reason)}</td>
+      <td class="small text-break"><div>Created: ${escapeHolidayText(record.createdBy || '—')}</div><div class="text-muted">${escapeHolidayText(record.createdAt || '')}</div>
+      ${record.updatedBy || record.updatedAt ? `<div>Updated: ${escapeHolidayText(record.updatedBy || '—')}</div><div class="text-muted">${escapeHolidayText(record.updatedAt || '')}</div>` : ''}</td>
+      <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-primary" data-holiday-action="edit" data-holiday-id="${id}" aria-label="Edit holiday ${label}"${disabled}><i class="bi bi-pencil" aria-hidden="true"></i></button>
+      <button type="button" class="btn btn-sm btn-outline-danger" data-holiday-action="delete" data-holiday-id="${id}" aria-label="Delete holiday ${label}"${disabled}><i class="bi bi-trash" aria-hidden="true"></i></button></td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="text-muted small py-3">No restaurant holidays recorded.</td></tr>';
+}
+
+function setHolidayBusy(busy) {
+  holidayBusy = busy;
+  document.getElementById('holidayFields').disabled = busy;
+  document.getElementById('holidaySaveBtn').disabled = busy;
+  document.getElementById('holidayReloadBtn').disabled = busy;
+  renderRestaurantHolidays();
+}
+
+function resetHolidayForm() {
+  holidayEditingId = null;
+  document.getElementById('holidayForm').reset();
+  document.getElementById('holidayEndDate').min = '';
+  document.getElementById('holidayFormTitle').textContent = 'Add holiday';
+  document.getElementById('holidaySaveBtn').textContent = 'Save holiday';
+  document.getElementById('holidayCancelBtn').hidden = true;
+}
+
+async function loadRestaurantHolidays() {
+  const status = document.getElementById('holidayStatus');
+  status.textContent = 'Loading holidays…';
+  try {
+    const records = await api('GET', '/holidays');
+    if (!Array.isArray(records)) throw new Error('Invalid holiday history response');
+    restaurantHolidays = records;
+    renderRestaurantHolidays();
+    status.textContent = `${records.length} holiday period${records.length === 1 ? '' : 's'} recorded.`;
+    return true;
+  } catch (err) {
+    renderRestaurantHolidays();
+    status.textContent = 'Holiday history could not be loaded. Use Reload holiday history to retry.';
+    showNotification('Failed to load restaurant holidays: ' + err.message, 'danger');
+    return false;
+  }
+}
+
+function validHolidayDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + 'T00:00:00Z');
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+async function saveRestaurantHoliday(event) {
+  event.preventDefault();
+  if (!holidaysInitialized || holidayBusy) return;
+  const payload = {
+    startDate: document.getElementById('holidayStartDate').value,
+    endDate: document.getElementById('holidayEndDate').value,
+    reason: document.getElementById('holidayReason').value.trim()
+  };
+  if (!validHolidayDate(payload.startDate) || !validHolidayDate(payload.endDate) ||
+      payload.endDate < payload.startDate || !payload.reason) {
+    showNotification('Enter valid inclusive dates (end on or after start) and a reason.', 'warning');
+    return;
+  }
+  if (!window.confirm('Save this unpaid restaurant holiday? Changes recalculate payroll and may change past salary amounts. Payments and bonuses are unaffected.')) return;
+  const editingId = holidayEditingId;
+  setHolidayBusy(true);
+  try {
+    const record = await api(editingId === null ? 'POST' : 'PUT',
+      editingId === null ? '/holidays' : '/holidays/' + encodeURIComponent(editingId), payload);
+    if (record && record.id != null) {
+      restaurantHolidays = restaurantHolidays.filter(item => String(item.id) !== String(record.id));
+      restaurantHolidays.push(record);
+    }
+    resetHolidayForm();
+    showNotification(editingId === null ? 'Restaurant holiday saved. Payroll recalculated.' : 'Restaurant holiday updated. Payroll recalculated.');
+    await loadRestaurantHolidays();
+  } catch (err) {
+    showNotification('Failed to save restaurant holiday: ' + err.message, 'danger');
+  } finally { setHolidayBusy(false); }
+}
+
+async function handleHolidayHistoryClick(event) {
+  if (!holidaysInitialized || holidayBusy) return;
+  const button = event.target.closest('[data-holiday-action]');
+  if (!button || !document.getElementById('holidayHistory').contains(button)) return;
+  const record = restaurantHolidays.find(item => String(item.id) === button.dataset.holidayId);
+  if (!record) return;
+  if (button.dataset.holidayAction === 'edit') {
+    holidayEditingId = String(record.id);
+    document.getElementById('holidayStartDate').value = record.startDate;
+    document.getElementById('holidayEndDate').value = record.endDate;
+    document.getElementById('holidayEndDate').min = record.startDate;
+    document.getElementById('holidayReason').value = record.reason;
+    document.getElementById('holidayFormTitle').textContent = 'Edit holiday';
+    document.getElementById('holidaySaveBtn').textContent = 'Save changes';
+    document.getElementById('holidayCancelBtn').hidden = false;
+    document.getElementById('holidayStartDate').focus();
+    return;
+  }
+  if (button.dataset.holidayAction !== 'delete' || !window.confirm(
+    `Delete restaurant holiday ${record.startDate} to ${record.endDate}? Changes recalculate payroll and may change past salary amounts. Payments and bonuses are unaffected.`)) return;
+  setHolidayBusy(true);
+  try {
+    await api('DELETE', '/holidays/' + encodeURIComponent(record.id));
+    restaurantHolidays = restaurantHolidays.filter(item => String(item.id) !== String(record.id));
+    if (holidayEditingId === String(record.id)) resetHolidayForm();
+    showNotification('Restaurant holiday deleted. Payroll recalculated.');
+    await loadRestaurantHolidays();
+  } catch (err) {
+    showNotification('Failed to delete restaurant holiday: ' + err.message, 'danger');
+  } finally { setHolidayBusy(false); }
+}
+
+async function initRestaurantHolidays(user) {
+  if (user.role !== 'superuser' || holidaysInitialized) return;
+  holidaysInitialized = true;
+  document.getElementById('restaurantHolidaysCard').hidden = false;
+  document.getElementById('holidayForm').addEventListener('submit', saveRestaurantHoliday);
+  document.getElementById('holidayCancelBtn').addEventListener('click', () => {
+    if (!holidayBusy) resetHolidayForm();
+  });
+  document.getElementById('holidayStartDate').addEventListener('change', () => {
+    document.getElementById('holidayEndDate').min = document.getElementById('holidayStartDate').value;
+  });
+  document.getElementById('holidayHistory').addEventListener('click', handleHolidayHistoryClick);
+  document.getElementById('holidayReloadBtn').addEventListener('click', async () => {
+    if (holidayBusy) return;
+    setHolidayBusy(true);
+    try { await loadRestaurantHolidays(); } finally { setHolidayBusy(false); }
+  });
+  setHolidayBusy(true);
+  try { await loadRestaurantHolidays(); } finally { setHolidayBusy(false); }
+}
 
 function getSettingsPayload() {
   return {
@@ -75,6 +229,8 @@ async function addPaymentType() {
 document.addEventListener('DOMContentLoaded', async () => {
   const user = await requireLogin();
   if (!user) return;
+  // Holiday loading is isolated from the other Settings requests.
+  if (user.role === 'superuser') void initRestaurantHolidays(user);
   const autoSaveInput = document.getElementById('autoSaveEnabled');
   try {
     const setting = await api('GET', '/settings/autosave');

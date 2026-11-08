@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const shared = fs.readFileSync(path.join(__dirname, '../public/js/employee-salary.js'), 'utf8');
-function createPage() {
+function createPage(today = null) {
   const notifications = [], frames = [], requests = [];
   const elements = {};
   for (const id of ['btnExportEmployeeSalary', 'employeeSelectAll', 'employeeExportHint', 'empBody', 'empCount']) {
@@ -40,6 +40,12 @@ function createPage() {
       return ({ '/leaves': data.leaves, '/payments': data.payments, '/petta': data.petta, '/salary-history': data.salaryHistory, '/config': data.config })[endpoint];
     }
   });
+  if (today) {
+    const RealDate = Date;
+    context.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [`${today}T12:00:00`])); }
+    };
+  }
   vm.runInContext(shared + '\n' + fs.readFileSync(path.join(__dirname, '../public/js/employees.js'), 'utf8'), context);
   context.testEmployees = employees;
   vm.runInContext('allEmployees = testEmployees; visibleEmployeeIds = allEmployees.map(employee => employee.id);', context);
@@ -49,7 +55,7 @@ function createPage() {
 }
 
 test('directory PDF uses detail summary net earnings, opening balance, bonus and consolidated periods', () => {
-  const { context, employees, data } = createPage();
+  const { context, employees, data } = createPage('2026-01-03');
   const result = context.employeeDetailExportData(employees[0], data);
   assert.equal(result.salary.totalDays, '2.0');
   assert.equal(result.salary.earnedSalary, 230);
@@ -62,6 +68,15 @@ test('directory PDF uses detail summary net earnings, opening balance, bonus and
   assert.match(html, /INR 230.00/);
   assert.match(html, /INR 300.00 Pending/);
   assert.match(html, /Consolidated Salary Periods/);
+});
+
+test('PDF includes payments after fiscal end in the current employee balance', () => {
+  const { context, employees, data } = createPage('2026-01-05');
+  data.payments.push({ employeeId: 'alice', paymentDate: '2026-01-05', amount: 180 });
+  const result = context.employeeDetailExportData(employees[0], data);
+  assert.equal(context.dayKeyOf(result.end), '2026-01-05');
+  assert.equal(result.salary.totalPaid, 310);
+  assert.equal(result.salary.balance, 300);
 });
 
 test('export and employee detail call the same salary calculator and period rules', () => {
@@ -84,6 +99,37 @@ test('PDF follows latest settlement current period rather than old fiscal dates'
   assert.equal(context.dayKeyOf(result.start), '2026-01-04');
   assert.equal(result.salary.periods[0].opening, 0);
   assert.match(context.employeeDetailPdfHtml([employees[0]], data), /Account settled through 2026-01-03/);
+});
+
+test('PDF recognizes zero-payment closure and preserves the advance opening balance', () => {
+  const { context, employees, data } = createPage('2026-01-05');
+  employees[0].openingBalance = -500;
+  data.payments = [{ employeeId: 'alice', paymentDate: '2026-01-03', amount: 0, settlementStart: '2026-01-02', settlementEnd: '2026-01-03' }];
+  const result = context.employeeDetailExportData(employees[0], data);
+  assert.equal(context.dayKeyOf(result.start), '2026-01-04');
+  assert.equal(result.salary.periods[0].opening, -320);
+  assert.equal(result.salary.balance, -140);
+  assert.equal(result.salary.totalPaid, 0);
+});
+
+test('PDF carries the same salary advance after an additional bonus payout', () => {
+  const { context, employees, data } = createPage('2026-01-05');
+  employees[0].openingBalance = -500;
+  data.payments = [{ employeeId: 'alice', paymentDate: '2026-01-03', amount: 100, bonusAmount: 100, settlementStart: '2026-01-02', settlementEnd: '2026-01-03' }];
+  const result = context.employeeDetailExportData(employees[0], data);
+  assert.equal(result.salary.periods[0].opening, -320);
+  assert.equal(result.salary.balance, -140);
+});
+
+test('PDF shows carried advance immediately after closing through today', () => {
+  const { context, employees, data } = createPage('2026-01-03');
+  employees[0].openingBalance = -500;
+  data.payments = [{ employeeId: 'alice', paymentDate: '2026-01-03', amount: 100, bonusAmount: 100, settlementStart: '2026-01-02', settlementEnd: '2026-01-03' }];
+  const result = context.employeeDetailExportData(employees[0], data);
+  assert.equal(context.dayKeyOf(result.start), '2026-01-04');
+  assert.equal(result.salary.totalDays, '0.0');
+  assert.equal(result.salary.balance, -320);
+  assert.match(context.employeeDetailPdfHtml([employees[0]], data), /INR 320.00 Advance/);
 });
 
 test('directory selection exports only checked employees and loads fresh detail data', async () => {

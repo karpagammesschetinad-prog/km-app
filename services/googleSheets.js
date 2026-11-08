@@ -46,6 +46,7 @@ const SHEETS = {
   SETTINGS: 'Settings',
   USERS: 'Users',
   LEAVES: 'Leaves',
+  RESTAURANT_HOLIDAYS: 'RestaurantHolidays',
   SALARY_PAYMENTS: 'SalaryPayments',
   PETTA_HISTORY: 'PettaHistory',
   SALARY_HISTORY: 'SalaryHistory'
@@ -57,6 +58,7 @@ const HEADERS = {
   SALES_ENTRIES: ['ID', 'Date', 'Shift', 'PaymentType', 'OnlineVendor', 'Amount', 'EnteredBy', 'CreatedAt', 'UpdatedAt'],
   EMPLOYEES: ['ID', 'Name', 'Address', 'Phone', 'StartDate', 'PerDaySalary', 'DailyPetta', 'Status', 'DailySalaryEnabled', 'TemporaryEmployee', 'OpeningBalance'],
   LEAVES: ['ID', 'EmployeeID', 'EmployeeName', 'StartDateTime', 'EndDateTime', 'Remarks', 'CreatedBy', 'CreatedAt'],
+  RESTAURANT_HOLIDAYS: ['ID', 'StartDate', 'EndDate', 'Reason', 'CreatedBy', 'CreatedAt', 'UpdatedBy', 'UpdatedAt'],
   SALARY_PAYMENTS: ['ID', 'EmployeeID', 'EmployeeName', 'PaymentDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt', 'SettlementStart', 'SettlementEnd', 'BonusAmount', 'PaymentMethod', 'PaymentSource'],
   PETTA_HISTORY:   ['ID', 'EmployeeID', 'EmployeeName', 'EffectiveDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],
   SALARY_HISTORY:  ['ID', 'EmployeeID', 'EmployeeName', 'EffectiveDate', 'Amount', 'Remarks', 'CreatedBy', 'CreatedAt'],

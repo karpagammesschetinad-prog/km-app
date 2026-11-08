@@ -57,6 +57,52 @@ test('requires a positive amount', async () => {
   assert.equal(res.status, 400);
 });
 
+test('zero-payment settlements persist closing dates without creating an expense', async () => {
+  server.loginAs(SUPERUSER);
+  sheets.setRows(SHEETS.EMPLOYEES, [['regular', 'Employee', '', '', '2020-01-01', 100, 10, 'Active', 'false', 'false']]);
+  const payload = {
+    employeeId: 'regular', paymentDate: '2020-01-05', amount: 0,
+    settlementStart: '2020-01-01', settlementEnd: '2020-01-05', addAsExpense: true,
+    expenseTypeId: 'nonexistent', bonusAmount: 0
+  };
+  const res = await server.request('POST', '/api/payments', payload);
+  assert.equal(res.status, 201);
+  assert.equal(res.body.data.amount, 0);
+  assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 0);
+  const records = (await server.request('GET', '/api/payments?employeeId=regular')).body.data;
+  assert.equal(records[0].settlementEnd, '2020-01-05');
+  assert.equal(records[0].bonusAmount, 0);
+  assert.equal((await server.request('POST', '/api/payments', payload)).status, 409);
+});
+
+test('settlement payment cannot omit or offset an additional bonus', async () => {
+  server.loginAs(SUPERUSER);
+  sheets.setRows(SHEETS.EMPLOYEES, [['regular', 'Employee', '', '', '2020-01-01', 100, 10, 'Active', 'false', 'false']]);
+  const payload = { employeeId: 'regular', paymentDate: '2020-01-05', settlementStart: '2020-01-01', settlementEnd: '2020-01-05', bonusAmount: 100 };
+  for (const amount of [0, 50]) {
+    assert.equal((await server.request('POST', '/api/payments', { ...payload, amount })).status, 400);
+  }
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS).length, 0);
+  const res = await server.request('POST', '/api/payments', { ...payload, amount: 100 });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.data.amount, 100);
+  assert.equal(res.body.data.bonusAmount, 100);
+});
+
+test('zero-payment closures retain settlement role, employee and date validation', async () => {
+  const payload = { employeeId: 'regular', paymentDate: TODAY, amount: 0, settlementStart: TODAY, settlementEnd: TODAY };
+  sheets.setRows(SHEETS.EMPLOYEES, [['regular', 'Employee', '', '', '2020-01-01', 100, 10, 'Active', 'false', 'false']]);
+  assert.equal((await server.request('POST', '/api/payments', payload)).status, 403);
+  server.loginAs(SUPERUSER);
+  for (const changes of [
+    { employeeId: 'emp-temp' }, { settlementStart: 'invalid' }, { settlementEnd: '' },
+    { employeeId: 'missing' }, { amount: -1 }, { amount: 'invalid' }
+  ]) {
+    assert.equal((await server.request('POST', '/api/payments', { ...payload, ...changes })).status, 400);
+  }
+  assert.equal(sheets.getRows(SHEETS.SALARY_PAYMENTS).length, 0);
+});
+
 test('a cashier can only record payments dated today', async () => {
   const res = await server.request('POST', '/api/payments', {
     employeeId: 'emp-perm', employeeName: 'Ravi', paymentDate: '2026-01-05', amount: 300

@@ -68,6 +68,34 @@ function createPage(overrides = {}) {
   return { context, data, elements, posts, notifications, modal };
 }
 
+test('current employee pending includes today payments after the configured fiscal end', () => {
+  const { context, data } = createPage({
+    name: 'Perumal', startDate: '2026-09-17', perDaySalary: 700, dailyPetta: 0, openingBalance: 0
+  });
+  const RealDate = Date;
+  context.Date = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : ['2026-11-09T12:00:00'])); }
+  };
+  vm.runInContext("fiscalYearConfig = { fiscalYear: { start: '2026-01-21', end: '2026-11-07' } };", context);
+  data.leaves.push(
+    { startDateTime: '2026-10-02T00:00', endDateTime: '2026-10-08T00:00' },
+    { startDateTime: '2026-10-25T00:00', endDateTime: '2026-10-27T00:00' },
+    { startDateTime: '2026-11-06T00:00', endDateTime: '' }
+  );
+  data.payments.push({ paymentDate: '2026-11-04', amount: 23900 });
+  let view = context.employeePeriodView();
+  assert.equal(context.dateKey(view.end), '2026-11-09');
+  assert.equal(context.calcSalary(view.start, view.end).balance, 5500);
+
+  data.payments.push({ paymentDate: '2026-11-09', amount: 3500 });
+  view = context.employeePeriodView();
+  const salary = context.calcSalary(view.start, view.end);
+  assert.equal(salary.totalPaid, 27400);
+  assert.equal(salary.balance, 2000);
+  assert.equal(salary.workedDays, '42.0');
+  assert.equal(context.calcSalary(context.parseDateOnly('2026-09-17'), context.parseDateOnly('2026-11-07')).balance, 5500);
+});
+
 test('settlement includes opening balance, both date boundaries, petta and existing payments', () => {
   const { context, data } = createPage();
   data.payments.push({ paymentDate: '2020-01-04', amount: 40 });
@@ -85,6 +113,60 @@ test('salary payment history displays the method and edit action', () => {
   assert.match(html, /Paid from/);
   assert.match(html, /Online/);
   assert.match(html, /editPayment\('payment-1'\)/);
+});
+
+test('salary payments display latest dates first without mutating calculation history', () => {
+  const { context } = createPage();
+  const payments = [
+    { paymentDate: '2020-01-01', remarks: 'Oldest payment', amount: 10 },
+    { paymentDate: '2020-01-05', createdAt: '2020-01-05T08:00:00Z', remarks: 'Earlier same day', amount: 20 },
+    { paymentDate: '2020-01-03', remarks: 'Middle payment', amount: 30 },
+    { paymentDate: '2020-01-05', createdAt: '2020-01-05T12:00:00Z', remarks: 'Latest payment', amount: 40 }
+  ];
+  const original = JSON.stringify(payments);
+  const html = context.renderPaymentsRows(payments);
+  assert.ok(html.indexOf('Latest payment') < html.indexOf('Earlier same day'));
+  assert.ok(html.indexOf('Earlier same day') < html.indexOf('Middle payment'));
+  assert.ok(html.indexOf('Middle payment') < html.indexOf('Oldest payment'));
+  assert.equal(JSON.stringify(payments), original);
+});
+
+test('consolidated salary periods are collapsed initially and retain expanded state on render', () => {
+  const { context } = createPage();
+  const nodes = {};
+  context.document.getElementById = id => nodes[id] || (nodes[id] = {
+    innerHTML: '', addEventListener() {}
+  });
+  context.render();
+  assert.match(nodes.detailContent.innerHTML, /<details[^>]*id="consolidatedSalaryPeriods">/);
+  assert.match(nodes.detailContent.innerHTML, /<summary[^>]*>[\s\S]*Consolidated Salary Periods/);
+  nodes.consolidatedSalaryPeriods.open = true;
+  context.render();
+  assert.match(nodes.detailContent.innerHTML, /<details[^>]*id="consolidatedSalaryPeriods" open>/);
+});
+
+test('payment, revision and petta sections collapse independently and preserve actions', () => {
+  const { context } = createPage();
+  const nodes = {};
+  context.document.getElementById = id => nodes[id] || (nodes[id] = {
+    innerHTML: '', addEventListener() {}
+  });
+  const ids = ['salaryPaymentsSection', 'salaryRevisionsSection', 'pettaHistorySection'];
+  context.render();
+  for (const id of ids) {
+    assert.match(nodes.detailContent.innerHTML, new RegExp(`<details[^>]*id="${id}">`));
+  }
+  for (const id of ids) {
+    ids.forEach(other => { nodes[other].open = other === id; });
+    context.render();
+    assert.match(nodes.detailContent.innerHTML, new RegExp(`<details[^>]*id="${id}" open>`));
+    ids.filter(other => other !== id).forEach(other => {
+      assert.match(nodes.detailContent.innerHTML, new RegExp(`<details[^>]*id="${other}">`));
+    });
+  }
+  for (const id of ['btnSettleSalary', 'btnAddPayment', 'btnAddSalaryRevision', 'btnAddPetta']) {
+    assert.match(nodes.detailContent.innerHTML, new RegExp(`id="${id}"`));
+  }
 });
 
 test('settlement respects full leave, half-day leave and historical salary and petta changes', () => {
@@ -145,14 +227,102 @@ test('settlement records a payment on closing date and cannot pay the same balan
   assert.equal(posts.length, 1);
 });
 
-test('settlement does not submit a payment for an advance or a zero balance', async () => {
+test('advance and zero balances can close a period without payment and carry forward', async () => {
   for (const openingBalance of [-1000, -450]) {
-    const { context, posts, elements } = createPage({ openingBalance });
+    const { context, posts, elements, data, modal } = createPage({ openingBalance });
     context.updateSettlementPreview();
-    assert.equal(elements.btnSaveSettlement.disabled, true);
+    assert.equal(elements.btnSaveSettlement.disabled, false);
+    assert.match(elements.btnSaveSettlement.innerHTML, /Close Period Without Payment/);
+    assert.equal(elements.settlementAddAsExpense.disabled, true);
+    assert.equal(elements.settlementExpenseType.disabled, true);
+    assert.equal(elements.settlementExpenseType.required, false);
     await context.saveSalarySettlement();
-    assert.equal(posts.length, 0);
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].body.amount, 0);
+    assert.equal(posts[0].body.addAsExpense, false);
+    assert.equal(posts[0].body.settlementEnd, '2020-01-05');
+    assert.equal(modal.hidden, true);
+    const view = context.employeePeriodView();
+    assert.equal(context.dateKey(view.start), '2020-01-06');
+    const salary = context.calcSalary(view.start, context.parseDateOnly('2020-01-06'));
+    assert.equal(salary.periods[0].opening, openingBalance + 450);
+    assert.equal(salary.balance, openingBalance + 540);
+    assert.equal(data.payments.length, 1);
+    assert.throws(() => context.salarySettlement('2020-01-03', '2020-01-05'), /last settlement/);
+    await context.saveSalarySettlement();
+    assert.equal(posts.length, 1);
   }
+});
+
+test('advance carries immediately after a settlement through today with no new salary days', async () => {
+  for (const bonus of [0, 100]) {
+    const { context, elements } = createPage({ openingBalance: -1000 });
+    const RealDate = Date;
+    context.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length ? args : ['2020-01-05T12:00:00'])); }
+    };
+    elements.settlementBonus.value = String(bonus);
+    await context.saveSalarySettlement();
+    const view = context.employeePeriodView();
+    assert.equal(context.dateKey(view.start), '2020-01-06');
+    assert.equal(context.dateKey(view.end), '2020-01-05');
+    const salary = context.calcSalary(view.start, view.end);
+    assert.equal(salary.balance, -550);
+    assert.equal(salary.totalDays, '0.0');
+    assert.equal(salary.earnedSalary, 0);
+    assert.equal(salary.totalPaid, 0);
+    assert.equal(salary.periods.length, 0);
+    const nextDay = context.calcSalary(view.start, context.parseDateOnly('2020-01-06'));
+    assert.equal(nextDay.periods[0].opening, -550);
+    assert.equal(nextDay.balance, -460);
+  }
+});
+
+test('empty current period never accrues salary or future payments past its end date', () => {
+  const { context, data } = createPage({ openingBalance: -1000 });
+  data.payments.push({ paymentDate: '2020-01-08', amount: 500 });
+  const salary = context.calcSalary(context.parseDateOnly('2020-01-10'), context.parseDateOnly('2020-01-05'));
+  assert.equal(salary.balance, -550);
+  assert.equal(salary.earnedSalary, 0);
+});
+
+test('expense controls are restored for an additional bonus payout without changing salary advance', () => {
+  const { context, elements } = createPage({ openingBalance: -1000 });
+  context.updateSettlementPreview();
+  assert.equal(elements.settlementExpenseType.required, false);
+  elements.settlementBonus.value = '600';
+  context.updateSettlementPreview();
+  assert.equal(elements.settlementAddAsExpense.disabled, false);
+  assert.equal(elements.settlementExpenseType.disabled, false);
+  assert.equal(elements.settlementExpenseType.required, true);
+  assert.match(elements.btnSaveSettlement.innerHTML, /Record Settlement Payment/);
+  const settlement = context.salarySettlement('2020-01-03', '2020-01-05', 600);
+  assert.equal(settlement.balance, -550);
+  assert.equal(settlement.paymentDue, 600);
+});
+
+test('bonus is an additional payout and never offsets the carried salary advance', async () => {
+  for (const bonus of [100, 550, 600]) {
+    const { context, posts, elements } = createPage({ openingBalance: -1000 });
+    elements.settlementBonus.value = String(bonus);
+    await context.saveSalarySettlement();
+    assert.equal(posts[0].body.amount, bonus);
+    assert.equal(posts[0].body.bonusAmount, bonus);
+    assert.equal(posts[0].body.addAsExpense, true);
+    const history = context.calcSalary(context.parseDateOnly('2020-01-03'), context.parseDateOnly('2020-01-05'));
+    assert.equal(history.balance, -550);
+    const view = context.employeePeriodView();
+    const current = context.calcSalary(view.start, context.parseDateOnly('2020-01-06'));
+    assert.equal(current.periods[0].opening, -550);
+    assert.equal(current.balance, -460);
+  }
+});
+
+test('zero-payment settlement history is labelled as closure instead of a cash payment', () => {
+  const { context } = createPage();
+  const html = context.renderPaymentsRows([{ id: 'closure', paymentDate: '2020-01-05', amount: 0, settlementStart: '2020-01-03', settlementEnd: '2020-01-05' }]);
+  assert.match(html, /No payment · Period closed/);
+  assert.doesNotMatch(html, /editPayment/);
 });
 
 test('settlement requires another review when refreshed salary data changes', async () => {

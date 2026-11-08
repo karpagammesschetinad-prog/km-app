@@ -90,8 +90,8 @@ function addDays(d, n) {
 function getDefaultCalculationDates() {
   const today = parseDateOnly(new Date());
   const configuredStart = parseDateOnly(fiscalYearConfig?.fiscalYear?.start);
-  const configuredEnd = parseDateOnly(fiscalYearConfig?.fiscalYear?.end);
-  return { start: configuredStart || parseDateOnly(empData.startDate), end: configuredEnd && configuredEnd < today ? configuredEnd : today };
+  // Current payroll must include today's payments even when the reporting fiscal period has ended.
+  return { start: configuredStart || parseDateOnly(empData.startDate), end: today };
 }
 
 // Leave is counted by calendar date only: a half day is 0.5, any other covered date is a full day.
@@ -236,6 +236,10 @@ function render() {
   const dailyPettaValue = empData.temporaryEmployee ? formatCurrency(sal.totalPaid) : formatCurrency(sal.currentPetta);
   const dailyNetLabel = empData.temporaryEmployee ? 'Salary Status' : 'Current Net Per Day';
   const dailyNetValue = empData.temporaryEmployee ? 'Paid amount is final' : formatCurrency((sal.currentPerDay ?? (parseFloat(empData.perDaySalary) || 0)) - sal.currentPetta);
+  const periodsExpanded = !!document.getElementById('consolidatedSalaryPeriods')?.open;
+  const paymentsExpanded = !!document.getElementById('salaryPaymentsSection')?.open;
+  const revisionsExpanded = !!document.getElementById('salaryRevisionsSection')?.open;
+  const pettaExpanded = !!document.getElementById('pettaHistorySection')?.open;
 
   document.getElementById('detailContent').innerHTML = `
 
@@ -319,7 +323,7 @@ function render() {
           <div class="col-6 col-md-3">
             <div class="salary-stat-box text-warning">
               <div class="salary-stat-val">${sal.leaveDays}</div>
-              <div class="salary-stat-lbl">Leave Days</div>
+              <div class="salary-stat-lbl">Leave / Holiday Days${Number(sal.holidayDays) > 0 ? ` (${sal.holidayDays} restaurant holidays)` : ''}</div>
             </div>
           </div>
           <div class="col-6 col-md-3">
@@ -353,11 +357,12 @@ function render() {
 
     <!-- Consolidated Period Summary -->
     ${showSalary ? `
-    <div class="card-panel mb-3">
-      <div class="card-panel-header">
+    <details class="card-panel mb-3" id="consolidatedSalaryPeriods"${periodsExpanded ? ' open' : ''}>
+      <summary class="card-panel-header" style="cursor:pointer">
         <h6 class="card-panel-title"><i class="bi bi-collection me-2"></i>Consolidated Salary Periods</h6>
         <span class="text-muted small">${empData.temporaryEmployee ? 'Each recorded payment is the final amount for that work day.' : (empData.dailySalaryEnabled ? 'Fixed per-day salary paid daily; each payment closes the period.' : 'Opening balance of each period includes previous pending/advance')}</span>
-      </div>
+        <span class="text-primary small"><i class="bi bi-chevron-expand me-1"></i>Expand / Collapse</span>
+      </summary>
       <div class="table-responsive">
         <table class="table mobile-grid-table">
           <thead>
@@ -368,55 +373,58 @@ function render() {
           <tbody>${renderPeriodRows(sal.periods)}</tbody>
         </table>
       </div>
-    </div>
+    </details>
     ` : ''}
 
     <!-- Salary Payments -->
-    <div class="card-panel mb-3">
-      <div class="card-panel-header">
+    <details class="card-panel mb-3" id="salaryPaymentsSection"${paymentsExpanded ? ' open' : ''}>
+      <summary class="card-panel-header" style="cursor:pointer">
         <h6 class="card-panel-title"><i class="bi bi-cash-coin me-2"></i>Salary Payments</h6>
+        <span class="text-primary small"><i class="bi bi-chevron-expand me-1"></i>Expand / Collapse</span>
         <div class="d-flex gap-2 flex-wrap">
           ${!view.history && canSettleSalary() ? '<button class="btn btn-sm btn-outline-success" id="btnSettleSalary"><i class="bi bi-check2-circle me-1"></i>Settle Period</button>' : ''}
           ${canAccess('employees','payments') ? `<button class="btn btn-sm btn-primary" id="btnAddPayment"><i class="bi bi-plus-lg me-1"></i>Record Payment</button>` : ''}
         </div>
-      </div>
+      </summary>
       <div class="table-responsive">
         <table class="table mobile-grid-table">
           <thead><tr><th>Date</th><th>Amount</th><th>Paid From</th><th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
           <tbody id="paymentsBody">${renderPaymentsRows(visiblePayments)}</tbody>
         </table>
       </div>
-    </div>
+    </details>
 
     <!-- Salary Revisions -->
     ${showSalary && !empData.temporaryEmployee ? `
-    <div class="card-panel mb-3">
-      <div class="card-panel-header">
+    <details class="card-panel mb-3" id="salaryRevisionsSection"${revisionsExpanded ? ' open' : ''}>
+      <summary class="card-panel-header" style="cursor:pointer">
         <h6 class="card-panel-title"><i class="bi bi-graph-up-arrow me-2"></i>Salary Revisions</h6>
+        <span class="text-primary small"><i class="bi bi-chevron-expand me-1"></i>Expand / Collapse</span>
         ${canAccess('employees','add') ? `<button class="btn btn-sm btn-outline-primary" id="btnAddSalaryRevision"><i class="bi bi-plus-lg me-1"></i>Add Revision</button>` : ''}
-      </div>
+      </summary>
       <div class="table-responsive">
         <table class="table mobile-grid-table">
           <thead><tr><th>Effective Date</th><th>Salary / Day</th><th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
           <tbody id="salaryHistoryBody">${renderSalaryHistoryRows(visibleRevisions)}</tbody>
         </table>
       </div>
-    </div>
+    </details>
     ` : ''}
 
     <!-- Petta History -->
-    <div class="card-panel mb-3">
-      <div class="card-panel-header">
+    <details class="card-panel mb-3" id="pettaHistorySection"${pettaExpanded ? ' open' : ''}>
+      <summary class="card-panel-header" style="cursor:pointer">
         <h6 class="card-panel-title"><i class="bi bi-calendar-week me-2"></i>Petta History</h6>
+        <span class="text-primary small"><i class="bi bi-chevron-expand me-1"></i>Expand / Collapse</span>
         ${canAccess('employees','payments') ? `<button class="btn btn-sm btn-outline-primary" id="btnAddPetta"><i class="bi bi-plus-lg me-1"></i>Add Petta Date</button>` : ''}
-      </div>
+      </summary>
       <div class="table-responsive">
         <table class="table mobile-grid-table">
           <thead><tr><th>Effective Date</th><th>Petta Amount</th><th>Remarks</th><th>Recorded By</th><th></th></tr></thead>
           <tbody id="pettaBody"><tr><td colspan="5" class="text-center text-muted py-3">Loading...</td></tr></tbody>
         </table>
       </div>
-    </div>
+    </details>
 
     <!-- Leave History -->
     <div class="card-panel mb-3">
@@ -481,22 +489,25 @@ function renderLeaveRows(leaves = empLeaves) {
       <td data-label="From">${formatDateTime(l.startDateTime)}</td>
       <td data-label="To">${l.endDateTime ? formatDateTime(l.endDateTime) : '<span class="badge bg-warning-subtle text-warning border border-warning-subtle">Ongoing</span>'}</td>
       <td data-label="Duration"><span class="badge bg-secondary-subtle text-secondary border">${days} day(s)</span>${active ? ' <span class="badge bg-primary ms-1">On Leave</span>' : ''}</td>
-      <td data-label="Remarks">${l.remarks || '—'}</td>
-      <td data-label="Actions">${!l.endDateTime ? `<button class="btn btn-sm btn-outline-success btn-action" onclick="closeLeave('${l.id}')" title="Record return"><i class="bi bi-person-check me-1"></i>Return</button>` : ''}<button class="btn btn-sm btn-outline-danger btn-action" onclick="deleteLeave('${l.id}')"><i class="bi bi-trash"></i></button></td>
+      <td data-label="Remarks">${l.isRestaurantHoliday ? String(l.remarks || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])) : (l.remarks || '—')}</td>
+      <td data-label="Actions">${l.isRestaurantHoliday ? '<span class="badge bg-secondary-subtle text-secondary">Restaurant holiday · Unpaid</span>' : `${!l.endDateTime ? `<button class="btn btn-sm btn-outline-success btn-action" onclick="closeLeave('${l.id}')" title="Record return"><i class="bi bi-person-check me-1"></i>Return</button>` : ''}<button class="btn btn-sm btn-outline-danger btn-action" onclick="deleteLeave('${l.id}')"><i class="bi bi-trash"></i></button>`}</td>
     </tr>`;
   }).join('');
 }
 
 function renderPaymentsRows(payments) {
   if (!payments || !payments.length) return `<tr><td colspan="6" class="text-center text-muted py-3">No payments recorded</td></tr>`;
-  return payments.map(p => `
+  const latestFirst = [...payments].sort((first, second) =>
+    String(second.paymentDate || '').localeCompare(String(first.paymentDate || '')) ||
+    String(second.createdAt || '').localeCompare(String(first.createdAt || '')));
+  return latestFirst.map(p => `
     <tr>
       <td data-label="Date">${formatDate(p.paymentDate)}</td>
       <td data-label="Amount" class="fw-semibold text-success">${formatCurrency(p.amount)}</td>
-      <td data-label="Paid from"><span class="badge ${p.paymentMethod === 'Online' ? 'bg-primary-subtle text-primary' : 'bg-success-subtle text-success'}">${p.paymentSource || (p.paymentMethod === 'Online' ? 'Online' : 'Cash In Hand')}</span></td>
-      <td data-label="Remarks">${p.remarks || '—'}${p.bonusAmount ? `<div class="text-success small">Bonus awarded: ${formatCurrency(p.bonusAmount)} (included in total)</div>` : ''}</td>
+      <td data-label="Paid from"><span class="badge ${p.paymentMethod === 'Online' ? 'bg-primary-subtle text-primary' : 'bg-success-subtle text-success'}">${p.amount === 0 && p.settlementEnd ? 'No payment · Period closed' : (p.paymentSource || (p.paymentMethod === 'Online' ? 'Online' : 'Cash In Hand'))}</span></td>
+      <td data-label="Remarks">${p.remarks || '—'}${p.bonusAmount ? `<div class="text-success small">Bonus awarded: ${formatCurrency(p.bonusAmount)} (included in earnings)</div>` : ''}</td>
       <td data-label="Recorded by" class="text-muted small">${p.createdBy || '—'}</td>
-      <td data-label="Actions" class="text-nowrap">${canAccess('employees', 'payments') ? `<button class="btn btn-sm btn-outline-primary btn-action me-1" onclick="editPayment('${p.id}')" title="Edit payment"><i class="bi bi-pencil"></i></button>` : ''}<button class="btn btn-sm btn-outline-danger btn-action" onclick="deletePayment('${p.id}')"><i class="bi bi-trash"></i></button></td>
+      <td data-label="Actions" class="text-nowrap">${canAccess('employees', 'payments') && !(p.amount === 0 && p.settlementEnd) ? `<button class="btn btn-sm btn-outline-primary btn-action me-1" onclick="editPayment('${p.id}')" title="Edit payment"><i class="bi bi-pencil"></i></button>` : ''}<button class="btn btn-sm btn-outline-danger btn-action" onclick="deletePayment('${p.id}')"><i class="bi bi-trash"></i></button></td>
     </tr>
   `).join('');
 }
@@ -677,7 +688,8 @@ function salarySettlement(startKey, endKey, bonusAmount = 0) {
     earned: round(salary.earnedSalary),
     bonusAmount,
     paid: round(salary.totalPaid),
-    balance: round(salary.balance + bonusAmount)
+    balance: round(salary.balance),
+    paymentDue: round(Math.max(0, salary.balance) + bonusAmount)
   };
 }
 
@@ -711,16 +723,28 @@ function updateSettlementPreview() {
   button.disabled = true;
   try {
     const settlement = salarySettlement(start.value, end.value, Number(document.getElementById('settlementBonus').value));
+    const needsPayment = settlement.paymentDue > 0;
+    const expenseToggle = document.getElementById('settlementAddAsExpense');
+    const expenseType = document.getElementById('settlementExpenseType');
+    const expenseTypeWrap = document.getElementById('settlementExpenseTypeWrap');
+    if (expenseToggle) expenseToggle.disabled = !needsPayment;
+    if (expenseType) {
+      expenseType.disabled = !needsPayment;
+      expenseType.required = needsPayment && !!expenseToggle?.checked;
+    }
+    if (expenseTypeWrap) expenseTypeWrap.hidden = !needsPayment || !expenseToggle?.checked;
     const rows = [
       ['Opening pending / advance', settlement.opening],
       [`Salary earned (${settlement.workedDays} days worked, after petta)`, settlement.earned],
-      ['Settlement bonus', settlement.bonusAmount],
+      ['Settlement bonus (additional payout)', settlement.bonusAmount],
       ['Already paid in this period', settlement.paid],
-      [settlement.balance < 0 ? 'Advance remaining' : 'Settlement payment due', Math.abs(settlement.balance)]
+      [settlement.balance < 0 ? 'Salary advance carried forward (unchanged by bonus)' : 'Salary payment due (excluding bonus)', Math.abs(settlement.balance)],
+      ['Total settlement payment due (including bonus)', settlement.paymentDue]
     ];
     preview.innerHTML = rows.map(([label, amount]) => `<div class="d-flex justify-content-between gap-3 border-bottom py-2"><span>${label}</span><strong>${formatCurrency(amount)}</strong></div>`).join('') +
-      (settlement.balance <= 0 ? '<div class="text-muted small mt-2">No payment is needed. This account is already settled or has an advance through the selected closing date.</div>' : '');
-    button.disabled = savingSettlement || settlement.balance <= 0;
+      (!needsPayment ? '<div class="text-muted small mt-2">No new payment is needed. Close this period with zero payment; any remaining advance carries into the next period.</div>' : '');
+    button.innerHTML = !needsPayment ? '<i class="bi bi-check2-circle me-1"></i>Close Period Without Payment' : '<i class="bi bi-check2-circle me-1"></i>Record Settlement Payment';
+    button.disabled = savingSettlement;
   } catch (err) {
     preview.textContent = err.message;
   }
@@ -737,7 +761,6 @@ async function saveSalarySettlement() {
     showNotification(err.message, 'danger');
     return;
   }
-  if (selected.balance <= 0) return;
   savingSettlement = true;
   const button = document.getElementById('btnSaveSettlement');
   button.disabled = true;
@@ -764,17 +787,17 @@ async function saveSalarySettlement() {
       paymentDate: selected.endKey,
       settlementStart: selected.startKey,
       settlementEnd: selected.endKey,
-      amount: selected.balance,
+      amount: selected.paymentDue,
       bonusAmount: selected.bonusAmount,
       paymentMethod: paymentSource === 'Online' ? 'Online' : 'Cash',
       paymentSource,
       remarks: `Salary settlement: ${selected.startKey} to ${selected.endKey} (includes opening pending/advance)${note ? ' — ' + note : ''}`,
-      addAsExpense,
+      addAsExpense: selected.paymentDue > 0 && addAsExpense,
       expenseTypeId
     });
     bootstrap.Modal.getInstance(document.getElementById('settlementModal')).hide();
     historySettlementId = null;
-    showNotification('Settlement payment recorded through ' + formatDate(selected.endKey) + '.');
+    showNotification((selected.paymentDue > 0 ? 'Settlement payment recorded through ' : 'Salary period closed without payment through ') + formatDate(selected.endKey) + '.');
     await loadAll();
   } catch (err) {
     showNotification('Settlement failed: ' + err.message, 'danger');

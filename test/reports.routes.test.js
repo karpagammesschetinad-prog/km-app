@@ -140,6 +140,22 @@ test('salary accrues day-wise and reports paid, petta and pending', async () => 
   assert.equal(totals.salaryPending, 400, 'day one is 400 pending; day two is settled, not negative');
 });
 
+test('restaurant holidays exclude salary and petta for all employees without erasing payments or bonuses', async () => {
+  sheets.setRows(SHEETS.EMPLOYEES, [employeeRow(), employeeRow({ id: 'daily', dailyPay: 'true' })]);
+  sheets.setRows(SHEETS.RESTAURANT_HOLIDAYS, [['holiday', '2026-02-02', '2026-02-03', 'Festival']]);
+  sheets.setRows(SHEETS.LEAVES, [['overlap', 'emp-1', 'Ravi', '2026-02-02T00:00', '2026-02-02T12:00']]);
+  sheets.setRows(SHEETS.SALARY_PAYMENTS, [['bonus', 'emp-1', 'Ravi', '2026-02-02', 50, '', 'admin', '', '', '', 50]]);
+  const result = await server.request('GET', url('2026-02-01', '2026-02-04'));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.totals.salaryGross, 2050);
+  assert.equal(result.body.data.totals.pettaTotal, 400);
+  const day = result.body.data.days.find(row => row.date === '2026-02-02');
+  assert.equal(day.salaryGross, 50);
+  assert.equal(day.pettaTotal, 0);
+  assert.equal(day.salaryPaid, 50);
+  assert.equal(day.salaryPending, 0);
+});
+
 test('settlement bonus counts toward salary earnings once, including on leave days', async () => {
   sheets.setRows(SHEETS.EMPLOYEES, [employeeRow()]);
   sheets.setRows(SHEETS.SALARY_PAYMENTS, [

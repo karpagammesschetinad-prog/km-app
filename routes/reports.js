@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { SHEETS, getAllRows } = require('../services/googleSheets');
 const { requireSuperUser } = require('../middleware/authMiddleware');
+const { holidayLeaveRecords } = require('../services/restaurantHolidays');
 
 const C = {
   ID: 0, DATE: 1, CATEGORY: 2, DESCRIPTION: 3, AMOUNT: 4, EMP_ID: 5, EMP_NAME: 6,
@@ -538,7 +539,7 @@ router.get('/profit-loss', requireSuperUser, async (req, res) => {
       return res.status(400).json({ success: false, message: `Date range cannot exceed ${MAX_RANGE_DAYS} days.` });
     }
 
-    const [expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows, salaryHistoryRows] = await Promise.all([
+    const [expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows, salaryHistoryRows, holidayRows] = await Promise.all([
       getAllRows(SHEETS.EXPENSES),
       getAllRows(SHEETS.SALES_ENTRIES),
       getAllRows(SHEETS.SALES),
@@ -547,10 +548,15 @@ router.get('/profit-loss', requireSuperUser, async (req, res) => {
       getAllRows(SHEETS.EMPLOYEES),
       getAllRows(SHEETS.LEAVES),
       getAllRows(SHEETS.PETTA_HISTORY),
-      getAllRows(SHEETS.SALARY_HISTORY)
+      getAllRows(SHEETS.SALARY_HISTORY),
+      getAllRows(SHEETS.RESTAURANT_HOLIDAYS)
     ]);
 
-    const { days, totals } = buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows, pettaRows, salaryHistoryRows });
+    const closureLeaves = holidayLeaveRecords(holidayRows, employeeRows).map(leave => [
+      leave.id, leave.employeeId, leave.employeeName, leave.startDateTime, leave.endDateTime,
+      leave.remarks, leave.createdBy, leave.createdAt
+    ]);
+    const { days, totals } = buildProfitAndLoss({ from, to, expenseRows, entryRows, salesRows, paymentRows, typeRows, employeeRows, leaveRows: [...leaveRows, ...closureLeaves], pettaRows, salaryHistoryRows });
     const analytics = buildAnalytics({ from, to, days, expenseRows, entryRows, typeRows });
 
     res.json({ success: true, data: { range: { from, to }, days, totals, analytics } });

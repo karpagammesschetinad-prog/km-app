@@ -3,6 +3,7 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 const { SHEETS, getAllRows, appendRow, updateRow, deleteRow, findRowById } = require('../services/googleSheets');
 const { requireAuth } = require('../middleware/authMiddleware');
+const { getRestaurantHolidayLeaves } = require('../services/restaurantHolidays');
 
 router.use(requireAuth);
 
@@ -29,7 +30,10 @@ router.get('/', async (req, res) => {
     if (req.query.employeeId) {
       rows = rows.filter(r => r[C.EMP_ID] === req.query.employeeId);
     }
-    res.json({ success: true, data: rows.map(rowToObj) });
+    // Global closures are projected into each employee's non-working calendar,
+    // never duplicated into the employee Leaves sheet.
+    const holidays = await getRestaurantHolidayLeaves(req.query.employeeId);
+    res.json({ success: true, data: [...rows.map(rowToObj), ...holidays] });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

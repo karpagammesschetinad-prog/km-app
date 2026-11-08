@@ -601,6 +601,30 @@ test('listing follows the configured auto-approval enablement and delay', async 
   assert.equal(res.body.data[0].approvalStatus, 'Pending', 'disabled auto approval must not approve the expense');
 });
 
+test('daily expenses can be added and updated after occasional quantities on the same date', async () => {
+  const date = '2026-11-02';
+  const occasional = await server.request('POST', '/api/expenses/occasional', {
+    date, category: 'Repair', typeId: 'type-occasional', amount: 150,
+    quantities: [{ quantityCategoryId: 'parts', name: 'Parts', unit: 'Count', amount: 2, unitPrice: 75 }]
+  });
+  assert.equal(occasional.status, 201);
+  const occasionalId = occasional.body.data.id;
+  assert.equal((await server.request('GET', '/api/expenses')).status, 200);
+
+  for (const amount of [100, 120]) {
+    const daily = await server.request('POST', '/api/expenses/bulk', {
+      date, entries: [{ category: 'Milk', typeId: 'type-cash', amount }]
+    });
+    assert.equal(daily.status, 200);
+    assert.equal(daily.body.data[0].amount, amount);
+    assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 2);
+    const quantities = sheets.getRows(SHEETS.EXPENSE_QUANTITIES);
+    assert.equal(quantities.length, 1);
+    assert.equal(quantities[0][1], occasionalId);
+    assert.equal(quantities[0][9], 75);
+  }
+});
+
 test('occasional expense requires an occasional type', async () => {
   const res = await server.request('POST', '/api/expenses/occasional', {
     date: '2026-01-05', category: 'Milk', typeId: 'type-cash', amount: 40

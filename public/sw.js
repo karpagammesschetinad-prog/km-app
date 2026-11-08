@@ -1,5 +1,5 @@
 /* BizTracker Service Worker — caches static assets for offline shell */
-const CACHE = 'biztracker-v2';
+const CACHE = 'biztracker-v3';
 
 const STATIC_ASSETS = [
   '/login.html',
@@ -7,6 +7,8 @@ const STATIC_ASSETS = [
   '/expenses.html',
   '/categories.html',
   '/employees.html',
+  '/employee-detail.html',
+  '/settings.html',
   '/salaries.html',
   '/users.html',
   '/manifest.json',
@@ -16,6 +18,9 @@ const STATIC_ASSETS = [
   '/js/expenses.js',
   '/js/categories.js',
   '/js/employees.js',
+  '/js/employee-detail.js',
+  '/js/employee-salary.js',
+  '/js/settings.js',
   '/js/salaries.js',
   '/js/users.js',
   '/icons/icon.svg'

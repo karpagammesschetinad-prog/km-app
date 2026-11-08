@@ -32,6 +32,43 @@ function createPage() {
 const milk = (id, date, amount, extra = {}) => ({ id, date, category: 'Milk', typeId: 'type-a', amount, mode: 'Daily Cash', approvalStatus: 'Approved', ...extra });
 const quantity = (expenseId, amount, unitPrice, extra = {}) => ({ expenseId, name: 'Volume', unit: 'Litre', amount, unitPrice, ...extra });
 
+test('occasional quantity fields do not block loading daily expenses on November 2, 2026', () => {
+  for (const mode of ['Occasional', 'Occasional Cash']) {
+    for (const savedPrice of [0, 75]) {
+      const { context, elements, set } = createPage();
+      const date = '2026-11-02';
+      elements.expDate = { value: date };
+      elements.occasionalQuantityBody = { innerHTML: '', querySelectorAll: () => [] };
+      set('allCategories', [{ id: 'cat-repair', name: 'Repair', typeId: 'type-a' }]);
+      set('allQuantityCategories', [{ id: 'parts', categoryId: 'cat-repair', name: 'Parts', unit: 'Count', defaultQuantity: 2 }]);
+      set('allExpenses', [
+        milk('old-repair', '2026-11-01', 100, { category: 'Repair', mode }),
+        milk('repair', date, 150, { category: 'Repair', mode, approvalStatus: 'Pending' })
+      ]);
+      set('allExpenseQuantities', [
+        quantity('old-repair', 2, 50, { quantityCategoryId: 'parts', name: 'Parts', unit: 'Count' }),
+        ...(savedPrice ? [quantity('repair', 2, savedPrice, { quantityCategoryId: 'parts', name: 'Parts', unit: 'Count' })] : [])
+      ]);
+      context.approvalStatusBadge = value => value;
+      context.updateDateStatusColor = () => {};
+      context.renderExpenseDatePicker = () => {};
+      let dailyFormLoaded = false;
+      context.buildCategoryInputs = (existing, readOnly) => {
+        dailyFormLoaded = true;
+        assert.equal(Object.keys(existing).length, 0);
+        assert.equal(readOnly, false);
+      };
+
+      assert.doesNotThrow(() => context.loadDateIntoForm(date), `${mode}, saved price ${savedPrice}`);
+      assert.equal(dailyFormLoaded, true);
+      assert.equal(elements.btnSaveExpense.disabled, false);
+      assert.equal(elements.expRemarks.readOnly, false);
+      assert.match(elements.occasionalQuantityBody.innerHTML, /data-occasional-expense-id="repair"/);
+      assert.match(elements.occasionalQuantityBody.innerHTML, new RegExp(`aria-label="Price per unit"[^>]*value="${savedPrice || 50}"`));
+    }
+  }
+});
+
 test('ledger balance is goods at entered unit prices less payments, regardless of the expense amount', () => {
   const { context, set } = createPage();
   set('allUnpaidQuantities', [

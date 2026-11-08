@@ -26,7 +26,7 @@ function calculateEmployeeDetailSalary({ employee, leaves = [], payments = [], p
     return { totalDays: periods.length.toFixed(1), leaveDays: '0.0', workedDays: periods.length.toFixed(1), earnedSalary: totalPaid, totalPaid, balance: 0, currentPetta: employee.dailySalaryEnabled ? parseFloat(employee.dailyPetta) || 0 : 0, periods };
   }
   const calculationStart = employeeStart > start ? employeeStart : start;
-  if (!employeeStart || !start || !end || calculationStart > end) {
+  if (!employeeStart || !start || !end) {
     return { totalDays: '0.0', leaveDays: '0.0', workedDays: '0.0', earnedSalary: 0, totalPaid: 0, balance: 0, currentPetta: parseFloat(employee.dailyPetta) || 0, periods: [] };
   }
   const timeline = records => records.map(record => ({ date: dateOnly(record.effectiveDate), amount: parseFloat(record.amount) || 0 }))
@@ -52,13 +52,26 @@ function calculateEmployeeDetailSalary({ employee, leaves = [], payments = [], p
     return { start: first, end: last < first ? first : last, fraction: hours > 0 && hours <= 12 && key(last) === key(first) ? 0.5 : 1 };
   }).filter(Boolean);
   const leaveOn = date => Math.min(1, leaveSpans.reduce((sum, span) => sum + (date >= span.start && date <= span.end ? span.fraction : 0), 0));
+  const holidaySpans = leaves.filter(leave => leave.isRestaurantHoliday).map(leave => ({
+    start: dateOnly(leave.startDateTime), end: dateOnly(leave.endDateTime)
+  }));
+  const holidayOn = date => holidaySpans.some(span => span.start && span.end && date >= span.start && date < span.end);
   let opening = parseFloat(employee.openingBalance) || 0;
-  for (let date = new Date(employeeStart); date < calculationStart; date = next(date)) {
+  for (let date = new Date(employeeStart); date < calculationStart && date <= end; date = next(date)) {
     const day = paymentDays.get(key(date)) || { paid: 0, bonus: 0 };
     opening += (1 - leaveOn(date)) * (rateOn(date) - pettaOn(date)) + day.bonus - day.paid;
   }
+  // A settlement through today starts its next period tomorrow. No new days have
+  // accrued yet, but the settled closing advance still belongs to this account.
+  if (calculationStart > end) {
+    return {
+      totalDays: '0.0', leaveDays: '0.0', workedDays: '0.0', earnedSalary: 0, totalBonus: 0,
+      totalPaid: 0, balance: employee.dailySalaryEnabled ? 0 : opening,
+      currentPetta: pettaOn(end), currentPerDay: rateOn(end), periods: []
+    };
+  }
   const changes = new Set([...pettaChanges, ...salaryChanges].map(change => key(change.date)));
-  let totalDays = 0, leaveDays = 0, workedDays = 0, earnedSalary = 0, totalPaid = 0, totalBonus = 0;
+  let totalDays = 0, leaveDays = 0, holidayDays = 0, workedDays = 0, earnedSalary = 0, totalPaid = 0, totalBonus = 0;
   let segment = { start: new Date(calculationStart), totalDays: 0, leaveDays: 0, workedDays: 0, earned: 0, paid: 0, opening };
   let balance = opening;
   const periods = [];
@@ -68,6 +81,7 @@ function calculateEmployeeDetailSalary({ employee, leaves = [], payments = [], p
     const day = paymentDays.get(key(date)) || { paid: 0, bonus: 0 };
     const earned = worked * (rateOn(date) - pettaOn(date)) + day.bonus;
     totalDays++; leaveDays += leave; workedDays += worked;
+    if (holidayOn(date)) holidayDays++;
     earnedSalary += earned; totalPaid += day.paid; totalBonus += day.bonus;
     segment.totalDays++; segment.leaveDays += leave; segment.workedDays += worked;
     segment.earned += earned; segment.paid += day.paid;
@@ -78,7 +92,7 @@ function calculateEmployeeDetailSalary({ employee, leaves = [], payments = [], p
     }
   }
   return {
-    totalDays: totalDays.toFixed(1), leaveDays: leaveDays.toFixed(1), workedDays: workedDays.toFixed(1), earnedSalary, totalBonus,
+    totalDays: totalDays.toFixed(1), leaveDays: leaveDays.toFixed(1), holidayDays: holidayDays.toFixed(1), workedDays: workedDays.toFixed(1), earnedSalary, totalBonus,
     totalPaid: employee.dailySalaryEnabled ? earnedSalary : totalPaid,
     balance: employee.dailySalaryEnabled ? 0 : balance,
     currentPetta: pettaOn(end), currentPerDay: rateOn(end),

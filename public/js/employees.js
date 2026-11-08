@@ -400,12 +400,11 @@ function employeeDetailExportData(employee, data) {
   const latest = settlements.at(-1);
   const today = dateOnly(dayKeyOf(new Date()));
   let start = dateOnly(data.config?.fiscalYear?.start) || dateOnly(employee.startDate);
-  const configuredEnd = dateOnly(data.config?.fiscalYear?.end);
-  let end = configuredEnd && configuredEnd < today ? configuredEnd : today;
+  // Match Employee Detail's current payroll balance, not a historical reporting cutoff.
+  const end = today;
   if (latest) {
     start = dateOnly(latest.end);
     start.setDate(start.getDate() + 1);
-    end = today;
   }
   return { employee, start, end, latest, salary: calculateEmployeeDetailSalary({
     employee, start, end, payments,
@@ -423,7 +422,7 @@ function employeeDetailPdfHtml(employees, data) {
   const details = employees.map(employee => {
     const { salary, start, end, latest } = employeeDetailExportData(employee, data);
     const stats = [
-      ['Total Days', salary.totalDays], ['Leave Days', salary.leaveDays], ['Days Worked', salary.workedDays],
+      ['Total Days', salary.totalDays], ['Leave Days / Holidays', salary.leaveDays], ['Restaurant Holiday Days', salary.holidayDays || '0.0'], ['Days Worked', salary.workedDays],
       ['Earned (after petta, includes bonus)', money(salary.earnedSalary)], ['Bonus included', money(salary.totalBonus || 0)],
       ['Total Paid', money(salary.totalPaid)], ['Salary Pending / Advance', balance(salary.balance)]
     ].map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`).join('');

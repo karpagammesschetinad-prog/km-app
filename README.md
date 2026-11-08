@@ -10,6 +10,33 @@ A full-stack web app for **expense tracking** and **employee salary management**
 | Expenses | Add / edit / delete, approve / reject, filter by date / category / status |
 | Employees | Add / edit / deactivate / delete, salary stored per employee |
 | Salaries | One-click monthly processing, allowances & deductions, mark as Paid |
+| Restaurant Holidays | Superuser closure calendar with inclusive dates, reason and audit details; unpaid days excluded from salary and petta |
+
+---
+
+## Restaurant holidays and payroll
+
+Open **Settings → Restaurant Holidays** as a superuser. Enter the first and last
+closed dates (both included) and a festival/closure reason. Use the history table
+to edit or delete a closure. Overlapping dates are rejected.
+
+- All recorded restaurant holidays are **unpaid** for every employee: no regular
+   salary is earned and no daily petta is deducted on those dates.
+- Closures are global; they also apply to newly added employees from their joining
+   date. Personal leave overlapping a closure is never deducted twice.
+- Recorded salary payments and additional bonuses remain intact. Temporary staff
+   still earn according to actual recorded payments, not automatic daily accrual.
+- Employee Detail, Salary Overview, salary summaries, settlements, directory PDFs,
+   dashboard salary balances and profit-and-loss salary accrual use the calendar.
+- Employee leave history labels these entries **Restaurant holiday · Unpaid**;
+   manage them centrally in Settings rather than deleting individual employee leaves.
+- Editing past closures recalculates historical salary and carried balances,
+   including settled periods. The UI asks for confirmation before changes.
+
+Restart the server after deploying this feature. Normal sheet initialization adds
+the **RestaurantHolidays** calendar with ID, StartDate, EndDate, Reason, CreatedBy,
+CreatedAt, UpdatedBy and UpdatedAt columns. Existing employee leave/payment rows
+are not rewritten or duplicated.
 
 ---
 

@@ -97,8 +97,15 @@ router.post('/', requireAuth, async (req, res) => {
     if (!employeeId || !paymentDate || amount === undefined) {
       return res.status(400).json({ success: false, message: 'employeeId, paymentDate and amount are required.' });
     }
-    if (parseFloat(amount) <= 0) {
-      return res.status(400).json({ success: false, message: 'Amount must be greater than 0.' });
+    const paymentAmount = Number(amount);
+    const isSettlement = !!(settlementStart && settlementEnd);
+    if (amount === null || amount === '' || !Number.isFinite(paymentAmount) || paymentAmount < 0 ||
+        (paymentAmount === 0 && !isSettlement) ||
+        Math.abs(paymentAmount * 100 - Math.round(paymentAmount * 100)) > 0.000001) {
+      return res.status(400).json({ success: false, message: 'Amount must be positive with up to two decimal places; a settlement can have zero payment.' });
+    }
+    if (paymentAmount < bonusAmount) {
+      return res.status(400).json({ success: false, message: 'Payment must include the full additional bonus; bonus cannot offset a salary advance.' });
     }
     if (req.session.user.role !== 'superuser') {
       const today = getBusinessDate();
@@ -130,7 +137,7 @@ router.post('/', requireAuth, async (req, res) => {
       }
     }
     const resolvedExpenseShift = normalizePaymentShift(expenseShift);
-    const shouldAddAsExpense = !!addAsExpense || isTemporaryEmployee;
+    const shouldAddAsExpense = paymentAmount > 0 && (!!addAsExpense || isTemporaryEmployee);
     let resolvedExpenseTypeId = expenseTypeId || '';
     let resolvedShift = resolvedExpenseShift;
     if (shouldAddAsExpense) {
@@ -151,7 +158,7 @@ router.post('/', requireAuth, async (req, res) => {
       employeeId,
       employeeName: employeeName || '',
       paymentDate,
-      amount: parseFloat(amount),
+      amount: paymentAmount,
       remarks: remarks || '',
       createdBy: req.session?.user?.displayName || '',
       createdAt: new Date().toISOString(),
