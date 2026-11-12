@@ -70,6 +70,16 @@ function isOccasionalMode(value) {
   return mode === 'Occasional' || mode === 'Occasional Cash';
 }
 
+function isPendingOccasionalPayment(expense) {
+  return isOccasionalMode(expense.mode) && expense.amount === 0;
+}
+
+function parseOccasionalAmount(value) {
+  if (value === undefined || value === null || (typeof value !== 'number' && typeof value !== 'string') || String(value).trim() === '') return NaN;
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? amount : NaN;
+}
+
 function expenseIdentity(date, typeId, category) {
   return `${date}|${typeId}|${String(category || '').trim().toLowerCase()}`;
 }
@@ -331,8 +341,9 @@ async function runAutoApproval(rows) {
   cutoff.setDate(cutoff.getDate() - settings.days);
   for (let i = 0; i < rows.length; i++) {
     const obj = rowToObj(rows[i]);
-    if (obj.approvalStatus === 'Pending') {
-      const created = new Date(obj.createdAt);
+    if (obj.approvalStatus === 'Pending' && !isPendingOccasionalPayment(obj)) {
+      // An occasional payment entered later must receive its own approval delay.
+      const created = new Date(isOccasionalMode(obj.mode) ? (obj.updatedAt || obj.createdAt) : obj.createdAt);
       if (!isNaN(created) && created < cutoff) {
         obj.approvalStatus = 'AutoApproved';
         obj.approvedBy     = 'system';
@@ -681,9 +692,11 @@ router.post('/occasional', requireAuth, async (req, res) => {
   return withBulkSaveLock(String(req.body?.date || ''), async () => {
     try {
     const { date, category, typeId, amount, remarks, quantities, linkedUnpaid } = req.body;
-    if (!date || !category || !typeId || !(parseFloat(amount) > 0)) {
-      return res.status(400).json({ success: false, message: 'date, category, typeId and a positive amount are required.' });
+    const parsedAmount = parseOccasionalAmount(amount);
+    if (!date || !category || !typeId || Number.isNaN(parsedAmount)) {
+      return res.status(400).json({ success: false, message: 'date, category, typeId and a non-negative amount are required.' });
     }
+    if (parsedAmount === 0 && Array.isArray(linkedUnpaid) && linkedUnpaid.some(link => Number(link?.amount) > 0)) return res.status(400).json({ success: false, message: 'A pending expense cannot pay a linked receipt.' });
     if (date > getBusinessDate()) return res.status(400).json({ success: false, message: 'Future dates cannot be used.' });
     const priceError = quantityPriceError([quantities]);
     if (priceError) return res.status(400).json({ success: false, message: priceError });
@@ -698,7 +711,7 @@ router.post('/occasional', requireAuth, async (req, res) => {
       return res.status(409).json({ success: false, message: 'An expense already exists for this date, category type, and category.' });
     }
     const obj = {
-      id: uuidv4(), date, category: String(category), description: String(remarks || ''), amount: parseFloat(amount),
+      id: uuidv4(), date, category: String(category), description: String(remarks || ''), amount: parsedAmount,
       employeeId: '', employeeName: '', submittedBy: user.username, approvalStatus: 'Pending', approvedBy: '', approvedAt: '',
       rejectionReason: '', createdAt: new Date().toISOString(), updatedBy: user.username, updatedAt: new Date().toISOString(), typeId, onSpot: false, paymentId: '', mode: normalizeExpenseMode(typeMode)
     };
@@ -723,9 +736,12 @@ router.post('/occasional', requireAuth, async (req, res) => {
 router.put('/occasional/:id', requireAuth, async (req, res) => {
   try {
     const { date, category, typeId, amount, remarks, quantities, linkedUnpaid } = req.body;
-    if (!date || !category || !typeId || !(parseFloat(amount) > 0)) {
-      return res.status(400).json({ success: false, message: 'date, category, typeId and a positive amount are required.' });
+    const parsedAmount = parseOccasionalAmount(amount);
+    if (!date || !category || !typeId || Number.isNaN(parsedAmount)) {
+      return res.status(400).json({ success: false, message: 'date, category, typeId and a non-negative amount are required.' });
     }
+    if (date > getBusinessDate()) return res.status(400).json({ success: false, message: 'Future dates cannot be used.' });
+    if (parsedAmount === 0 && Array.isArray(linkedUnpaid) && linkedUnpaid.some(link => Number(link?.amount) > 0)) return res.status(400).json({ success: false, message: 'A pending expense cannot pay a linked receipt.' });
     const priceError = quantityPriceError([quantities]);
     if (priceError) return res.status(400).json({ success: false, message: priceError });
     const found = await findRowById(SHEET, req.params.id);
@@ -737,7 +753,7 @@ router.put('/occasional/:id', requireAuth, async (req, res) => {
     }
     const access = await getExpenseAccess(req.session.user);
     const typeMode = access.typeModes.get(typeId);
-    if (!access.allowedTypes.has(typeId) || !access.allowedCategories.has(String(category)) || !isOccasionalMode(typeMode)) {
+    if (!access.allowedTypes.has(existing.typeId) || !access.allowedTypes.has(typeId) || !access.allowedCategories.has(String(category)) || !isOccasionalMode(typeMode)) {
       return res.status(403).json({ success: false, message: 'You do not have access to this occasional expense category.' });
     }
     const rows = await getAllRows(SHEET);
@@ -746,12 +762,12 @@ router.put('/occasional/:id', requireAuth, async (req, res) => {
       return res.status(409).json({ success: false, message: 'An expense already exists for this date, category type, and category.' });
     }
     const updated = {
-      ...existing, date, category: String(category).trim(), typeId, amount: parseFloat(amount),
+      ...existing, date, category: String(category).trim(), typeId, amount: parsedAmount,
       description: String(remarks || ''), approvalStatus: 'Pending', approvedBy: '', approvedAt: '', rejectionReason: '',
       updatedBy: req.session.user.username, updatedAt: new Date().toISOString(), mode: normalizeExpenseMode(typeMode)
     };
     await updateRow(SHEET, found.index, objToRow(updated));
-    await replaceExpenseQuantities(updated.id, quantities);
+    if (Array.isArray(quantities)) await replaceExpenseQuantities(updated.id, quantities);
     if (Array.isArray(linkedUnpaid) && linkedUnpaid.length) {
       const consumedItems = [];
       for (const link of linkedUnpaid) {
@@ -778,7 +794,7 @@ router.post('/approve/:date', requireSuperUser, async (req, res) => {
     for (let i = 0; i < rows.length; i++) {
       const obj = rowToObj(rows[i]);
       if (obj.date === date && (mode === 'Occasional' ? isOccasionalMode(obj.mode) : !isOccasionalMode(obj.mode)) &&
-        obj.approvalStatus === 'Pending' && obj.submittedBy !== user.username) {
+        obj.approvalStatus === 'Pending' && obj.submittedBy !== user.username && !isPendingOccasionalPayment(obj)) {
         obj.approvalStatus = 'Approved';
         obj.approvedBy     = user.username;
         obj.approvedAt     = new Date().toISOString();

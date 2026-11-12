@@ -32,6 +32,51 @@ function createPage() {
 const milk = (id, date, amount, extra = {}) => ({ id, date, category: 'Milk', typeId: 'type-a', amount, mode: 'Daily Cash', approvalStatus: 'Approved', ...extra });
 const quantity = (expenseId, amount, unitPrice, extra = {}) => ({ expenseId, name: 'Volume', unit: 'Litre', amount, unitPrice, ...extra });
 
+test('pending occasional payments remain visible across dates until an amount is entered', () => {
+  const { context, elements, set } = createPage();
+  set('allExpenses', [
+    milk('old', '2026-01-01', 0, { mode: 'Occasional', approvalStatus: 'Pending', category: '<Repair>' }),
+    milk('cash', '2026-01-02', 0, { mode: 'Occasional Cash', approvalStatus: 'Pending' }),
+    milk('paid', '2026-01-03', 100, { mode: 'Occasional', approvalStatus: 'Pending' }),
+    milk('daily', '2026-01-04', 0)
+  ]);
+  context.renderPendingOccasionalExpenses(new Map([['type-a', 'Vendor']]), true);
+  assert.equal(elements.pendingOccasionalExpenses.hidden, false);
+  assert.equal(elements.pendingOccasionalCount.textContent, 2);
+  assert.match(elements.pendingOccasionalList.innerHTML, /&lt;Repair&gt;/);
+  assert.match(elements.pendingOccasionalList.innerHTML, /2026-01-01/);
+  assert.match(elements.pendingOccasionalList.innerHTML, /Enter amount/);
+  assert.doesNotMatch(elements.pendingOccasionalList.innerHTML, /'paid'/);
+  assert.match(context.pendingOccasionalPaymentBadge({ mode: 'Occasional', amount: 0 }), /Payment pending/);
+  assert.equal(context.pendingOccasionalPaymentBadge({ mode: 'Occasional', amount: 100 }), '');
+  set('allExpenses', []);
+  context.renderPendingOccasionalExpenses(new Map(), true);
+  assert.equal(elements.pendingOccasionalExpenses.hidden, true);
+});
+
+test('entering an older occasional payment preserves its original date and quantities', async () => {
+  const { context, elements } = createPage();
+  elements.occasionalExpenseForm = { checkValidity: () => true };
+  elements.occasionalExpenseDate = { value: '2026-01-01' };
+  elements.expDate = { value: '2026-02-01' };
+  elements.occasionalExpenseType = { value: 'type-a' };
+  elements.occasionalExpenseCategory = { value: 'Milk' };
+  elements.occasionalExpenseAmount = { value: '150' };
+  elements.occasionalExpenseRemarks = { value: '' };
+  elements.btnSaveOccasionalExpense = {};
+  context.bootstrap = { Modal: { getInstance: () => ({ hide() {} }) } };
+  context.showNotification = () => {};
+  context.renderOccasionalExpenses = () => {};
+  const requests = [];
+  context.api = async (method, url, payload) => { requests.push({ method, url, payload }); return []; };
+  vm.runInContext("editingOccasionalExpenseId = 'old';", context);
+  await context.saveOccasionalExpense();
+  assert.equal(requests[0].method, 'PUT');
+  assert.equal(requests[0].payload.date, '2026-01-01');
+  assert.equal(requests[0].payload.amount, 150);
+  assert.equal('quantities' in requests[0].payload, false);
+});
+
 test('occasional quantity fields do not block loading daily expenses on November 2, 2026', () => {
   for (const mode of ['Occasional', 'Occasional Cash']) {
     for (const savedPrice of [0, 75]) {
@@ -65,6 +110,9 @@ test('occasional quantity fields do not block loading daily expenses on November
       assert.equal(elements.expRemarks.readOnly, false);
       assert.match(elements.occasionalQuantityBody.innerHTML, /data-occasional-expense-id="repair"/);
       assert.match(elements.occasionalQuantityBody.innerHTML, new RegExp(`aria-label="Price per unit"[^>]*value="${savedPrice || 50}"`));
+      assert.match(elements.occasionalQuantityBody.innerHTML, /quantity-field-name[^]*<span>Item<\/span>[^]*Parts/);
+      assert.match(elements.occasionalQuantityBody.innerHTML, /quantity-field-amount[^]*<span>Quantity<\/span>[^]*occasional-tab-quantity/);
+      assert.match(elements.occasionalQuantityBody.innerHTML, /quantity-field-unit[^]*<span>Unit<\/span>[^]*Count/);
     }
   }
 });
@@ -322,6 +370,112 @@ test('on-spot quantity offers and retains the selected Grams unit', () => {
   const { context } = createPage();
   const html = context.onSpotQuantityInput({ name: 'Spices', unit: 'Grams', amount: 100, unitPrice: 2 });
   assert.match(html, /<option selected>Grams<\/option>/);
+  assert.match(html, /quantity-field-name[^]*<span>Item<\/span>[^]*expense-quantity-name/);
+  assert.match(html, /quantity-field-amount[^]*<span>Quantity<\/span>/);
+  assert.match(html, /quantity-field-price[^]*Price \/ unit/);
+  assert.match(html, /quantity-field-total[^]*Total/);
+});
+
+test('linked quantities use the same labeled layout and escape item names', () => {
+  const { context } = createPage();
+  const html = context.linkedQuantityInputHtml({ name: '<Milk>', amount: 3, unit: 'Litre' });
+  assert.match(html, /quantity-linked/);
+  assert.match(html, /quantity-field-name[^]*&lt;Milk&gt;/);
+  assert.match(html, /quantity-field-amount[^]*value="3" readonly disabled/);
+  assert.match(html, /quantity-field-unit[^]*Litre/);
+});
+
+test('daily and occasional quantity tables use category cards with horizontal headers', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/expenses.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/styles.css'), 'utf8');
+  assert.match(html, /<table class="[^"]*quantity-cards[^"]*" id="quantityInputsTable"/);
+  assert.match(html, /<table class="[^"]*quantity-cards[^"]*">[^]*?<tbody id="occasionalQuantityBody"/);
+  assert.match(css, /\.quantity-cards tbody tr,[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /\.quantity-cards tbody td\[data-label="Quantities"\]\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
+});
+
+test('quantity fields use compact rows on desktop and reflow on narrow screens', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/styles.css'), 'utf8');
+  assert.match(css, /\.quantity-price-group,\s*\.quantity-linked\s*\{[^}]*grid-template-columns:[^;]+;[^}]*min-width:\s*33rem/);
+  assert.match(css, /@container quantity-list\s*\(max-width:\s*34rem\)\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[^}]*min-width:\s*0/);
+  assert.match(css, /\.quantity-field input,\s*\.quantity-field select\s*\{[^}]*font-size:\s*\.75rem/);
+  assert.match(css, /\.quantity-toolbar\s*\{[^}]*display:\s*flex/);
+});
+
+test('expanded category and focused quantity have separate highlights', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../public/css/styles.css'), 'utf8');
+  assert.match(css, /\.quantity-cards tbody tr:has\(\.quantity-section-toggle\[aria-expanded="true"\]\)\s*\{[^}]*border-color:/);
+  assert.match(css, /\.quantity-price-group:focus-within\s*\{[^}]*background:[^}]*outline:/);
+});
+
+test('occasional quantity save is beside the chooser and hidden when approved', () => {
+  const { context, elements, set } = createPage();
+  elements.expDate = { value: '2026-02-03' };
+  elements.occasionalQuantityBody = { innerHTML: '', querySelectorAll: () => [] };
+  set('allCategories', [{ id: 'cat', typeId: 'type-a', name: 'Milk', handpickQuantities: true }]);
+  const expense = milk('e1', '2026-02-03', 100, { mode: 'Occasional', approvalStatus: 'Pending' });
+  context.renderOccasionalQuantityInputs([expense], new Map([['type-a', 'Vendors']]), true);
+  assert.match(elements.occasionalQuantityBody.innerHTML, /quantity-toolbar[^]*Choose quantities[^]*title="Save quantities"[^]*saveOccasionalQuantities\('e1', this\)[^]*<\/div>/);
+  context.renderOccasionalQuantityInputs([{ ...expense, approvalStatus: 'Approved' }], new Map(), true);
+  assert.doesNotMatch(elements.occasionalQuantityBody.innerHTML, /title="Save quantities"/);
+});
+
+test('quantity sections toggle independently and retain their state on rerender', () => {
+  const { context } = createPage();
+  const key = JSON.stringify(['2026-02-03', 'daily', 'type-a', 'milk', false]);
+  const otherKey = JSON.stringify(['2026-02-03', 'occasional', 'e1']);
+  const content = { hidden: true };
+  const label = { textContent: 'Show' };
+  const attributes = {};
+  const button = {
+    dataset: { quantitySectionKey: key, quantityCategory: 'Milk' },
+    closest: () => ({ querySelector: () => content }),
+    setAttribute: (name, value) => { attributes[name] = value; },
+    querySelector: () => label
+  };
+  assert.match(context.quantitySectionToggleHtml(key, 'Milk'), /aria-expanded="false"/);
+  assert.match(context.quantitySectionCellHtml(key, '<input value="7">'), /quantity-section-cell [^"]*" hidden><input value="7">/);
+  context.toggleQuantitySection(button);
+  assert.equal(content.hidden, false);
+  assert.equal(attributes['aria-expanded'], 'true');
+  assert.equal(attributes['aria-label'], 'Hide quantities for Milk');
+  assert.equal(label.textContent, 'Hide');
+  assert.match(context.quantitySectionToggleHtml(key, 'Milk'), /aria-expanded="true"/);
+  assert.doesNotMatch(context.quantitySectionCellHtml(key, ''), / hidden/);
+  assert.match(context.quantitySectionToggleHtml(otherKey, 'Milk'), /aria-expanded="false"/);
+  context.toggleQuantitySection(button);
+  assert.equal(content.hidden, true);
+  assert.equal(attributes['aria-expanded'], 'false');
+  assert.equal(label.textContent, 'Show');
+  assert.match(context.quantitySectionToggleHtml(key, 'Milk'), /aria-expanded="false"/);
+});
+
+test('occasional quantities start hidden with the toggle in the category row', () => {
+  const { context, elements, set } = createPage();
+  elements.expDate = { value: '2026-02-03' };
+  elements.occasionalQuantityBody = { innerHTML: '', querySelectorAll: () => [] };
+  set('allCategories', [{ id: 'cat', typeId: 'type-a', name: 'Milk' }]);
+  set('allQuantityCategories', [{ id: 'q1', categoryId: 'cat', name: 'Milk', unit: 'Litre', defaultQuantity: 3 }]);
+  const expense = milk('e1', '2026-02-03', 100, { mode: 'Occasional', approvalStatus: 'Pending' });
+  context.renderOccasionalQuantityInputs([expense], new Map(), true);
+  assert.match(elements.occasionalQuantityBody.innerHTML, /<td data-label="Category"[^]*quantity-section-toggle[^]*aria-expanded="false"[^]*<\/td><td[^]*quantity-section-cell [^"]*" hidden>[^]*occasional-tab-quantity[^]*value="3"/);
+  assert.match(elements.occasionalQuantityBody.innerHTML, /title="Save quantities"/);
+});
+
+test('daily quantity save uses the existing bulk save and queues behind an active save', async () => {
+  const { context } = createPage();
+  context.clearTimeout = () => {};
+  let saves = 0;
+  context.save = async () => { saves++; };
+  const button = { disabled: false };
+  await context.saveDailyQuantities(button);
+  assert.equal(saves, 1);
+  assert.equal(button.disabled, false);
+  vm.runInContext('autoSaveInFlight = true;', context);
+  context.setAutoSaveStatus = () => {};
+  await context.saveDailyQuantities(button);
+  assert.equal(saves, 1);
+  assert.equal(vm.runInContext('autoSavePending', context), true);
 });
 
 test('saving collects the unit price entered beside each quantity', () => {

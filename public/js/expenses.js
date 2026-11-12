@@ -22,7 +22,31 @@ let quantityRenderTimer = null;
 let pendingOnSpotNameInput = null;
 let employeeExpenseDataLoaded = false;
 const handpickedQuantityIds = new Map();
+const expandedQuantitySections = new Set();
 let quantityPickerRow = null;
+
+function quantitySectionToggleHtml(key, category) {
+  const expanded = expandedQuantitySections.has(key);
+  const id = `quantity-section-${encodeURIComponent(key)}`;
+  return `<button type="button" class="quantity-section-toggle" data-quantity-section-key="${escapeHtml(key)}" data-quantity-category="${escapeHtml(category)}" aria-label="${expanded ? 'Hide' : 'Show'} quantities for ${escapeHtml(category)}" aria-expanded="${expanded}" aria-controls="${id}" onclick="toggleQuantitySection(this)"><span class="quantity-section-toggle-label">${expanded ? 'Hide' : 'Show'}</span><i class="bi bi-chevron-down" aria-hidden="true"></i></button>`;
+}
+
+function quantitySectionCellHtml(key, content, className = '') {
+  const id = `quantity-section-${encodeURIComponent(key)}`;
+  return `<td id="${id}" data-label="Quantities" class="quantity-section-cell ${className}"${expandedQuantitySections.has(key) ? '' : ' hidden'}>${content}</td>`;
+}
+
+function toggleQuantitySection(button) {
+  const cell = button.closest('tr')?.querySelector('.quantity-section-cell');
+  if (!cell) return;
+  const expanded = cell.hidden;
+  cell.hidden = !expanded;
+  button.setAttribute('aria-expanded', String(expanded));
+  button.setAttribute('aria-label', `${expanded ? 'Hide' : 'Show'} quantities for ${button.dataset.quantityCategory}`);
+  button.querySelector('.quantity-section-toggle-label').textContent = expanded ? 'Hide' : 'Show';
+  if (expanded) expandedQuantitySections.add(button.dataset.quantitySectionKey);
+  else expandedQuantitySections.delete(button.dataset.quantitySectionKey);
+}
 
 function handpickKey(category, expenseId = '', rowKey = '') {
   return JSON.stringify([getSelectedExpenseDate(), category.id, expenseId || rowKey]);
@@ -38,7 +62,7 @@ function selectedQuantityFields(category, key, saved) {
 
 function quantityPickerButton(category, readOnly) {
   if (!category?.handpickQuantities) return '';
-  return `<button type="button" class="btn btn-sm btn-outline-primary mb-2 choose-category-quantities"${readOnly ? ' disabled' : ''}>Choose quantities</button>`;
+  return `<button type="button" class="btn btn-sm btn-outline-primary choose-category-quantities"${readOnly ? ' disabled' : ''}>Choose quantities</button>`;
 }
 
 function openQuantityPicker(row) {
@@ -93,6 +117,14 @@ function normalizeWorkflow(value) {
 function isOccasionalWorkflow(value) {
   const workflow = normalizeWorkflow(value);
   return workflow === 'Occasional' || workflow === 'Occasional Cash';
+}
+
+function isPendingOccasionalPayment(expense) {
+  return isOccasionalWorkflow(expense.mode) && Number(expense.amount) === 0;
+}
+
+function pendingOccasionalPaymentBadge(expense) {
+  return isPendingOccasionalPayment(expense) ? '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-1">Payment pending</span>' : '';
 }
 
 function isProfitBalanceWorkflow(value) {
@@ -433,7 +465,11 @@ function refreshCategoryPendingBadges() {
 }
 
 function quantityPriceInputHtml(unitPrice, readOnly, totalAmount = '') {
-  return `<span class="input-group-text">&#8377;/unit</span><input type="number" class="form-control expense-quantity-price" style="max-width:110px" min="0" step="0.01" placeholder="Optional price" aria-label="Price per unit" title="Previous price is suggested when available and can be edited. Enter any two values to calculate the blank field." value="${unitPrice > 0 ? unitPrice : ''}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">Total ₹</span><input type="number" class="form-control expense-quantity-total" style="min-width:100px" min="0" step="0.01" placeholder="Total amount" aria-label="Total amount for quantity" value="${escapeHtml(totalAmount ?? '')}"${readOnly ? ' readonly disabled' : ''}>`;
+  return `<label class="quantity-field quantity-field-price"><span>Price / unit (₹)</span><input type="number" class="form-control form-control-sm expense-quantity-price" min="0" step="0.01" placeholder="Price" aria-label="Price per unit" title="Previous price is suggested when available and can be edited. Enter any two values to calculate the blank field." value="${unitPrice > 0 ? unitPrice : ''}"${readOnly ? ' readonly disabled' : ''}></label><label class="quantity-field quantity-field-total"><span>Total (₹)</span><input type="number" class="form-control form-control-sm expense-quantity-total" min="0" step="0.01" placeholder="Total" aria-label="Total amount for quantity" value="${escapeHtml(totalAmount ?? '')}"${readOnly ? ' readonly disabled' : ''}></label>`;
+}
+
+function linkedQuantityInputHtml(quantity) {
+  return `<div class="quantity-linked"><div class="quantity-field quantity-field-name"><span>Item</span><div class="quantity-item-name">${escapeHtml(quantity.name)}</div></div><label class="quantity-field quantity-field-amount"><span>Quantity</span><input type="number" class="form-control form-control-sm" value="${escapeHtml(quantity.amount)}" readonly disabled></label><div class="quantity-field quantity-field-unit"><span>Unit</span><div class="quantity-unit">${escapeHtml(quantity.unit)}</div></div></div>`;
 }
 
 function prefillOnSpotUnitPrice(group) {
@@ -718,6 +754,7 @@ async function openEmployeeExpenseModal() {
 function openOccasionalExpenseModal() {
   const form = document.getElementById('occasionalExpenseForm');
   form.reset();
+  document.getElementById('occasionalExpenseAmount').value = '0';
   editingOccasionalExpenseId = null;
   document.getElementById('occasionalExpenseModalTitle').textContent = 'Add Occasional / Online Expense';
   document.getElementById('btnSaveOccasionalExpense').innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Expense';
@@ -748,7 +785,7 @@ async function saveOccasionalExpense() {
   button.disabled = true;
   try {
     const payload = {
-      date: getSelectedExpenseDate(),
+      date: document.getElementById('occasionalExpenseDate').value,
       typeId: document.getElementById('occasionalExpenseType').value,
       category: document.getElementById('occasionalExpenseCategory').value,
       amount: parseFloat(document.getElementById('occasionalExpenseAmount').value),
@@ -843,6 +880,42 @@ async function runAutoSave() {
   }
 }
 
+async function saveDailyQuantities(button) {
+  clearTimeout(autoSaveTimer);
+  if (autoSaveInFlight) {
+    autoSavePending = true;
+    setAutoSaveStatus('Saving changes…', 'primary', 'bi-cloud-upload');
+    return;
+  }
+  autoSaveInFlight = true;
+  button.disabled = true;
+  try {
+    // Daily expenses are saved together by the existing bulk endpoint.
+    await save();
+  } finally {
+    button.disabled = false;
+    autoSaveInFlight = false;
+    if (autoSavePending) {
+      autoSavePending = false;
+      if (expenseAutoSaveEnabled) scheduleAutoSave();
+    }
+  }
+}
+
+function renderPendingOccasionalExpenses(typeNames, canEdit) {
+  const section = document.getElementById('pendingOccasionalExpenses');
+  const list = document.getElementById('pendingOccasionalList');
+  const count = document.getElementById('pendingOccasionalCount');
+  if (!section || !list || !count) return;
+  const entries = allExpenses.filter(isPendingOccasionalPayment).sort((a, b) => b.date.localeCompare(a.date));
+  section.hidden = entries.length === 0;
+  count.textContent = entries.length;
+  list.innerHTML = entries.map(expense => {
+    const editable = canEdit && expense.approvalStatus !== 'Approved' && expense.approvalStatus !== 'AutoApproved';
+    return `<div class="pending-occasional-row"><div><strong>${escapeHtml(expense.category)}</strong><div class="small text-muted">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')} · ${escapeHtml(formatDate(expense.date))}</div></div>${editable ? `<button type="button" class="btn btn-sm btn-outline-primary" onclick="editOccasionalExpense('${escapeHtml(expense.id)}')">Enter amount</button>` : '<span class="small text-muted">Locked</span>'}</div>`;
+  }).join('');
+}
+
 function renderOccasionalExpenses() {
   const body = document.getElementById('occasionalExpenseBody');
   if (!body) return;
@@ -855,8 +928,9 @@ function renderOccasionalExpenses() {
   const occasionalTotalEl = document.getElementById('occasionalExpensesTotal');
   if (occasionalTotalEl) occasionalTotalEl.textContent = formatCurrency(occasionalTotal);
   const canEdit = canAccess('expenses', 'add');
+  renderPendingOccasionalExpenses(typeNames, canEdit);
   body.innerHTML = entries.length ? entries.map(expense => `<tr>
-    <td data-label="Date">${formatDate(expense.date)}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}</td><td data-label="Type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Remarks" class="text-muted">${escapeHtml(expense.description || '—')}</td><td data-label="Amount" class="text-end fw-semibold">${formatCurrency(expense.amount)}</td><td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}${expense.approvedBy ? `<div class="text-muted" style="font-size:.75rem">approved by ${escapeHtml(expense.approvedBy)}${expense.approvedAt ? ` · ${formatDate(expense.approvedAt)}` : ''}</div>` : ''}</td><td data-label="Actions" class="text-center">${canEdit && expense.approvalStatus !== 'Approved' && expense.approvalStatus !== 'AutoApproved' ? `<button type="button" class="btn btn-sm btn-outline-secondary btn-action me-1" title="Edit occasional / online expense" onclick="editOccasionalExpense('${expense.id}')"><i class="bi bi-pencil"></i></button><button type="button" class="btn btn-sm btn-outline-danger btn-action" title="Delete occasional / online expense" onclick="deleteOccasionalExpense('${expense.id}')"><i class="bi bi-trash"></i></button>` : ''}</td>
+    <td data-label="Date">${formatDate(expense.date)}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}</td><td data-label="Type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Remarks" class="text-muted">${escapeHtml(expense.description || '—')}</td><td data-label="Amount" class="text-end fw-semibold">${formatCurrency(expense.amount)}</td><td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}${pendingOccasionalPaymentBadge(expense)}${expense.approvedBy ? `<div class="text-muted" style="font-size:.75rem">approved by ${escapeHtml(expense.approvedBy)}${expense.approvedAt ? ` · ${formatDate(expense.approvedAt)}` : ''}</div>` : ''}</td><td data-label="Actions" class="text-center">${canEdit && expense.approvalStatus !== 'Approved' && expense.approvalStatus !== 'AutoApproved' ? `<button type="button" class="btn btn-sm btn-outline-secondary btn-action me-1" title="Edit occasional / online expense" onclick="editOccasionalExpense('${expense.id}')"><i class="bi bi-pencil"></i></button><button type="button" class="btn btn-sm btn-outline-danger btn-action" title="Delete occasional / online expense" onclick="deleteOccasionalExpense('${expense.id}')"><i class="bi bi-trash"></i></button>` : ''}</td>
   </tr>`).join('') : emptyRow(7, 'No occasional / online expenses recorded for this date.');
   renderOccasionalQuantityInputs(entries, typeNames, canEdit);
   renderReceiptsOnDate(document.getElementById('receiptsOnDateOccasional'), selectedDate, true);
@@ -882,7 +956,7 @@ function renderOccasionalQuantityInputs(entries, typeNames, canEdit) {
         typeId: expense.typeId, category: expense.category, date: selectedDate, excludeExpenseId: expense.id
       });
       const totalAmount = savedQuantity?.totalAmount ?? '';
-      return `<div class="input-group input-group-sm mb-2 quantity-price-group configured-quantity-field"${selected && !selected.has(quantity.id) ? ' hidden' : ''} style="max-width:760px"><span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span><input type="number" class="form-control occasional-tab-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${amount}"${readOnly ? ' readonly disabled' : ''}><span class="input-group-text">${escapeHtml(quantity.unit)}</span>${quantityPriceInputHtml(unitPrice, readOnly, totalAmount)}</div>`;
+      return `<div class="quantity-price-group configured-quantity-field"${selected && !selected.has(quantity.id) ? ' hidden' : ''}><div class="quantity-field quantity-field-name"><span>Item</span><div class="quantity-item-name">${escapeHtml(quantity.name)}</div></div><label class="quantity-field quantity-field-amount"><span>Quantity</span><input type="number" class="form-control form-control-sm occasional-tab-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${amount}"${readOnly ? ' readonly disabled' : ''}></label><div class="quantity-field quantity-field-unit"><span>Unit</span><div class="quantity-unit">${escapeHtml(quantity.unit)}</div></div>${quantityPriceInputHtml(unitPrice, readOnly, totalAmount)}</div>`;
     }).join('') : '';
     const custom = saved.filter(quantity => !definitions.some(item => item.id === quantity.quantityCategoryId) && !quantity.sourceReceiptId);
     const linked = saved.filter(quantity => quantity.sourceReceiptId);
@@ -894,13 +968,15 @@ function renderOccasionalQuantityInputs(entries, typeNames, canEdit) {
     });
     const linkedFields = [...linkedByReceipt.entries()].map(([receiptId, group]) => {
       const unlinkBtn = !readOnly ? `<button type="button" class="btn btn-sm btn-outline-danger ms-2" title="Unlink from receivable" onclick="unlinkExpenseFromReceipt('${escapeHtml(expense.id)}', '${escapeHtml(receiptId)}')"><i class="bi bi-x-circle me-1"></i>Unlink</button>` : '';
-      const items = group.map(quantity => `<div class="input-group input-group-sm mb-2" style="max-width:280px"><span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span><input type="number" class="form-control" value="${quantity.amount}" readonly disabled><span class="input-group-text">${escapeHtml(quantity.unit)}</span></div>`).join('');
+      const items = group.map(linkedQuantityInputHtml).join('');
       return `<div class="d-flex align-items-center mt-2 mb-1 text-muted small"><i class="bi bi-link-45deg me-1"></i>Linked from receivable${unlinkBtn}</div>${items}`;
     }).join('');
     const addButton = readOnly ? '' : '<button type="button" class="btn btn-sm btn-outline-primary" onclick="addOccasionalOnSpotQuantity(this)"><i class="bi bi-plus-lg me-1"></i>Add Quantity</button>';
-    const action = !readOnly ? `<button type="button" class="btn btn-sm btn-primary" title="Save quantities" onclick="saveOccasionalQuantities('${expense.id}', this)"><i class="bi bi-check-lg"></i></button>` : '';
-    return `<tr data-occasional-expense-id="${expense.id}" data-picker-key="${escapeHtml(pickerKey)}" data-picker-category="${escapeHtml(expense.category)}" data-expense-amount="${parseFloat(expense.amount) || 0}"><td data-label="Category type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Category" class="fw-semibold">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}<div class="text-muted small">${formatCurrency(expense.amount)}</div></td><td data-label="Quantities">${quantityPickerButton(category, readOnly)}${fields}${customFields}${addButton}${linkedFields}<div class="quantity-row-summary small text-muted mt-1"></div></td><td data-label="Actions" class="text-center">${action}</td></tr>`;
-  }).join('') : emptyRow(4, 'No occasional / online expenses recorded for this date.');
+    const action = !readOnly ? `<button type="button" class="btn btn-sm btn-primary" title="Save quantities" onclick="saveOccasionalQuantities('${expense.id}', this)"><i class="bi bi-check-lg me-1"></i>Save</button>` : '';
+    const sectionKey = JSON.stringify([selectedDate, 'occasional', expense.id]);
+    const content = `<div class="quantity-toolbar">${quantityPickerButton(category, readOnly)}${action}</div>${fields}${customFields}${addButton}${linkedFields}<div class="quantity-row-summary small text-muted mt-1"></div>`;
+    return `<tr data-occasional-expense-id="${expense.id}" data-picker-key="${escapeHtml(pickerKey)}" data-picker-category="${escapeHtml(expense.category)}" data-expense-amount="${parseFloat(expense.amount) || 0}"><td data-label="Category type">${escapeHtml(typeNames.get(expense.typeId) || 'Unknown')}</td><td data-label="Category" class="fw-semibold"><div class="quantity-category-header"><div class="quantity-category-info">${escapeHtml(expense.category)}${pendingSlotHtml(expense.typeId, expense.category)}<div class="text-muted small">${formatCurrency(expense.amount)}</div></div>${quantitySectionToggleHtml(sectionKey, expense.category)}</div></td>${quantitySectionCellHtml(sectionKey, content)}</tr>`;
+  }).join('') : emptyRow(3, 'No occasional / online expenses recorded for this date.');
   refreshQuantityValues(body);
 }
 
@@ -1320,8 +1396,8 @@ function onSpotQuantityInput(quantity = {}, inputClass = 'expense-quantity', pri
   const unitPrice = savedUnitPrice || (priceContext.preserveBlankPrice ? '' : previousUnitPrice({
     quantityCategoryId, name: quantity.name || unit, unit, ...priceContext
   }));
-  return `<div class="input-group input-group-sm mb-2 onspot-quantity quantity-price-group" style="max-width:760px"><input type="text" class="form-control expense-quantity-name" style="max-width:180px" value="${name}" placeholder="Quantity"><input type="number" class="form-control ${inputClass}" data-quantity-category-id="${quantityCategoryId}" data-name="${name}" data-unit="${unit}" min="0" step="0.01" value="${amount}"><select class="form-select expense-quantity-unit" style="max-width:80px" data-prev-unit="${unit}" onchange="syncOnSpotQuantityName(this)">${['KG', 'Grams', 'Litre', 'Count'].map(option => `<option${unit === option ? ' selected' : ''}>${option}</option>`).join('')}
-    </select>${quantityPriceInputHtml(unitPrice, false, quantity.totalAmount ?? '')}<button type="button" class="btn btn-outline-danger" title="Delete quantity" aria-label="Delete quantity" onclick="deleteOnSpotQuantity(this)"><i class="bi bi-trash"></i></button></div>`;
+  return `<div class="onspot-quantity quantity-price-group"><label class="quantity-field quantity-field-name"><span>Item</span><input type="text" class="form-control form-control-sm expense-quantity-name" value="${name}" placeholder="Item name"></label><label class="quantity-field quantity-field-amount"><span>Quantity</span><input type="number" class="form-control form-control-sm ${inputClass}" data-quantity-category-id="${quantityCategoryId}" data-name="${name}" data-unit="${unit}" min="0" step="0.01" value="${amount}"></label><label class="quantity-field quantity-field-unit"><span>Unit</span><select class="form-select form-select-sm expense-quantity-unit" data-prev-unit="${unit}" onchange="syncOnSpotQuantityName(this)">${['KG', 'Grams', 'Litre', 'Count'].map(option => `<option${unit === option ? ' selected' : ''}>${option}</option>`).join('')}
+    </select></label>${quantityPriceInputHtml(unitPrice, false, quantity.totalAmount ?? '')}<button type="button" class="btn btn-sm btn-outline-danger quantity-delete" title="Delete quantity" aria-label="Delete quantity" onclick="deleteOnSpotQuantity(this)"><i class="bi bi-trash"></i></button></div>`;
 }
 
 // Keeps the name in sync with the selected unit until the user overrides it with a custom label.
@@ -1706,10 +1782,10 @@ function renderQuantityInputs() {
           typeId, category: name, date: getSelectedExpenseDate(), excludeExpenseId: input.dataset.id
         }));
       const totalAmount = draft ? draft.totalAmount : (savedQuantity?.totalAmount ?? '');
-      return `<div class="input-group input-group-sm mb-2 quantity-price-group configured-quantity-field"${selected && !selected.has(quantity.id) ? ' hidden' : ''} style="max-width:560px">
-        <span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span>
-        <input type="number" class="form-control expense-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${value}"${readOnly}>
-        <span class="input-group-text">${escapeHtml(quantity.unit)}</span>${quantityPriceInputHtml(unitPrice, !!readOnly, totalAmount)}</div>`;
+      return `<div class="quantity-price-group configured-quantity-field"${selected && !selected.has(quantity.id) ? ' hidden' : ''}>
+        <div class="quantity-field quantity-field-name"><span>Item</span><div class="quantity-item-name">${escapeHtml(quantity.name)}</div></div>
+        <label class="quantity-field quantity-field-amount"><span>Quantity</span><input type="number" class="form-control form-control-sm expense-quantity" data-quantity-category-id="${quantity.id}" data-name="${escapeHtml(quantity.name)}" data-unit="${quantity.unit}" min="0" step="0.01" value="${value}"${readOnly}></label>
+        <div class="quantity-field quantity-field-unit"><span>Unit</span><div class="quantity-unit">${escapeHtml(quantity.unit)}</div></div>${quantityPriceInputHtml(unitPrice, !!readOnly, totalAmount)}</div>`;
     }).join('');
 
     const matchNote = onSpot && defined.length
@@ -1731,7 +1807,7 @@ function renderQuantityInputs() {
         const label = receiptId ? `Linked from receivable` : `Additional quantities`;
         const unlinkBtn = receiptId && !readOnly && input.dataset.id
           ? `<button type="button" class="btn btn-sm btn-outline-danger ms-2" title="Unlink from receivable" onclick="unlinkExpenseFromReceipt('${escapeHtml(input.dataset.id)}', '${escapeHtml(receiptId)}')"><i class="bi bi-x-circle me-1"></i>Unlink</button>` : '';
-        const items = group.map(quantity => `<div class="input-group input-group-sm mb-2" style="max-width:280px"><span class="input-group-text" style="min-width:110px">${escapeHtml(quantity.name)}</span><input type="number" class="form-control" value="${quantity.amount}" readonly disabled><span class="input-group-text">${escapeHtml(quantity.unit)}</span></div>`).join('');
+        const items = group.map(linkedQuantityInputHtml).join('');
         return `<div class="d-flex align-items-center mt-2 mb-1 text-muted small"><i class="bi bi-link-45deg me-1"></i>${label}${unlinkBtn}</div>${items}`;
       }).join('');
     } else {
@@ -1739,10 +1815,12 @@ function renderQuantityInputs() {
     }
 
     if (!fields && !onSpot && !customFields) return '';
+    const sectionKey = JSON.stringify([getSelectedExpenseDate(), 'daily', typeId, categoryBalanceName(name), onSpot]);
+    const content = `${matchNote}<div class="quantity-toolbar">${quantityPickerButton(category, !!readOnly)}${readOnly ? '' : '<button type="button" class="btn btn-sm btn-primary" title="Save all daily expenses" onclick="saveDailyQuantities(this)"><i class="bi bi-check-lg me-1"></i>Save</button>'}</div>${fields}${customFields}<div class="quantity-row-summary small text-muted mt-1"></div>`;
     return `<tr data-row-key="${rowKey}" data-picker-key="${escapeHtml(pickerKey)}" data-picker-category="${escapeHtml(name)}" data-expense-amount="${parseFloat(input.value) || 0}">
       <td data-label="Category type">${escapeHtml(typeNames.get(typeId) || 'Unassigned type')}</td>
-      <td data-label="Category" class="fw-semibold">${escapeHtml(name)}${pendingSlotHtml(typeId, name)}<div class="text-muted small">${formatCurrency(parseFloat(input.value) || 0)}</div></td>
-      <td data-label="Quantities" class="expense-quantity-cell">${matchNote}${quantityPickerButton(category, !!readOnly)}${fields}${customFields}<div class="quantity-row-summary small text-muted mt-1"></div></td>
+      <td data-label="Category" class="fw-semibold"><div class="quantity-category-header"><div class="quantity-category-info">${escapeHtml(name)}${pendingSlotHtml(typeId, name)}<div class="text-muted small">${formatCurrency(parseFloat(input.value) || 0)}</div></div>${quantitySectionToggleHtml(sectionKey, name)}</div></td>
+      ${quantitySectionCellHtml(sectionKey, content, 'expense-quantity-cell')}
     </tr>`;
   }).filter(Boolean);
 
@@ -1847,7 +1925,10 @@ async function approveDate(date, mode = 'Daily') {
   try {
     const result = await api('POST', '/expenses/approve/' + date, { mode });
     const updated = result?.updated ?? result?.data?.updated ?? 0;
-    showNotification(updated ? 'Approved successfully.' : 'No pending expenses were approved. A different superuser must approve their own submission.', updated ? 'success' : 'warning');
+    const emptyMessage = mode === 'Occasional'
+      ? 'No expenses were approved. Payment-pending expenses cannot be approved, and another superuser must approve your submissions.'
+      : 'No pending expenses were approved. A different superuser must approve their own submission.';
+    showNotification(updated ? 'Approved successfully.' : emptyMessage, updated ? 'success' : 'warning');
     allExpenses = await api('GET', '/expenses');
     await loadSelectedExpenseReport();
   } catch (err) {
@@ -2224,7 +2305,7 @@ function renderOccasionalSummary(entries) {
       <td data-label="Remarks" class="text-muted">${escapeHtml(expense.description || '—')}
         ${expense.submittedBy ? `<div style="font-size:.75rem">created by ${escapeHtml(expense.submittedBy)}</div>` : ''}
         ${expense.updatedBy ? `<div style="font-size:.75rem">last updated by ${escapeHtml(expense.updatedBy)}${expense.updatedAt ? ` · ${formatDate(expense.updatedAt)}` : ''}</div>` : ''}</td>
-      <td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}${expense.approvedBy ? `<div class="text-muted" style="font-size:.75rem">approved by ${escapeHtml(expense.approvedBy)}${expense.approvedAt ? ` · ${formatDate(expense.approvedAt)}` : ''}</div>` : ''}</td>
+      <td data-label="Status">${approvalStatusBadge(expense.approvalStatus)}${pendingOccasionalPaymentBadge(expense)}${expense.approvedBy ? `<div class="text-muted" style="font-size:.75rem">approved by ${escapeHtml(expense.approvedBy)}${expense.approvedAt ? ` · ${formatDate(expense.approvedAt)}` : ''}</div>` : ''}</td>
       <td data-label="Amount" class="text-end fw-semibold text-nowrap">${formatCurrency(expense.amount)}</td>
     </tr>`;
   }).join('') : emptyRow(6, 'No occasional / online expenses in this range.');

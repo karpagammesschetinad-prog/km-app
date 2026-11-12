@@ -153,6 +153,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   const dateInput = document.getElementById('salesDate');
   dateInput.value = salesTodayKey; dateInput.max = salesTodayKey; dateInput.disabled = !superUser;
+  dateInput.addEventListener('click', () => {
+    if (typeof dateInput.showPicker === 'function') {
+      try { dateInput.showPicker(); } catch (_) { /* Keep the native input usable if the picker cannot open. */ }
+    }
+  });
   if (!superUser) {
     dateInput.closest('.card-panel')?.classList.add('d-none');
     document.querySelector('.sales-remaining-box')?.classList.add('d-none');

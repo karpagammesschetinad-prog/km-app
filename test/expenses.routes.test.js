@@ -643,6 +643,55 @@ test('occasional expense is stored with Occasional mode', async () => {
   assert.equal(rows[0][3], 'fan');
 });
 
+test('cashier records unpaid occasional quantities and a superuser enters payment later without losing them', async () => {
+  const payload = { date: '2026-01-05', category: 'Repair', typeId: 'type-occasional', amount: 0 };
+  const created = await server.request('POST', '/api/expenses/occasional', payload);
+  assert.equal(created.status, 201);
+  const id = created.body.data.id;
+  assert.equal(created.body.data.amount, 0);
+  const quantities = [{ quantityCategoryId: 'parts', name: 'Parts', unit: 'Count', amount: 2, unitPrice: 75 }];
+  const saved = await server.request('PUT', `/api/expenses/occasional/${id}`, { ...payload, quantities });
+  assert.equal(saved.status, 200);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0][5], 2);
+
+  server.loginAs(SUPERUSER);
+  const updated = await server.request('PUT', `/api/expenses/occasional/${id}`, { ...payload, amount: 150 });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.data.date, payload.date);
+  assert.equal(updated.body.data.amount, 150);
+  assert.equal(updated.body.data.submittedBy, 'cashier');
+  assert.equal(updated.body.data.updatedBy, 'admin');
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES)[0][9], 75);
+  assert.equal(sheets.getRows(SHEETS.EXPENSE_QUANTITIES).length, 1);
+});
+
+test('unpaid occasional expenses are not manually or automatically approved before payment', async () => {
+  const old = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+  sheets.setRows(SHEETS.EXPENSES, [expenseRow({ id: 'unpaid', category: 'Repair', typeId: 'type-occasional', mode: 'Occasional', amount: 0, createdAt: old })]);
+  let res = await server.request('GET', '/api/expenses');
+  assert.equal(res.body.data[0].approvalStatus, 'Pending');
+  server.loginAs(SUPERUSER);
+  res = await server.request('POST', '/api/expenses/approve/2026-01-05', { mode: 'Occasional' });
+  assert.equal(res.body.data.updated, 0);
+  res = await server.request('PUT', '/api/expenses/occasional/unpaid', { date: '2026-01-05', category: 'Repair', typeId: 'type-occasional', amount: 100 });
+  assert.equal(res.status, 200);
+  res = await server.request('GET', '/api/expenses');
+  assert.equal(res.body.data[0].approvalStatus, 'Pending', 'the approval delay starts again after payment is entered');
+  res = await server.request('POST', '/api/expenses/approve/2026-01-05', { mode: 'Occasional' });
+  assert.equal(res.body.data.updated, 1);
+});
+
+test('occasional amounts reject invalid values and zero cannot pay linked receipts', async () => {
+  const payload = { date: '2026-01-05', category: 'Repair', typeId: 'type-occasional' };
+  for (const amount of [-1, '', '12abc', null]) {
+    const res = await server.request('POST', '/api/expenses/occasional', { ...payload, amount });
+    assert.equal(res.status, 400, `amount ${String(amount)}`);
+  }
+  const linked = await server.request('POST', '/api/expenses/occasional', { ...payload, amount: 0, linkedUnpaid: [{ unpaidId: 'r1', amount: 10 }] });
+  assert.equal(linked.status, 400);
+  assert.equal(sheets.getRows(SHEETS.EXPENSES).length, 0);
+});
+
 test('Occasional Cash workflow uses the occasional expense entry flow and preserves its mode', async () => {
   sheets.setRows(SHEETS.EXPENSE_CATEGORY_TYPES, [
     ...CATEGORY_TYPES,
